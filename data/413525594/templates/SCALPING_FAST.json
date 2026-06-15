@@ -1,0 +1,29 @@
+{
+    "MASTER_EVAL_MODE": "VOTING",
+    "MIN_MATCHING_VOTES": 2,
+    "FORCE_ANY_MODE": true,
+    "G0_TIMEFRAME": "1h",
+    "G1_TIMEFRAME": "15m",
+    "G2_TIMEFRAME": "5m",
+    "G3_TIMEFRAME": "1m",
+    "voting_rules": {
+        "G0": {"max_opposite": 1, "max_none": 1, "master_rule": "IGNORE"},
+        "G1": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+        "G2": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G3": {"max_opposite": 0, "max_none": 1, "master_rule": "FIX"}
+    },
+    "risk_tsl": {
+        "base_risk": 0.5,
+        "base_sl": "G2",
+        "tsl_mode": "AGGRESSIVE",
+        "bot_tsl": "BE+PNL+PSAR_TRAIL",
+        "mode_multipliers": {"ANY": 1.0, "TREND": 1.2, "RANGE": 1.0, "BREAKOUT": 1.5, "EXHAUSTION": 0.8},
+        "strict_risk": true
+    },
+    "indicators": {
+        "rsi": {"active": true, "groups": ["G2"], "is_trend": false, "macro_role": "NONE", "active_modes": ["ANY"], "trigger_mode": "REALTIME_TICK", "params": {"period": 14}},
+        "supertrend": {"active": true, "groups": ["G2"], "is_trend": true, "macro_role": "BASE", "active_modes": ["TREND"], "trigger_mode": "REALTIME_TICK", "params": {"period": 10, "multiplier": 3.0}}
+    },
+    "dca_config": {"ENABLED": true, "MAX_STEPS": 3, "STEP_MULTIPLIER": 2.0, "DISTANCE_ATR_R": 0.8},
+    "pca_config": {"ENABLED": false, "MAX_STEPS": 2, "STEP_MULTIPLIER": 0.5, "DISTANCE_ATR_R": 1.5}
+}

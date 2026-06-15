@@ -1,0 +1,29 @@
+{
+    "MASTER_EVAL_MODE": "VETO",
+    "MIN_MATCHING_VOTES": 4,
+    "FORCE_ANY_MODE": false,
+    "G0_TIMEFRAME": "1d",
+    "G1_TIMEFRAME": "1h",
+    "G2_TIMEFRAME": "15m",
+    "G3_TIMEFRAME": "15m",
+    "voting_rules": {
+        "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G1": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G2": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G3": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"}
+    },
+    "risk_tsl": {
+        "base_risk": 0.2,
+        "base_sl": "G2",
+        "tsl_mode": "STATIC",
+        "bot_tsl": "BE_CASH",
+        "mode_multipliers": {"ANY": 1.0, "TREND": 1.0, "RANGE": 0.8, "BREAKOUT": 1.0, "EXHAUSTION": 0.5},
+        "strict_risk": true
+    },
+    "indicators": {
+        "macd": {"active": true, "groups": ["G2"], "is_trend": false, "macro_role": "NONE", "active_modes": ["ANY"], "trigger_mode": "STRICT_CLOSE", "params": {"fast": 12, "slow": 26, "signal": 9}},
+        "bollinger_bands": {"active": true, "groups": ["G2"], "is_trend": false, "macro_role": "NONE", "active_modes": ["RANGE"], "trigger_mode": "REALTIME_TICK", "params": {"period": 20, "std_dev": 2.0}}
+    },
+    "dca_config": {"ENABLED": false, "MAX_STEPS": 3, "STEP_MULTIPLIER": 1.5, "DISTANCE_ATR_R": 1.0},
+    "pca_config": {"ENABLED": false, "MAX_STEPS": 2, "STEP_MULTIPLIER": 0.5, "DISTANCE_ATR_R": 1.5}
+}
