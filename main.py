@@ -1,0 +1,3863 @@
+# -*- coding: utf-8 -*-
+# FILE: main.py
+# V6.9.3: REFACTORED CORE - UI CONTEXT SYNC HOTFIX (KAISER EDITION)
+
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import ttk, messagebox, Menu
+import threading
+import time
+import sys
+import json
+import os
+import subprocess
+from datetime import datetime
+import MetaTrader5 as mt5
+import logging
+from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log 3 lớp
+import config
+from core.exness_connector import ExnessConnector
+from core.checklist_manager import ChecklistManager
+from core.trade_manager import TradeManager
+from core.storage_manager import load_brain_settings, load_state, save_brain_settings, save_state
+from core.signal_listener import SignalListener
+from core.data_engine import data_engine
+from core.position_classifier import is_bot_position, is_grid_position, is_hedge_position, is_manual_position
+from signals.signal_generator import signal_generator
+from grid.grid_manager import GridManager
+from hedge.hedge_manager import HedgeManager
+import traceback
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
+    logger = logging.getLogger("ExnessBot")
+    error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    logger.critical(f"💥 TOÀN BỘ HỆ THỐNG CRASH:\n{error_msg}")
+    
+    try:
+        os.makedirs("data/logs", exist_ok=True)
+        with open("data/logs/CRASH_REPORT.log", "a", encoding="utf-8") as f:
+            f.write(f"\n--- CRASH AT {datetime.now()} ---\n")
+            f.write(error_msg)
+            f.write("-" * 50 + "\n")
+    except:
+        pass
+
+sys.excepthook = handle_exception
+
+import ui_panels
+import ui_popups
+
+# [V3.0] Import giao diện Strategy Sandbox
+from ui_bot_strategy import BotStrategyUI
+
+# [V6.9.4] Paths giờ được đọc động từ storage_manager sau khi set_active_account
+# Khai báo tạm thời, sẽ được cập nhật trong __init__ sau khi biết Account ID
+TSL_SETTINGS_FILE = "data/tsl_settings.json"
+PRESETS_FILE = "data/presets_config.json"
+BRAIN_SETTINGS_FILE = "data/brain_settings.json"
+
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("dark-blue")
+
+FONT_MAIN = ("Roboto", 13)
+FONT_BOLD = ("Roboto", 13, "bold")
+FONT_EQUITY = ("Roboto", 36, "bold")
+FONT_PNL = ("Roboto", 18, "bold")
+FONT_SECTION = ("Roboto", 12, "bold")
+FONT_BIG_VAL = ("Consolas", 20, "bold")
+FONT_PRICE = ("Roboto", 32, "bold")
+FONT_FEE = ("Roboto", 13, "bold")
+
+COL_GREEN = "#00C853"
+COL_RED = "#D50000"
+COL_BLUE_ACCENT = "#0D47A1"
+COL_BLUE_ACCENT_HOVER = "#0A3578"
+COL_GRAY_BTN = "#424242"
+COL_WARN = "#FFAB00"
+COL_BOT_TAG = "#E040FB"
+
+
+class Suppress10025Filter(logging.Filter):
+    def filter(self, record):
+        return "Retcode: 10025" not in record.getMessage()
+
+
+main_logger = logging.getLogger("ExnessBot")
+main_logger.addFilter(Suppress10025Filter())
+
+
+class BotUI(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("RAT6.0 - Master Control (Kaiser Edition)")
+        self.geometry("1650x950")
+
+        self.var_auto_trade = tk.BooleanVar(value=False)
+        self.var_assist_math_sl = tk.BooleanVar(value=False)
+        self.var_assist_preset_tp = tk.BooleanVar(value=False)
+        self.var_assist_dca = tk.BooleanVar(value=False)
+        self.var_assist_pca = tk.BooleanVar(value=False)
+
+        self.var_strict_mode = tk.BooleanVar(value=config.STRICT_MODE_DEFAULT)
+        self.var_confirm_close = tk.BooleanVar(value=True)
+        self.var_account_type = tk.StringVar(value=config.DEFAULT_ACCOUNT_TYPE)
+
+        self.var_manual_lot = tk.StringVar(value="")
+        self.var_manual_tp = tk.StringVar(value="")
+        self.var_manual_sl = tk.StringVar(value="")
+        self.var_bypass_checklist = tk.BooleanVar(
+            value=config.MANUAL_CONFIG["BYPASS_CHECKLIST"]
+        )
+        self.var_direction = tk.StringVar(value="BUY")
+        self.var_manual_trade_mode = tk.StringVar(value="NORMAL")
+        self.var_grid_manual_mode = tk.StringVar(value="NEUTRAL")
+        self.var_grid_bypass_signal = tk.BooleanVar(value=False)
+        self.var_hedge_bypass_entry = tk.BooleanVar(value=False)
+        self.var_preview_trade_after_apply = tk.BooleanVar(value=False)
+
+        self.tactic_states = {
+            "BE": True,
+            "PNL": False,
+            "STEP_R": True,
+            "SWING": True,
+            "BE_CASH": False,  # [FIX] Thêm State cho TSL CASH
+            "PSAR_TRAIL": False,  # [FIX] Thêm State cho TSL PSAR
+            "AUTO_DCA": False,
+            "AUTO_PCA": False,
+            "REV_C": False,  # [NEW V4.4] Recovery/Safelock
+            "ANTI_CASH": False,  # [NEW V4.4] Hard stop logic
+        }
+        self.entry_exit_tactic_states = {
+            "FALLBACK_R": False,
+            "SWING_REJECTION": False,
+            "SWING_STRUCTURE": False,
+            "FIB_RETRACE": False,
+            "PULLBACK_ZONE": False,
+        }
+        self.running = True
+        self.tsl_states_map = {}
+        self.last_price_val = 0.0
+        self.latest_market_context = {}
+        self.latest_entry_exit_decisions = {}
+        self.group_status_tracker = {}
+        self.manual_preview_models = {}
+
+        self.brain_status = "CHỜ KẾT NỐI..."
+        self.brain_wakeup_time = 0
+        self.brain_active_symbols = []
+
+        self.daemon_process = None
+        self.daemon_output_file = None
+        self.log_cooldown_cache = {}
+        self.var_advisor_export_days = tk.StringVar(value="7")
+        self.var_advisor_mode = tk.StringVar(value="Manual Only")
+        self.var_advisor_save_archive = tk.BooleanVar(value=False)
+        self.var_advisor_fixed_time = tk.StringVar(value="")
+        self.var_advisor_global_emergency = tk.BooleanVar(value=True)
+        self.var_advisor_send_response_file = tk.BooleanVar(value=False)
+        self.var_advisor_send_previous_response = self.var_advisor_send_response_file
+        self.advisor_api_preview_text = "API payload: not estimated"
+        self.advisor_api_preview_detail_text = ""
+        self.advisor_last_export_status = "Never"
+        self.advisor_last_error = ""
+        self._advisor_worker_active = False
+        self._advisor_last_trigger_check = 0.0
+        self._advisor_last_trigger_fire = {}
+
+        # [MODIFIED V6.9.4] Kết nối MT5 TRƯỚC để lấy ID -> Setup Workspace -> Mới Load Setting
+        self.connector = ExnessConnector()
+        self.connector.connect()
+        
+        import core.storage_manager as storage_manager
+        acc_info = self.connector.get_account_info()
+        if acc_info:
+            storage_manager.set_active_account(acc_info['login'])
+            
+            # [V6.9.4] Cập nhật lại đường dẫn file cho đúng thư mục workspace
+            global TSL_SETTINGS_FILE, PRESETS_FILE, BRAIN_SETTINGS_FILE
+            acc_dir = storage_manager._active_account_dir
+            TSL_SETTINGS_FILE = os.path.join(acc_dir, "tsl_settings.json")
+            PRESETS_FILE = os.path.join(acc_dir, "presets_config.json")
+            BRAIN_SETTINGS_FILE = os.path.join(acc_dir, "brain_settings.json")
+            self.reset_grid_runtime_switch()
+            self.reset_hedge_runtime_switch()
+            
+            
+            self.log_message(f"✅ Đã tải Workspace cho tài khoản: {acc_info['login']}")
+        else:
+            self.log_message("⚠️ Không thể xác định Account ID. Dùng Workspace mặc định.", error=True)
+
+        # Khởi chạy luồng theo dõi Daemon Log
+        self.group_status_tracker = storage_manager.load_group_status_tracker()
+        threading.Thread(target=self._tail_daemon_logs, daemon=True).start()
+
+        self.load_settings()
+        setattr(config, "UI_ACTIVE_SYMBOL", config.DEFAULT_SYMBOL)
+
+        self.checklist_mgr = ChecklistManager(self.connector)
+        self.trade_mgr = TradeManager(
+            self.connector, self.checklist_mgr, log_callback=self.log_message
+        )
+        self.grid_mgr = GridManager(
+            self.connector,
+            data_engine=data_engine,
+            signal_generator=signal_generator,
+            log_callback=self.log_message,
+        )
+        self.hedge_mgr = HedgeManager(
+            self.connector,
+            data_engine=data_engine,
+            signal_generator=signal_generator,
+            log_callback=self.log_message,
+        )
+
+        self.grid_columnconfigure(0, weight=0, minsize=420)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.frm_left = ctk.CTkScrollableFrame(
+            self, width=405, corner_radius=0, label_text=""
+        )
+        self.frm_left.grid(row=0, column=0, sticky="nswe")
+        self.frm_left.grid_columnconfigure(0, weight=1)
+
+        self.frm_right = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.frm_right.grid(row=0, column=1, sticky="nswe", padx=10, pady=10)
+
+        ui_panels.setup_left_panel(self, self.frm_left)
+        ui_panels.setup_right_panel(self, self.frm_right)
+
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        self.start_daemon_process()
+        self.thread = threading.Thread(target=self.bg_update_loop, daemon=True)
+        self.thread.start()
+
+        self.signal_listener = SignalListener(
+            trade_manager=self.trade_mgr,
+            get_auto_trade_cb=lambda: self.var_auto_trade.get(),
+            get_preset_cb=lambda: self.cbo_preset.get(),
+            get_tsl_mode_cb=self.get_current_tactic_string,
+            ui_heartbeat_cb=self.update_brain_heartbeat,
+            log_cb=lambda msg, error=False: self.log_message(
+                msg, error=error, target="bot"
+            ),
+        )
+        self.signal_listener.start()
+        try:
+            from telegram_notify.control import TelegramControlService
+
+            self.telegram_control_service = TelegramControlService(
+                connector=self.connector,
+                get_state_cb=lambda: getattr(self.trade_mgr, "state", {}),
+                get_bot_enabled_cb=lambda: bool(self.var_auto_trade.get()),
+                set_bot_enabled_cb=self.set_auto_trade_enabled,
+                get_brain_status_cb=lambda: getattr(self, "brain_status", ""),
+                get_active_symbols_cb=lambda: list(getattr(self, "brain_active_symbols", []) or []),
+                execute_order_cb=lambda symbol, side, lot, sl, tp: self.trade_mgr.execute_telegram_sandbox_order(
+                    symbol,
+                    side,
+                    lot,
+                    sl,
+                    tp,
+                    bypass_checklist=bool(self.var_bypass_checklist.get()),
+                ),
+                log_cb=lambda msg, error=False: self.log_message(msg, error=error, target="manual"),
+            )
+            self.telegram_control_service.start()
+            self.log_message("[TELEGRAM CONTROL] Service ready.", target="manual")
+        except Exception as exc:
+            self.telegram_control_service = None
+            self.log_message(f"[TELEGRAM CONTROL] Service failed: {exc}", error=True, target="manual")
+
+        self.log_message(
+            "RAT6.0 ready."
+        )
+
+    def start_daemon_process(self):
+        try:
+            os.makedirs(os.path.join("data", "logs"), exist_ok=True)
+            self.daemon_output_file = open(
+                os.path.join("data", "logs", "daemon_stdout.log"),
+                "a",
+                encoding="utf-8",
+                buffering=1,
+            )
+            self.daemon_process = subprocess.Popen(
+                [sys.executable, "bot_daemon.py"],
+                stdout=self.daemon_output_file,
+                stderr=subprocess.STDOUT,
+            )
+            self.log_message("🚀 Đã kích hoạt Bot Daemon ngầm.", target="bot")
+        except Exception as e:
+            self.log_message(f"❌ Lỗi kích hoạt Daemon: {e}", error=True, target="bot")
+
+    def reset_grid_runtime_switch(self):
+        try:
+            from grid.grid_storage import load_grid_settings, save_grid_settings
+
+            cfg = load_grid_settings()
+            if cfg.get("ENABLED", False):
+                cfg["ENABLED"] = False
+                save_grid_settings(cfg)
+                self.log_message("[GRID] Auto GRID reset to OFF on app startup.", target="grid")
+        except Exception as e:
+            self.log_message(f"[GRID] Cannot reset startup switch: {e}", error=True, target="grid")
+
+    def reset_hedge_runtime_switch(self):
+        try:
+            from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
+
+            cfg = load_hedge_settings()
+            if cfg.get("ENABLED", False):
+                cfg["ENABLED"] = False
+                save_hedge_settings(cfg)
+                self.log_message("[HEDGE] Auto HEDGE reset to OFF.", target="hedge")
+        except Exception as e:
+            self.log_message(f"[HEDGE] Cannot reset switch: {e}", error=True, target="hedge")
+
+    def refresh_hedge_runtime_light(self):
+        try:
+            from hedge.hedge_storage import load_hedge_settings
+
+            is_on = bool(load_hedge_settings().get("ENABLED", False))
+        except Exception:
+            is_on = False
+        color = COL_GREEN if is_on else COL_RED
+        for attr in ("ind_hedge_light", "ind_ad_hedge_light", "ind_hedge_ready_light"):
+            light = getattr(self, attr, None)
+            try:
+                if light and light.winfo_exists():
+                    light.configure(fg_color=color)
+            except Exception:
+                pass
+
+    def on_closing(self):
+        self.running = False
+        self.reset_hedge_runtime_switch()
+        if hasattr(self, "signal_listener"):
+            self.signal_listener.stop()
+        if getattr(self, "telegram_control_service", None):
+            self.telegram_control_service.stop()
+        if self.daemon_process:
+            self.daemon_process.terminate()
+            self.daemon_process.wait()
+        daemon_output = getattr(self, "daemon_output_file", None)
+        if daemon_output:
+            try:
+                daemon_output.close()
+            except Exception:
+                pass
+        try:
+            mt5.shutdown()
+        except:
+            pass
+        self.destroy()
+        sys.exit(0)
+
+    def _save_brain_live_config(self):
+        try:
+            existing_data = load_brain_settings()
+            existing_data["AUTO_TRADE_ENABLED"] = bool(getattr(config, "AUTO_TRADE_ENABLED", False))
+            if hasattr(config, "UI_ACTIVE_SYMBOL"):
+                existing_data["UI_ACTIVE_SYMBOL"] = config.UI_ACTIVE_SYMBOL
+            save_brain_settings(existing_data)
+        except Exception as e:
+            self.log_message(f"Live config sync error: {e}", error=True)
+        return
+
+        os.makedirs(os.path.dirname(BRAIN_SETTINGS_FILE), exist_ok=True)
+
+        # 1. Đọc dữ liệu JSON hiện tại (để giữ lại cấu hình Sandbox)
+        existing_data = {}
+        try:
+            if os.path.exists(BRAIN_SETTINGS_FILE):
+                with open(BRAIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+        except:
+            pass
+
+        # 2. Merge dữ liệu từ config hiện tại (của Main UI)
+        for k in dir(config):
+            if not k.startswith("__") and k != "COIN_LIST":
+                val = getattr(config, k)
+                if isinstance(val, (int, float, str, bool, list, dict)):
+                    # [FIX]: CẤM ghi đè các cụm Key thuộc thẩm quyền của Sandbox
+                    if k not in [
+                        "SANDBOX_CONFIG",
+                        "indicators",
+                        "voting_rules",
+                        "risk_tsl",
+                        "dca_config",
+                        "pca_config",
+                        "MASTER_EVAL_MODE",
+                        "MIN_MATCHING_VOTES",
+                        "FORCE_ANY_MODE",
+                        "G0_TIMEFRAME",
+                        "G1_TIMEFRAME",
+                        "G2_TIMEFRAME",
+                        "G3_TIMEFRAME",
+                    ]:
+                        existing_data[k] = val
+
+        # 3. Ghi lại vào file
+        try:
+            with open(BRAIN_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, indent=4)
+        except Exception as e:
+            self.log_message(f"Lỗi đồng bộ cấu hình (Hot-Reload): {e}", error=True)
+
+    def _merge_dict(self, target, source):
+        for k, v in source.items():
+            if isinstance(v, dict) and k in target and isinstance(target[k], dict):
+                self._merge_dict(target[k], v)
+            else:
+                target[k] = v
+
+    def reload_config_from_json(self):
+        """[JOB 1] Đọc lại cấu hình từ file JSON (Master) vào bộ nhớ App"""
+        if os.path.exists(BRAIN_SETTINGS_FILE):
+            try:
+                with open(BRAIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    bs = json.load(f)
+                    for k, v in bs.items():
+                        if hasattr(config, k) and k != "COIN_LIST":
+                            current_val = getattr(config, k)
+                            if isinstance(current_val, dict) and isinstance(v, dict):
+                                self._merge_dict(current_val, v)
+                            else:
+                                setattr(config, k, v)
+            except Exception as e:
+                self.log_message(f"Lỗi Reload JSON: {e}", error=True)
+
+    def update_brain_heartbeat(self, heartbeat: dict):
+        self.brain_status = heartbeat.get("status", "UNKNOWN")
+        self.brain_wakeup_time = heartbeat.get("wakeup_time", 0)
+        self.brain_active_symbols = heartbeat.get("active_symbols", [])
+
+        contexts = heartbeat.get("contexts", {})
+        if contexts:
+            self.latest_market_context = contexts
+            try:
+                import core.storage_manager as storage_manager
+                self.group_status_tracker = storage_manager.update_group_status_tracker(
+                    contexts, self.group_status_tracker
+                )
+            except Exception:
+                pass
+
+    def on_auto_trade_toggle(self):
+        if self.var_auto_trade.get():
+            self.set_grid_enabled(False, reason="BOT_ON")
+        # [FIX] Ép lưu cấu hình ngay lập tức để Daemon ngầm nhận được tín hiệu
+        config.AUTO_TRADE_ENABLED = self.var_auto_trade.get()
+        self._save_brain_live_config()
+
+        if self.var_auto_trade.get():
+            self.ind_auto_light.configure(fg_color=COL_GREEN)
+            self.log_message(
+                "🟢 AUTO-TRADE DAEMON ĐÃ BẬT. Bot sẽ tự động bắn lệnh.", target="bot"
+            )
+        else:
+            self.ind_auto_light.configure(fg_color=COL_RED)
+            self.log_message(
+                "🔴 AUTO-TRADE DAEMON ĐÃ TẮT. Chuyển về chế độ bắn tay (Manual).",
+                target="bot",
+            )
+
+    def set_auto_trade_enabled(self, enabled, reason=""):
+        enabled = bool(enabled)
+        self.var_auto_trade.set(enabled)
+        config.AUTO_TRADE_ENABLED = enabled
+        self._save_brain_live_config()
+
+        if hasattr(self, "ind_auto_light") and self.ind_auto_light.winfo_exists():
+            self.ind_auto_light.configure(fg_color=COL_GREEN if enabled else COL_RED)
+
+        if enabled:
+            self.log_message("AUTO-TRADE DAEMON ON. Bot can open new trades.", target="bot")
+        else:
+            msg = "AUTO-TRADE DAEMON OFF. Manual mode."
+            if reason:
+                msg = f"{msg} Reason={reason}"
+            self.log_message(msg, target="bot")
+
+    def set_grid_enabled(self, enabled, reason=""):
+        enabled = bool(enabled)
+        try:
+            from grid.grid_storage import load_grid_settings, save_grid_settings
+
+            next_cfg = load_grid_settings()
+            next_cfg["ENABLED"] = enabled
+            save_grid_settings(next_cfg)
+            for attr in ("ind_grid_light", "ind_ad_grid_light"):
+                light = getattr(self, attr, None)
+                if light and light.winfo_exists():
+                    light.configure(fg_color=COL_GREEN if enabled else COL_RED)
+            msg = f"[GRID] GRID ENABLED = {'ON' if enabled else 'OFF'}"
+            if reason:
+                msg = f"{msg} Reason={reason}"
+            self.log_message(msg, target="grid")
+        except Exception as e:
+            self.log_message(f"[GRID] Cannot update GRID switch: {e}", error=True, target="grid")
+
+    def get_current_tactic_string(self):
+        active = [k for k, v in self.tactic_states.items() if v]
+        base_tactic = "+".join(active) if active else "OFF"
+        if self.var_assist_dca.get() and "AUTO_DCA" not in base_tactic:
+            base_tactic += "+AUTO_DCA"
+        if self.var_assist_pca.get() and "AUTO_PCA" not in base_tactic:
+            base_tactic += "+AUTO_PCA"
+        return base_tactic
+
+    def get_current_entry_exit_tactic_string(self):
+        active = [k for k, v in self.entry_exit_tactic_states.items() if v]
+        return "+".join(active) if active else "OFF"
+
+    def _save_entry_exit_live_config(self):
+        try:
+            existing_data = load_brain_settings()
+        except Exception:
+            existing_data = {}
+
+        entry_exit = existing_data.setdefault("entry_exit", {})
+        active = [k for k, v in self.entry_exit_tactic_states.items() if v]
+        non_r_active = [k for k in active if k != "FALLBACK_R"]
+        entry_exit["enabled"] = bool(active)
+        entry_exit["preview_only"] = True
+        entry_exit["active_tactics"] = active
+        entry_exit["entry_tactics"] = active
+        if len(non_r_active) == 1:
+            entry_exit["exit_tactic"] = non_r_active[0]
+        elif active:
+            entry_exit["exit_tactic"] = "AUTO"
+        else:
+            entry_exit["exit_tactic"] = "AUTO"
+
+        try:
+            save_brain_settings(existing_data)
+        except Exception as e:
+            self.log_message(f"Lỗi lưu Entry/Exit live config: {e}", error=True)
+
+    def toggle_tactic(self, mode):
+        next_state = not self.tactic_states[mode]
+        self.tactic_states[mode] = next_state
+        if mode == "BE_CASH" and next_state:
+            self.tactic_states["BE"] = False
+        elif mode == "BE" and next_state:
+            self.tactic_states["BE_CASH"] = False
+        self.update_tactic_buttons_ui()
+        self.refresh_manual_preview_tab()
+
+    def toggle_entry_exit_tactic(self, mode):
+        self.entry_exit_tactic_states[mode] = not self.entry_exit_tactic_states[mode]
+        self.update_entry_exit_buttons_ui()
+        self._save_entry_exit_live_config()
+        self.refresh_manual_preview_tab()
+
+    def update_tactic_buttons_ui(self):
+        def set_btn(btn, is_active):
+            btn.configure(
+                fg_color=COL_BLUE_ACCENT if is_active else COL_GRAY_BTN,
+                hover_color=COL_BLUE_ACCENT_HOVER if is_active else "#616161",
+            )
+
+        set_btn(self.btn_tactic_be, self.tactic_states["BE"])
+        set_btn(self.btn_tactic_pnl, self.tactic_states["PNL"])
+        set_btn(self.btn_tactic_step, self.tactic_states["STEP_R"])
+        set_btn(self.btn_tactic_swing, self.tactic_states["SWING"])
+
+        if hasattr(self, "btn_tactic_cash"):  # [FIX] Update màu nút CASH
+            set_btn(self.btn_tactic_cash, self.tactic_states["BE_CASH"])
+        if hasattr(self, "btn_tactic_psar"):  # [FIX] Update màu nút PSAR
+            set_btn(self.btn_tactic_psar, self.tactic_states["PSAR_TRAIL"])
+
+        if hasattr(self, "btn_tactic_dca"):
+            set_btn(self.btn_tactic_dca, self.tactic_states["AUTO_DCA"])
+        if hasattr(self, "btn_tactic_pca"):
+            set_btn(self.btn_tactic_pca, self.tactic_states["AUTO_PCA"])
+        if hasattr(self, "btn_tactic_rev_c"):
+            set_btn(self.btn_tactic_rev_c, self.tactic_states["REV_C"])
+        if hasattr(self, "btn_tactic_anti_cash"):
+            set_btn(self.btn_tactic_anti_cash, self.tactic_states["ANTI_CASH"])
+
+    def update_entry_exit_buttons_ui(self):
+        def set_btn(btn, is_active):
+            btn.configure(
+                fg_color=COL_BLUE_ACCENT if is_active else COL_GRAY_BTN,
+                hover_color=COL_BLUE_ACCENT_HOVER if is_active else "#616161",
+            )
+
+        if hasattr(self, "btn_entry_r"):
+            set_btn(self.btn_entry_r, self.entry_exit_tactic_states["FALLBACK_R"])
+        if hasattr(self, "btn_entry_swing"):
+            set_btn(self.btn_entry_swing, self.entry_exit_tactic_states["SWING_REJECTION"])
+        if hasattr(self, "btn_entry_struct"):
+            set_btn(self.btn_entry_struct, self.entry_exit_tactic_states["SWING_STRUCTURE"])
+        if hasattr(self, "btn_entry_fib"):
+            set_btn(self.btn_entry_fib, self.entry_exit_tactic_states["FIB_RETRACE"])
+        if hasattr(self, "btn_entry_pullback"):
+            set_btn(self.btn_entry_pullback, self.entry_exit_tactic_states["PULLBACK_ZONE"])
+
+    def on_symbol_change(self, new_symbol):
+        config.UI_ACTIVE_SYMBOL = new_symbol
+        if hasattr(self, "lbl_preview_symbol"):
+            self.lbl_preview_symbol.configure(text=new_symbol)
+        self._save_brain_live_config()
+        self.lbl_dashboard_price.configure(text="Đang nạp...", text_color="gray")
+        self.on_direction_change(self.var_direction.get())
+        self.update_grid_manual_preview()
+        self.refresh_manual_preview_tab()
+        threading.Thread(target=lambda: mt5.symbol_select(new_symbol, True)).start()
+
+    def on_preset_change(self, value):
+        try:
+            config.DEFAULT_PRESET = value
+        except Exception:
+            pass
+        self.refresh_manual_preview_tab()
+
+    def on_manual_input_change(self, *_):
+        try:
+            self.refresh_manual_preview_tab()
+        except Exception:
+            pass
+
+    def on_direction_change(self, value):
+        self.var_direction.set(value)
+        if hasattr(self, "btn_dir_buy") and hasattr(self, "btn_dir_sell"):
+            buy_on = value == "BUY"
+            self.btn_dir_buy.configure(
+                fg_color=COL_GREEN if buy_on else "#424242",
+                hover_color="#009624" if buy_on else "#616161",
+            )
+            self.btn_dir_sell.configure(
+                fg_color=COL_RED if not buy_on else "#424242",
+                hover_color="#B71C1C" if not buy_on else "#616161",
+            )
+        sym = self.cbo_symbol.get()
+        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "GRID":
+            self.btn_action.configure(
+                text=f"START GRID {self.var_grid_manual_mode.get()} {sym}",
+                fg_color="#00838F",
+                hover_color="#006064",
+            )
+            return
+        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "HEDGE":
+            self.btn_action.configure(
+                text=f"START HEDGE DUAL {sym}",
+                fg_color="#6A1B9A",
+                hover_color="#4A148C",
+            )
+            return
+        if value == "BUY":
+            self.btn_action.configure(
+                text=f"VÀO LỆNH MUA {sym}", fg_color=COL_GREEN, hover_color="#009624"
+            )
+        else:
+            self.btn_action.configure(
+                text=f"VÀO LỆNH BÁN {sym}", fg_color=COL_RED, hover_color="#B71C1C"
+            )
+
+    def on_grid_mode_change(self, value):
+        self.var_grid_manual_mode.set(value)
+        self.update_grid_manual_preview()
+        self.refresh_manual_preview_tab()
+        if self.var_manual_trade_mode.get() == "GRID":
+            sym = self.cbo_symbol.get()
+            self.btn_action.configure(
+                text=f"START GRID {value} {sym}",
+                fg_color="#00838F",
+                hover_color="#006064",
+            )
+
+    def on_preview_group_change(self, value):
+        preset = self.cbo_preset.get()
+        group = self._preview_group_value()
+        preset_cfg = config.PRESETS.setdefault(preset, {})
+        preset_cfg["MANUAL_SL_GROUP"] = group
+        preset_cfg["MANUAL_TP_GROUP"] = group
+        preset_cfg["MANUAL_SWING_SL_GROUP"] = group
+        preset_cfg["MANUAL_SWING_TP_GROUP"] = group
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(f"Save preview group error: {exc}", error=True, target="manual")
+        self.refresh_manual_preview_tab()
+
+    def on_preview_manual_sl_group_change(self, value):
+        self.on_preview_group_change(value)
+
+    def _preview_group_from_value(self, value, default="G2"):
+        raw = str(value or default)
+        if raw.startswith("G"):
+            return raw.split(" ", 1)[0]
+        if "DYNAMIC" in raw.upper():
+            return "DYNAMIC"
+        return default
+
+    def on_preview_sl_group_change(self, value):
+        preset = self.cbo_preset.get()
+        group = self._preview_group_from_value(value)
+        preset_cfg = config.PRESETS.setdefault(preset, {})
+        preset_cfg["MANUAL_SL_GROUP"] = group
+        preset_cfg["MANUAL_SWING_SL_GROUP"] = group
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(f"Save preview SL group error: {exc}", error=True, target="manual")
+        self.refresh_manual_preview_tab()
+
+    def on_preview_tp_group_change(self, value):
+        preset = self.cbo_preset.get()
+        group = self._preview_group_from_value(value)
+        preset_cfg = config.PRESETS.setdefault(preset, {})
+        preset_cfg["MANUAL_TP_GROUP"] = group
+        preset_cfg["MANUAL_SWING_TP_GROUP"] = group
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(f"Save preview TP group error: {exc}", error=True, target="manual")
+        self.refresh_manual_preview_tab()
+
+    def on_preview_sl_mode_change(self, value):
+        preset_cfg = config.PRESETS.setdefault(self.cbo_preset.get(), {})
+        mode = self._manual_mode_value(value, "PERCENT")
+        preset_cfg["MANUAL_SL_MODE"] = mode
+        preset_cfg["USE_SWING_SL"] = mode in ("SWING_REJECTION", "SWING_STRUCTURE")
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(f"Save preview SL mode error: {exc}", error=True, target="manual")
+        self.refresh_manual_preview_tab()
+
+    def on_preview_tp_mode_change(self, value):
+        preset_cfg = config.PRESETS.setdefault(self.cbo_preset.get(), {})
+        mode = self._manual_mode_value(value, "RR")
+        preset_cfg["MANUAL_TP_MODE"] = mode
+        preset_cfg["USE_SWING_TP"] = mode in ("SWING_REJECTION", "SWING_STRUCTURE")
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(f"Save preview TP mode error: {exc}", error=True, target="manual")
+        self.refresh_manual_preview_tab()
+
+    def on_manual_trade_mode_change(self, value):
+        self.var_manual_trade_mode.set(value)
+        if value != "NORMAL" and hasattr(self, "var_preview_trade_after_apply"):
+            self.var_preview_trade_after_apply.set(False)
+        if hasattr(self, "chk_preview_trade_after_apply"):
+            self.chk_preview_trade_after_apply.configure(
+                state="normal" if value == "NORMAL" else "disabled"
+            )
+        self.refresh_manual_preview_tab()
+        if hasattr(self, "btn_mode_normal") and hasattr(self, "btn_mode_grid"):
+            normal_on = value == "NORMAL"
+            grid_on = value == "GRID"
+            hedge_on = value == "HEDGE"
+            self.btn_mode_normal.configure(
+                fg_color="#00838F" if normal_on else "#424242",
+                hover_color="#006064" if normal_on else "#616161",
+            )
+            self.btn_mode_grid.configure(
+                fg_color="#00838F" if grid_on else "#424242",
+                hover_color="#006064" if grid_on else "#616161",
+            )
+            if hasattr(self, "btn_mode_hedge"):
+                self.btn_mode_hedge.configure(
+                    fg_color="#6A1B9A" if hedge_on else "#424242",
+                    hover_color="#4A148C" if hedge_on else "#616161",
+                )
+        if value == "GRID":
+            if hasattr(self, "frame_direction"):
+                self.frame_direction.grid_remove()
+            if hasattr(self, "frame_hedge_options"):
+                self.frame_hedge_options.pack_forget()
+            if hasattr(self, "seg_grid_mode"):
+                self.seg_grid_mode.pack(fill="x", padx=10, pady=(5, 5), before=self.btn_action)
+            if hasattr(self, "frame_grid_options"):
+                self.frame_grid_options.pack(fill="x", padx=12, pady=(0, 6), before=self.btn_action)
+                self.update_grid_manual_preview()
+            self.on_grid_mode_change(self.var_grid_manual_mode.get())
+        elif value == "HEDGE":
+            if hasattr(self, "frame_direction"):
+                self.frame_direction.grid_remove()
+            if hasattr(self, "seg_grid_mode"):
+                self.seg_grid_mode.pack_forget()
+            if hasattr(self, "frame_grid_options"):
+                self.frame_grid_options.pack_forget()
+            if hasattr(self, "frame_hedge_options"):
+                self.frame_hedge_options.pack(fill="x", padx=12, pady=(0, 6), before=self.btn_action)
+                self.update_hedge_manual_preview()
+            sym = self.cbo_symbol.get()
+            self.btn_action.configure(
+                text=f"START HEDGE DUAL {sym}",
+                fg_color="#6A1B9A",
+                hover_color="#4A148C",
+            )
+        else:
+            if hasattr(self, "seg_grid_mode"):
+                self.seg_grid_mode.pack_forget()
+            if hasattr(self, "frame_grid_options"):
+                self.frame_grid_options.pack_forget()
+            if hasattr(self, "frame_hedge_options"):
+                self.frame_hedge_options.pack_forget()
+            if hasattr(self, "frame_direction"):
+                self.frame_direction.grid()
+            self.on_direction_change(self.var_direction.get())
+
+    def update_grid_manual_preview(self):
+        if not hasattr(self, "lbl_grid_manual_preview"):
+            return
+        try:
+            from grid.grid_storage import load_grid_settings
+
+            cfg = load_grid_settings()
+            sym = self.cbo_symbol.get()
+            ctx = getattr(self, "latest_market_context", {}).get(sym, {})
+            price = float(ctx.get("current_price", 0.0) or 0.0)
+            mode = self.var_grid_manual_mode.get()
+            grid_type = cfg.get("GRID_TYPE", "ATR_DYNAMIC")
+            group = cfg.get("GRID_TIMEFRAME_GROUP", "G2")
+            upper = float(cfg.get("MANUAL_UPPER_BOUNDARY", 0.0) or 0.0)
+            lower = float(cfg.get("MANUAL_LOWER_BOUNDARY", 0.0) or 0.0)
+            if upper <= lower:
+                upper = float(ctx.get(f"swing_high_{group}", ctx.get("swing_high")) or 0.0)
+                lower = float(ctx.get(f"swing_low_{group}", ctx.get("swing_low")) or 0.0)
+
+            spacing = 0.0
+            if grid_type == "ARITHMETIC" and upper > lower:
+                spacing = (upper - lower) / max(1, int(cfg.get("GRID_COUNT", 10) or 10))
+            elif grid_type == "GEOMETRIC" and price > 0:
+                spacing = price * (float(cfg.get("GEOMETRIC_STEP_PERCENT", 1.0) or 1.0) / 100.0)
+            else:
+                atr = float(ctx.get(f"atr_{group}", ctx.get("atr")) or 0.0)
+                spacing = atr * float(cfg.get("SPACING_ATR_MULTIPLIER", 1.0) or 1.0)
+
+            signal_source = cfg.get("GRID_SIGNAL_SOURCE", "OFF")
+            status = "BLOCK"
+            color = "#F44336"
+            reason = "Missing data"
+            if upper > lower and price > 0 and spacing > 0:
+                mid = (upper + lower) / 2.0
+                if not (lower < price < upper):
+                    next_action = "OUT_OF_RANGE"
+                    status = "BLOCK"
+                    color = "#F44336"
+                    reason = f"PRICE_OUT_OF_BOUNDARY/{cfg.get('OUT_OF_RANGE_POLICY', 'STOP')}"
+                elif mode == "LONG":
+                    next_action = "BUY" if price <= mid else "WAIT"
+                    status = "READY" if next_action == "BUY" else "WAIT"
+                    color = "#00C853" if status == "READY" else "#FFB300"
+                    reason = next_action
+                elif mode == "SHORT":
+                    next_action = "SELL" if price >= mid else "WAIT"
+                    status = "READY" if next_action == "SELL" else "WAIT"
+                    color = "#00C853" if status == "READY" else "#FFB300"
+                    reason = next_action
+                else:
+                    next_action = "BUY" if price < mid else ("SELL" if price > mid else "WAIT")
+                    status = "READY" if next_action in ("BUY", "SELL") else "WAIT"
+                    color = "#00C853" if status == "READY" else "#FFB300"
+                    reason = next_action
+            else:
+                reason = "Missing data"
+            text = f"GRID: {grid_type} | Signal: {signal_source} | {status}: {reason}"
+            if hasattr(self, "ind_grid_ready_light"):
+                self.ind_grid_ready_light.configure(fg_color=color)
+            self.lbl_grid_manual_preview.configure(text=text)
+        except Exception as e:
+            if hasattr(self, "ind_grid_ready_light"):
+                self.ind_grid_ready_light.configure(fg_color="#F44336")
+            self.lbl_grid_manual_preview.configure(text=f"GRID Preview error: {e}")
+
+    def update_hedge_manual_preview(self):
+        if not hasattr(self, "lbl_hedge_manual_preview"):
+            return
+        try:
+            from hedge.hedge_storage import load_hedge_settings
+
+            sym = self.cbo_symbol.get()
+            ctx = getattr(self, "latest_market_context", {}).get(sym, {})
+            gate = self.hedge_mgr.evaluate_entry_gate(sym, ctx, load_hedge_settings())
+            color = "#00C853" if gate["permission"] else "#FFB300"
+            if gate["reason"] not in ("OK", "") and gate["status"] != "READY":
+                color = "#F44336" if "NO_" in gate["reason"] else "#FFB300"
+            text = (
+                f"HEDGE: {gate.get('tactic', 'DUAL')} | "
+                f"Signal: {gate.get('signal_status', 'OFF')} | "
+                f"E/E: {gate.get('entry_status', 'OFF')} | "
+                f"{gate.get('status', 'WAIT')}: {gate.get('reason', '---')}"
+            )
+            if hasattr(self, "ind_hedge_ready_light"):
+                self.ind_hedge_ready_light.configure(fg_color=color)
+            self.lbl_hedge_manual_preview.configure(text=text)
+        except Exception as e:
+            if hasattr(self, "ind_hedge_ready_light"):
+                self.ind_hedge_ready_light.configure(fg_color="#F44336")
+            self.lbl_hedge_manual_preview.configure(text=f"HEDGE Preview error: {e}")
+
+    def _preview_tf_group(self, symbol, context):
+        raw = ""
+        if hasattr(self, "var_preview_tf"):
+            raw = str(self.var_preview_tf.get() or "Auto")
+        if raw.startswith("G"):
+            return raw.split(" ", 1)[0]
+        mode = str((context or {}).get("market_mode", "ANY") or "ANY").upper()
+        return "G1" if mode in ("TREND", "BREAKOUT") else "G2"
+
+    def _preview_group_value(self):
+        raw = ""
+        if hasattr(self, "var_preview_tf"):
+            raw = str(self.var_preview_tf.get() or "G2")
+        if raw.startswith("G"):
+            return raw.split(" ", 1)[0]
+        if "DYNAMIC" in raw.upper():
+            return "DYNAMIC"
+        return "G2"
+
+    def _fmt_price(self, value):
+        try:
+            value = float(value)
+            if value <= 0:
+                return "--"
+            return f"{value:.2f}"
+        except Exception:
+            return "--"
+
+    def _preview_color_for_status(self, status, direction=None):
+        status = str(status or "").upper()
+        direction = str(direction or "").upper()
+        if status == "READY":
+            return COL_GREEN if direction != "SELL" else COL_RED
+        if status == "BLOCK":
+            return COL_RED
+        if status == "WAIT":
+            return COL_WARN
+        return "#78909C"
+
+    def _safe_float(self, value, default=0.0):
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    def _resolve_manual_preset_group(self, params, key, context):
+        group = str((params or {}).get(key, "G2") or "G2")
+        if "DYNAMIC" in group:
+            mode = str((context or {}).get("market_mode", "ANY") or "ANY").upper()
+            return "G1" if mode in ("TREND", "BREAKOUT") else "G2"
+        return group
+
+    def _manual_rule_mode(self, params, mode_key, legacy_key, default):
+        mode = str((params or {}).get(mode_key, "") or "").upper()
+        if mode:
+            if "SANDBOX" in mode:
+                return "SANDBOX"
+            if mode in ("SWING_REJECTION", "SWING_RETEST", "RETEST"):
+                return "SWING_REJECTION"
+            if mode in ("SWING_STRUCTURE", "SWING_STRUCT", "STRUCT"):
+                return "SWING_STRUCTURE"
+            if "FIB" in mode:
+                return "FIB"
+            if "PULL" in mode:
+                return "PULLBACK"
+            if "SWING" in mode:
+                return "SWING_REJECTION"
+            if "RR" in mode:
+                return "RR"
+            if "OFF" in mode or "NO_TP" in mode:
+                return "OFF"
+            if "PERCENT" in mode:
+                return "PERCENT"
+            return default
+        return "SWING_REJECTION" if bool((params or {}).get(legacy_key, False)) else default
+
+    def _manual_mode_display(self, mode, kind="SL"):
+        mode = str(mode or "").upper()
+        mapping = {
+            "PERCENT": "Percent",
+            "SANDBOX": "SL Sandbox",
+            "RR": "RR",
+            "OFF": "OFF",
+            "NO_TP": "OFF",
+            "SWING": "Swing Retest",
+            "SWING_REJECTION": "Swing Retest",
+            "SWING_RETEST": "Swing Retest",
+            "RETEST": "Swing Retest",
+            "SWING_STRUCTURE": "Swing Struct",
+            "SWING_STRUCT": "Swing Struct",
+            "STRUCT": "Swing Struct",
+            "FIB": "FIB",
+            "FIB_RETRACE": "FIB",
+            "PULLBACK": "Pullback",
+            "PULLBACK_ZONE": "Pullback",
+            "PULL": "Pullback",
+        }
+        return mapping.get(mode, "Percent" if kind == "SL" else "RR")
+
+    def _manual_mode_value(self, value, default):
+        mode = str(value or default).upper()
+        if "STRUCT" in mode:
+            return "SWING_STRUCTURE"
+        if "SANDBOX" in mode:
+            return "SANDBOX"
+        if "RETEST" in mode:
+            return "SWING_REJECTION"
+        if "FIB" in mode:
+            return "FIB"
+        if "PULL" in mode:
+            return "PULLBACK"
+        if "SWING" in mode:
+            return "SWING_REJECTION"
+        if "PERCENT" in mode:
+            return "PERCENT"
+        if mode == "R" or "RR" in mode:
+            return "RR"
+        if "OFF" in mode or "NO_TP" in mode:
+            return "OFF"
+        return default
+
+    def _manual_source_label(self, source):
+        raw = str(source or "--")
+        upper = raw.upper()
+        if upper == "MANUAL_SL":
+            return "Manual Input"
+        if upper == "MANUAL_TP":
+            return "Manual Input"
+        if upper.startswith("SANDBOX") or upper.startswith("MANUAL_SANDBOX"):
+            return "SL Sandbox"
+        if "SWING_RETEST" in upper or "SWING_REJECTION" in upper:
+            return "Swing Retest"
+        if "SWING_STRUCTURE" in upper:
+            return "Swing Struct"
+        if upper.startswith("MANUAL_SWING"):
+            return "Swing Retest"
+        if upper.startswith("MANUAL_FIB"):
+            return "FIB"
+        if upper.startswith("MANUAL_PULLBACK"):
+            return "Pullback"
+        if upper == "PERCENT":
+            return "Percent"
+        if upper == "OFF" or upper == "NO_TP":
+            return "OFF"
+        if upper == "RR" or upper.endswith("R"):
+            return "RR"
+        return raw
+
+    def _pullback_zone_from_context(self, direction, context, group, params):
+        atr = self._safe_float((context or {}).get(f"atr_{group}", (context or {}).get("atr_entry", 0.0)))
+        if atr <= 0:
+            return None, atr, "PULLBACK"
+        source = str((params or {}).get("MANUAL_PULLBACK_SOURCE", "EMA20") or "EMA20").upper()
+        if source == "SWING":
+            high = self._safe_float((context or {}).get(f"swing_high_{group}", 0.0))
+            low = self._safe_float((context or {}).get(f"swing_low_{group}", 0.0))
+            mid = low if direction == "BUY" else high
+        elif source == "BB_MID":
+            mid = self._safe_float((context or {}).get(f"bb_mid_{group}", (context or {}).get("bb_mid", 0.0)))
+        else:
+            mid = self._safe_float(
+                (context or {}).get(f"ema20_{group}", (context or {}).get("ema20", (context or {}).get(f"EMA_20_{group}", 0.0)))
+            )
+            source = "EMA20"
+        if mid <= 0:
+            return None, atr, f"PULLBACK_{source}"
+        width = atr * self._safe_float((params or {}).get("MANUAL_PULLBACK_ATR_WIDTH", 0.5), 0.5)
+        return (mid - width, mid + width), atr, f"PULLBACK_{source}"
+
+    def _fmt_zone(self, zone):
+        try:
+            if not zone or len(zone) < 2:
+                return "--"
+            lo, hi = float(zone[0]), float(zone[1])
+            if lo <= 0 or hi <= 0:
+                return "--"
+            return f"{lo:.2f}-{hi:.2f}"
+        except Exception:
+            return "--"
+
+    def _format_ee_gate(self, decision, current_price=0.0):
+        status = str((decision or {}).get("status", "OFF") or "OFF").upper()
+        tactic = str((decision or {}).get("entry_tactic", "OFF") or "OFF").upper()
+        short = {
+            "FALLBACK_R": "R",
+            "SWING_REJECTION": "RETEST",
+            "SWING_STRUCTURE": "STRUCT",
+            "FIB_RETRACE": "FIB",
+            "PULLBACK_ZONE": "PULL",
+            "MULTI_WAIT": "MULTI",
+            "OFF": "OFF",
+        }.get(tactic, tactic)
+        zone = decision.get("entry_zone") if isinstance(decision, dict) else None
+        zone_txt = self._fmt_zone(zone)
+        if zone_txt != "--":
+            return f"{status} {short} | Zone {zone_txt}"
+        reason = str((decision or {}).get("reason", "") or "")
+        if tactic == "FALLBACK_R" and "MISSING E/E DATA" in reason.upper():
+            reason = ""
+        reason = (
+            reason.replace("Missing pullback source", "Missing")
+            .replace("Missing ATR", "Missing ATR")
+            .replace("Fallback R entry", "")
+        ).strip()
+        return f"{status} {short}" + (f" | {reason}" if reason else "")
+
+    def _entry_zone_decision(self, decision):
+        if not isinstance(decision, dict):
+            return {}
+        if self._fmt_zone(decision.get("entry_zone")) != "--":
+            return decision
+        waits = decision.get("wait_decisions") or []
+        order = ["SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZONE", "FALLBACK_R"]
+        for tactic in order:
+            for item in waits:
+                if item.get("entry_tactic") == tactic and self._fmt_zone(item.get("entry_zone")) != "--":
+                    return item
+        return decision
+
+    def _manual_preview_entry_exit_cfg(self, base_cfg):
+        cfg = dict(base_cfg or {})
+        active = [k for k, v in getattr(self, "entry_exit_tactic_states", {}).items() if v]
+        if active:
+            cfg["enabled"] = True
+            cfg["active_tactics"] = active
+            cfg["entry_tactics"] = active
+        return cfg
+
+    def _preview_entry_exit_decision(self, symbol, direction, price, context, ee_cfg):
+        from core.entry_exit_engine import evaluate_entry_exit
+
+        active = list((ee_cfg or {}).get("entry_tactics") or (ee_cfg or {}).get("active_tactics") or [])
+        non_r = [mode for mode in active if mode != "FALLBACK_R"]
+        if non_r:
+            technical_cfg = dict(ee_cfg or {})
+            technical_cfg["active_tactics"] = non_r
+            technical_cfg["entry_tactics"] = non_r
+            technical_cfg["enabled"] = True
+            technical_cfg["missing_data_policy"] = "ERROR"
+            technical_decision = evaluate_entry_exit(symbol, direction, price, context, technical_cfg)
+            if technical_decision.get("status") in ("READY", "WAIT"):
+                return technical_decision
+            if "PULLBACK_ZONE" in non_r or len(non_r) == 1:
+                if technical_decision.get("status") == "ERROR" and technical_decision.get("entry_tactic") in (None, "", "OFF"):
+                    technical_decision["entry_tactic"] = non_r[0]
+                return technical_decision
+        return evaluate_entry_exit(symbol, direction, price, context, ee_cfg)
+
+    def _group_tf_label(self, group):
+        group = str(group or "--")
+        tf = getattr(config, f"{group}_TIMEFRAME", group)
+        return f"{group} ({tf})" if group.startswith("G") else group
+
+    def _resolve_manual_sl_price(self, symbol, direction, price, params, context, manual_sl=0.0):
+        context = context or {}
+        params = params or {}
+        if manual_sl and manual_sl > 0:
+            return manual_sl, abs(price - manual_sl), "MANUAL", False
+
+        sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
+        sl_group = self._resolve_manual_preset_group(params, "MANUAL_SL_GROUP", context)
+        market_mode = str(context.get("market_mode", "ANY") or "ANY").upper()
+
+        if sl_mode == "SANDBOX":
+            brain = self.trade_mgr._get_brain_settings(symbol)
+            risk_tsl = brain.get("risk_tsl", {}) or {}
+            sandbox_group = str(sl_group or risk_tsl.get("base_sl", getattr(config, "BOT_BASE_SL", "G2")) or "G2")
+            if "DYNAMIC" in sandbox_group:
+                sandbox_group = "G1" if market_mode in ("TREND", "BREAKOUT") else "G2"
+            atr_val = self._safe_float(context.get(f"atr_{sandbox_group}", context.get("atr_entry", 0.0)))
+            swing_low = self._safe_float(context.get(f"swing_low_{sandbox_group}", 0.0))
+            swing_high = self._safe_float(context.get(f"swing_high_{sandbox_group}", 0.0))
+            sl_mult = self._safe_float(risk_tsl.get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)), 0.2)
+            if atr_val > 0 and swing_low > 0 and swing_high > 0:
+                buffer = atr_val * sl_mult
+                sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
+                return sl_price, abs(price - sl_price), f"SANDBOX:{sandbox_group}", False
+            sl_mode = "PERCENT"
+
+        if sl_mode in ("SWING_REJECTION", "SWING_STRUCTURE"):
+            if "MANUAL_SL_GROUP" not in params and "MANUAL_SWING_SL_GROUP" in params:
+                sl_group = self._resolve_manual_preset_group(params, "MANUAL_SWING_SL_GROUP", context)
+            atr_val = self._safe_float(context.get(f"atr_{sl_group}", context.get("atr", 0.0)))
+            swing_low = self._safe_float(context.get(f"swing_low_{sl_group}", 0.0))
+            swing_high = self._safe_float(context.get(f"swing_high_{sl_group}", 0.0))
+            if atr_val > 0 and swing_low > 0 and swing_high > 0:
+                sl_mult = self._safe_float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)), 0.2)
+                buffer = atr_val * sl_mult
+                sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
+                return sl_price, abs(price - sl_price), f"SWING:{sl_group}", False
+            return 0.0, 0.0, f"{sl_mode}:MISSING", True
+
+        sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
+        sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
+        return sl_price, sl_dist, f"PERCENT:{float(params.get('SL_PERCENT', 0.5) or 0.5):g}%", False
+
+    def _resolve_manual_setup_preview(self, symbol, direction, preset_name, context):
+        params = config.PRESETS.get(
+            preset_name,
+            next(iter(config.PRESETS.values()), {"SL_PERCENT": 0.5, "TP_RR_RATIO": 1.5, "RISK_PERCENT": 0.3}),
+        )
+        context = context or {}
+        tick = mt5.symbol_info_tick(symbol)
+        sym_info = mt5.symbol_info(symbol)
+        if not tick or not sym_info:
+            return {"ready": False, "reason": "NO_TICK_OR_SYMBOL_INFO"}
+
+        price = float(tick.ask if direction == "BUY" else tick.bid)
+        c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
+        vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 0.01)) or 0.01)
+        vol_max = float(getattr(sym_info, "volume_max", getattr(config, "MAX_LOT_SIZE", 100.0)) or 100.0)
+        vol_step = float(getattr(sym_info, "volume_step", getattr(config, "LOT_STEP", 0.01)) or 0.01)
+        point = float(getattr(sym_info, "point", 0.00001) or 0.00001)
+
+        manual_lot = self._safe_float(self.var_manual_lot.get() or 0.0)
+        manual_sl = self._safe_float(self.var_manual_sl.get() or 0.0)
+        manual_tp = self._safe_float(self.var_manual_tp.get() or 0.0)
+        market_mode = str(context.get("market_mode", "ANY") or "ANY").upper()
+
+        sl_source = "PERCENT"
+        if "MANUAL_SL_GROUP" not in params and "MANUAL_SWING_SL_GROUP" in params:
+            params = dict(params)
+            params["MANUAL_SL_GROUP"] = params.get("MANUAL_SWING_SL_GROUP")
+        if "MANUAL_TP_GROUP" not in params and "MANUAL_SWING_TP_GROUP" in params:
+            params = dict(params)
+            params["MANUAL_TP_GROUP"] = params.get("MANUAL_SWING_TP_GROUP")
+        sl_group = self._resolve_manual_preset_group(params, "MANUAL_SL_GROUP", context)
+        tp_group = self._resolve_manual_preset_group(params, "MANUAL_TP_GROUP", context)
+        atr_key = f"atr_{sl_group}"
+        swing_low_key = f"swing_low_{sl_group}"
+        swing_high_key = f"swing_high_{sl_group}"
+        atr_val = self._safe_float(context.get(atr_key, context.get("atr", 0.0)))
+        swing_low = self._safe_float(context.get(swing_low_key, 0.0))
+        swing_high = self._safe_float(context.get(swing_high_key, 0.0))
+        sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
+        tp_mode = self._manual_rule_mode(params, "MANUAL_TP_MODE", "USE_SWING_TP", "RR")
+
+        if manual_sl > 0:
+            sl_price = manual_sl
+            sl_source = "MANUAL_SL"
+        elif sl_mode == "SANDBOX":
+            brain = self.trade_mgr._get_brain_settings(symbol)
+            risk_tsl = brain.get("risk_tsl", {}) or {}
+            sandbox_group = str(sl_group or risk_tsl.get("base_sl", getattr(config, "BOT_BASE_SL", "G2")) or "G2")
+            if "DYNAMIC" in sandbox_group:
+                sandbox_group = "G1" if market_mode in ("TREND", "BREAKOUT") else "G2"
+            sandbox_atr = self._safe_float(context.get(f"atr_{sandbox_group}", context.get("atr_entry", 0.0)))
+            sandbox_low = self._safe_float(context.get(f"swing_low_{sandbox_group}", 0.0))
+            sandbox_high = self._safe_float(context.get(f"swing_high_{sandbox_group}", 0.0))
+            sandbox_mult = self._safe_float(risk_tsl.get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)), 0.2)
+            if sandbox_atr > 0 and sandbox_low > 0 and sandbox_high > 0:
+                buffer = sandbox_atr * sandbox_mult
+                sl_price = sandbox_low - buffer if direction == "BUY" else sandbox_high + buffer
+                sl_source = f"SANDBOX:{sandbox_group}"
+                sl_group = sandbox_group
+                atr_val = sandbox_atr
+            else:
+                sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
+                sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
+                sl_source = "PERCENT"
+        elif sl_mode == "SWING_REJECTION" and atr_val > 0 and swing_low > 0 and swing_high > 0:
+            sl_mult = float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)) or 0.2)
+            buffer = atr_val * sl_mult
+            sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
+            sl_source = f"MANUAL_SWING_RETEST:{sl_group}"
+        elif sl_mode == "SWING_STRUCTURE" and atr_val > 0:
+            try:
+                from core.market_structure import structure_from_context
+                ms = structure_from_context(context, sl_group)
+            except Exception:
+                ms = {}
+            sl_mult = float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)) or 0.2)
+            buffer = atr_val * sl_mult
+            if direction == "BUY" and self._safe_float(ms.get("hl")) > 0:
+                sl_price = self._safe_float(ms.get("hl")) - buffer
+                sl_source = f"MANUAL_SWING_STRUCTURE:{sl_group}"
+            elif direction == "SELL" and self._safe_float(ms.get("lh")) > 0:
+                sl_price = self._safe_float(ms.get("lh")) + buffer
+                sl_source = f"MANUAL_SWING_STRUCTURE:{sl_group}"
+            elif swing_low > 0 and swing_high > 0:
+                sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
+                sl_source = f"MANUAL_SWING_RETEST:{sl_group}"
+            else:
+                sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
+                sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
+                sl_source = "PERCENT"
+        elif sl_mode == "FIB" and atr_val > 0 and swing_low > 0 and swing_high > 0:
+            tol = atr_val * float(params.get("MANUAL_FIB_SL_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", 0.2)) or 0.2)
+            sl_price = swing_low - tol if direction == "BUY" else swing_high + tol
+            sl_source = f"MANUAL_FIB:{sl_group}"
+        elif sl_mode == "PULLBACK":
+            zone, pull_atr, pull_src = self._pullback_zone_from_context(direction, context, sl_group, params)
+            if zone and pull_atr > 0:
+                buffer = pull_atr * float(params.get("MANUAL_PULLBACK_SL_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", 0.2)) or 0.2)
+                sl_price = zone[0] - buffer if direction == "BUY" else zone[1] + buffer
+                sl_source = f"MANUAL_{pull_src}:{sl_group}"
+            else:
+                sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
+                sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
+                sl_source = "PERCENT"
+        else:
+            sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
+            sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
+
+        sl_distance = abs(price - sl_price)
+        if sl_distance <= 0:
+            return {"ready": False, "reason": "INVALID_SL_DISTANCE"}
+
+        tp_source = "RR"
+        tp_targets = [None, None, None]
+        def _rr_ladder(rr_value):
+            rr_value = float(rr_value or 1.5)
+            return [
+                price + sl_distance * rr_value * idx if direction == "BUY" else price - sl_distance * rr_value * idx
+                for idx in (1, 2, 3)
+            ]
+        if manual_tp > 0:
+            tp_price = manual_tp
+            tp_source = "MANUAL_TP"
+            tp_targets[0] = tp_price
+        elif tp_mode == "OFF":
+            tp_price = 0.0
+            tp_source = "OFF"
+        elif tp_mode in ("SWING_REJECTION", "SWING_STRUCTURE"):
+            tp_atr_key = f"atr_{tp_group}"
+            tp_low_key = f"swing_low_{tp_group}"
+            tp_high_key = f"swing_high_{tp_group}"
+            tp_atr = self._safe_float(context.get(tp_atr_key, 0.0))
+            tp_low = self._safe_float(context.get(tp_low_key, 0.0))
+            tp_high = self._safe_float(context.get(tp_high_key, 0.0))
+            if tp_atr > 0 and tp_low > 0 and tp_high > 0:
+                tp_mult = float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))) or 0.2)
+                buffer = tp_atr * tp_mult
+                tp_price = tp_high - buffer if direction == "BUY" else tp_low + buffer
+                step = abs(tp_price - price)
+                tp_targets = [
+                    price + step * idx if direction == "BUY" else price - step * idx
+                    for idx in (1, 2, 3)
+                ] if step > 0 else [tp_price, None, None]
+                tp_source = f"MANUAL_{'SWING_STRUCTURE' if tp_mode == 'SWING_STRUCTURE' else 'SWING_RETEST'}:{tp_group}"
+            else:
+                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+                tp_targets = _rr_ladder(rr)
+                tp_price = tp_targets[0]
+                tp_source = f"{rr:g}R"
+        elif tp_mode == "FIB":
+            tp_atr_key = f"atr_{tp_group}"
+            tp_low_key = f"swing_low_{tp_group}"
+            tp_high_key = f"swing_high_{tp_group}"
+            tp_low = self._safe_float(context.get(tp_low_key, 0.0))
+            tp_high = self._safe_float(context.get(tp_high_key, 0.0))
+            leg = abs(tp_high - tp_low)
+            if tp_low > 0 and tp_high > 0 and leg > 0:
+                levels = self._parse_preview_levels(params.get("MANUAL_FIB_TP_LEVELS", "1.272,1.618,2.0"))
+                vals = [tp_low + leg * lvl if direction == "BUY" else tp_high - leg * lvl for lvl in levels[:3]]
+                tp_targets = vals + [None] * max(0, 3 - len(vals))
+                tp_price = tp_targets[0]
+                tp_source = f"MANUAL_FIB:{tp_group}"
+            else:
+                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+                tp_targets = _rr_ladder(rr)
+                tp_price = tp_targets[0]
+                tp_source = f"{rr:g}R"
+        elif tp_mode == "PULLBACK":
+            zone, pull_atr, pull_src = self._pullback_zone_from_context(direction, context, tp_group, params)
+            mult = float(params.get("MANUAL_PULLBACK_TP_ATR_MULT", 1.5) or 1.5)
+            if pull_atr > 0:
+                tp_targets = [
+                    price + pull_atr * mult * idx if direction == "BUY" else price - pull_atr * mult * idx
+                    for idx in (1, 2, 3)
+                ]
+                tp_price = tp_targets[0]
+                tp_source = f"MANUAL_{pull_src}:{tp_group}"
+            else:
+                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+                tp_targets = _rr_ladder(rr)
+                tp_price = tp_targets[0]
+                tp_source = f"{rr:g}R"
+        else:
+            rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+            tp_targets = _rr_ladder(rr)
+            tp_price = tp_targets[0]
+            tp_source = f"{rr:g}R"
+
+        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        account = self.connector.get_account_info() if self.connector else None
+        equity = float((account or {}).get("equity", (account or {}).get("balance", 0.0)) or 0.0)
+        risk_pct = float(params.get("RISK_PERCENT", 0.3) or 0.3)
+        strict_fee = 0.0
+        spread_cost_per_lot = float(tick.ask - tick.bid) * c_size
+        if params.get("STRICT_RISK", False):
+            strict_fee = self.get_fee_config(symbol) + spread_cost_per_lot
+
+        if manual_lot > 0:
+            lot_size = manual_lot
+            lot_source = "MANUAL_LOT"
+        else:
+            risk_usd = equity * (risk_pct / 100.0)
+            calc_loss = None
+            try:
+                calc_loss = mt5.order_calc_profit(order_type, symbol, 1.0, price, sl_price)
+            except Exception:
+                calc_loss = None
+            loss_per_lot = abs(float(calc_loss)) if calc_loss is not None and calc_loss < 0 else sl_distance * c_size
+            lot_size = risk_usd / (loss_per_lot + strict_fee) if loss_per_lot + strict_fee > 0 else 0.0
+            if vol_step > 0:
+                lot_size = round(lot_size / vol_step) * vol_step
+            lot_source = f"AUTO_RISK:{risk_pct:g}%"
+
+        brain = self.trade_mgr._get_brain_settings(symbol)
+        max_lot_cap = float((brain.get("symbol_configs", {}).get(symbol, {}) or {}).get("max_lot_cap", 0.0) or 0.0)
+        if max_lot_cap <= 0:
+            max_lot_cap = float(getattr(config, "MAX_LOT_CAP", 0.0) or 0.0)
+        cap_note = ""
+        if max_lot_cap > 0 and lot_size > max_lot_cap:
+            lot_size = max_lot_cap
+            cap_note = f" | CAP={max_lot_cap:g}"
+        lot_size = max(vol_min, min(lot_size, vol_max)) if lot_size > 0 else 0.0
+
+        commission = self.get_fee_config(symbol) * lot_size
+        spread_cost = spread_cost_per_lot * lot_size
+        risk_usd = sl_distance * lot_size * c_size if lot_size > 0 else 0.0
+        reward_usd = abs(tp_price - price) * lot_size * c_size if lot_size > 0 and tp_price > 0 else 0.0
+        rr_actual = reward_usd / risk_usd if risk_usd > 0 else 0.0
+        valid_sl = (direction == "BUY" and sl_price < price) or (direction == "SELL" and sl_price > price)
+        valid_tp = tp_price <= 0 or (direction == "BUY" and tp_price > price) or (direction == "SELL" and tp_price < price)
+
+        return {
+            "ready": bool(valid_sl and valid_tp and lot_size > 0),
+            "reason": "OK" if valid_sl and valid_tp and lot_size > 0 else "INVALID_SL_TP_OR_LOT",
+            "symbol": symbol,
+            "direction": direction,
+            "price": price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "lot": lot_size,
+            "lot_source": lot_source + cap_note,
+            "sl_source": sl_source,
+            "tp_source": tp_source,
+            "sl_source_label": self._manual_source_label(sl_source),
+            "tp_source_label": self._manual_source_label(tp_source),
+            "manual_sl_mode": sl_mode,
+            "manual_tp_mode": tp_mode,
+            "risk_usd": risk_usd,
+            "risk_pct": risk_pct,
+            "reward_usd": reward_usd,
+            "rr": rr_actual,
+            "equity": equity,
+            "commission": commission,
+            "spread_cost": spread_cost,
+            "timeframe": getattr(config, f"{sl_group}_TIMEFRAME", sl_group),
+            "group": sl_group,
+            "manual_sl_group": sl_group,
+            "manual_tp_group": tp_group,
+            "tp_targets": tp_targets[:3],
+            "manual_sl_buffer": float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)) or 0.2),
+            "manual_tp_buffer": float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))) or 0.2),
+            "atr_key": atr_key,
+            "swing_low_key": swing_low_key,
+            "swing_high_key": swing_high_key,
+            "atr": atr_val,
+            "swing_low": swing_low,
+            "swing_high": swing_high,
+            "point": point,
+        }
+
+    def _make_preview_model(self, key, title, status, reason, setup, source, can_apply=False):
+        direction = (setup or {}).get("direction", "")
+        visible_targets = self._preview_target_values(setup)
+        tp_targets = visible_targets[:3] + [None] * max(0, 3 - len(visible_targets))
+        show_tp_ladder = len(visible_targets) > 1
+        return {
+            "key": key,
+            "title": title,
+            "symbol": (setup or {}).get("symbol", self.cbo_symbol.get()),
+            "timeframe": (setup or {}).get("timeframe", "--"),
+            "source": source,
+            "direction": direction,
+            "bias": "LONG" if direction == "BUY" else "SHORT" if direction == "SELL" else "WAIT",
+            "status": status,
+            "reason": reason,
+            "entry_signal": (setup or {}).get("entry_signal", "--"),
+            "entry_price": self._fmt_price((setup or {}).get("price")),
+            "entry": self._fmt_price((setup or {}).get("price")),
+            "ee_gate": (setup or {}).get("ee_gate", "--"),
+            "entry_zone": (setup or {}).get("entry_zone", "--"),
+            "sl_rule": (setup or {}).get("sl_rule", "--"),
+            "exit_rule": (setup or {}).get("exit_rule", "--"),
+            "tsl_rule": (setup or {}).get("tsl_rule", "--"),
+            "sl": (setup or {}).get("sl", 0.0),
+            "tp_main": (setup or {}).get("tp", 0.0),
+            "tp1": tp_targets[0],
+            "tp2": tp_targets[1],
+            "tp3": tp_targets[2],
+            "show_tp_ladder": show_tp_ladder,
+            "tp_source": (setup or {}).get("tp_source", "--"),
+            "sl_source_label": (setup or {}).get("sl_source_label", "--"),
+            "tp_source_label": (setup or {}).get("tp_source_label", "--"),
+            "ee_status": (setup or {}).get("ee_status", "--"),
+            "chips": (setup or {}).get("chips", []),
+            "can_apply": bool(can_apply),
+            "apply_direction": direction if can_apply else "",
+            "apply_sl": (setup or {}).get("sl", 0.0),
+            "apply_tp": (setup or {}).get("tp", 0.0),
+            "setup": setup or {},
+        }
+
+    def _explain_pullback_data(self, context, ee_cfg):
+        active = ee_cfg.get("active_tactics") or ee_cfg.get("entry_tactics") or []
+        if "PULLBACK_ZONE" not in active:
+            return ""
+        group = self._resolve_preview_group_name(ee_cfg.get("sl_source_group", "G2"), context)
+        pull = ee_cfg.get("pullback_zone", {}) or {}
+        source = str(pull.get("source", "EMA20") or "EMA20").upper()
+        missing = []
+        if not self._safe_float((context or {}).get(f"atr_{group}", (context or {}).get("atr_entry", 0.0))):
+            missing.append(f"atr_{group}")
+        if source == "BB_MID":
+            if not self._safe_float((context or {}).get(f"bb_mid_{group}", (context or {}).get("bb_mid", 0.0))):
+                missing.append(f"bb_mid_{group}")
+        elif source == "SWING":
+            if not self._safe_float((context or {}).get(f"swing_low_{group}", 0.0)):
+                missing.append(f"swing_low_{group}")
+            if not self._safe_float((context or {}).get(f"swing_high_{group}", 0.0)):
+                missing.append(f"swing_high_{group}")
+        else:
+            ema = (
+                (context or {}).get(f"ema20_{group}")
+                or (context or {}).get("ema20")
+                or (context or {}).get(f"EMA_20_{group}")
+            )
+            if not self._safe_float(ema):
+                missing.append(f"ema20_{group}")
+        return f" | Pullback thiếu data: {', '.join(missing)}" if missing else f" | Pullback source={source} group={group}"
+
+    def _build_tsl_preview_lines(self, setup=None, context=None):
+        tactic = self.get_current_tactic_string()
+        if tactic == "OFF":
+            return "TSL: OFF", "Không có rule trailing đang bật."
+        setup = setup or {}
+        context = context or {}
+        modes = [m for m in tactic.split("+") if m]
+        t_cfg = getattr(config, "TSL_CONFIG", {}) or {}
+        group = str(setup.get("group") or "G2")
+        detail = []
+        price = self._safe_float(setup.get("price", 0.0))
+        sl = self._safe_float(setup.get("sl", 0.0))
+        one_r = abs(price - sl) if price and sl else 0.0
+        direction = str(setup.get("direction", self.var_direction.get()) or "BUY").upper()
+        is_buy = direction == "BUY"
+
+        if "BE_CASH" in modes:
+            cash_type = str(t_cfg.get("BE_CASH_TYPE", "USD") or "USD").upper()
+            cash_value = t_cfg.get("BE_VALUE", 0.0)
+            cash_strat = t_cfg.get("BE_CASH_STRAT", "TRAILING (Gap)")
+            buffer_type = t_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", cash_type)
+            buffer_val = t_cfg.get("BE_CASH_SOFT_BUFFER", 0.0)
+            min_lock = t_cfg.get("BE_CASH_MIN_LOCK", 0.0)
+            detail.append(
+                f"CASH: {cash_type} {cash_value} | {cash_strat} | buffer {buffer_val} {buffer_type} | min lock {min_lock}"
+            )
+        if "BE" in modes and one_r > 0:
+            rr = float(t_cfg.get("BE_OFFSET_RR", 0.8) or 0.8)
+            trig = price + one_r * rr if is_buy else price - one_r * rr
+            detail.append(f"BE: {rr:g}R trigger {trig:.2f}")
+        elif "BE" in modes:
+            detail.append("BE: chờ entry/SL hợp lệ")
+        if "STEP_R" in modes and one_r > 0:
+            sz = float(t_cfg.get("STEP_R_SIZE", 1.0) or 1.0)
+            trig = price + one_r * sz if is_buy else price - one_r * sz
+            detail.append(f"STEP_R: step {sz:g}R trigger {trig:.2f}")
+        elif "STEP_R" in modes:
+            detail.append("STEP_R: chờ entry/SL hợp lệ")
+        if "PNL" in modes:
+            levels = t_cfg.get("PNL_LEVELS") or []
+            detail.append(f"PNL: level đầu {levels[0][0]}%" if levels else "PNL: chưa có level")
+        if "SWING" in modes:
+            atr = context.get(f"atr_{group}")
+            low = context.get(f"swing_low_{group}")
+            high = context.get(f"swing_high_{group}")
+            if atr and low and high:
+                detail.append(f"SWING: {group} L={self._fmt_price(low)} H={self._fmt_price(high)} ATR={self._fmt_price(atr)}")
+            else:
+                detail.append(f"SWING: thiếu swing/ATR {group}")
+        if "PSAR_TRAIL" in modes:
+            psar_group = str(t_cfg.get("PSAR_GROUP", group) or group)
+            psar = context.get(f"psar_{psar_group}") or context.get(f"PSAR_{psar_group}") or context.get("psar")
+            detail.append(f"PSAR: {psar_group}={self._fmt_price(psar)}" if psar else f"PSAR: thiếu psar_{psar_group}")
+        if "ANTI_CASH" in modes:
+            detail.append("ANTI: theo ngưỡng lỗ tiền mặt")
+        if any(m in modes for m in ("AUTO_DCA", "AUTO_PCA", "REV_C")):
+            defs = [m for m in ("AUTO_DCA", "AUTO_PCA", "REV_C") if m in modes]
+            detail.append(f"DEF: {'+'.join(defs)} xử lý theo điều kiện vị thế")
+
+        line1 = f"TSL: {' + '.join(modes)}"
+        winner = next((d for d in detail if "thi" not in d.lower() and "missing" not in d.lower()), detail[0] if detail else "")
+        line2 = f"WIN {winner}" if winner else "Waiting rule data"
+        return line1, line2
+
+    def _parse_preview_levels(self, raw, default=None):
+        default = default or []
+        try:
+            vals = [float(x.strip()) for x in str(raw or "").split(",") if x.strip()]
+            return vals or default
+        except Exception:
+            return default
+
+    def _resolve_preview_group_name(self, group, context):
+        group = str(group or "G2")
+        if "DYNAMIC" in group:
+            mode = str((context or {}).get("market_mode", "ANY") or "ANY").upper()
+            return "G1" if mode in ("TREND", "BREAKOUT") else "G2"
+        if group == "BASE_SL":
+            return "G2"
+        return group
+
+    def _resolve_ee_tp_ladder(self, setup, context, ee_cfg, ee_decision):
+        setup = setup or {}
+        context = context or {}
+        ee_cfg = ee_cfg or {}
+        direction = str(setup.get("direction", "BUY") or "BUY").upper()
+        price = self._safe_float(setup.get("price", 0.0))
+        tp_source = str((ee_decision or {}).get("tp_source") or setup.get("tp_source") or "--").upper()
+        exit_tactic = str((ee_decision or {}).get("exit_tactic") or "").upper()
+        if (ee_decision or {}).get("tp_disabled") or tp_source == "OFF" or exit_tactic in ("NO_TP", "OFF"):
+            return [None, None, None], "OFF"
+
+        targets = []
+        if exit_tactic == "FIB_RETRACE" or tp_source == "FIB":
+            fib = ee_cfg.get("fib_retrace", {}) or {}
+            group = self._resolve_preview_group_name(fib.get("swing_source_group", "G2"), context)
+            sh = self._safe_float(context.get(f"swing_high_{group}", 0.0))
+            sl = self._safe_float(context.get(f"swing_low_{group}", 0.0))
+            leg = abs(sh - sl)
+            if sh > 0 and sl > 0 and leg > 0:
+                for level in self._parse_preview_levels(fib.get("tp_levels", "1.272,1.618"))[:3]:
+                    targets.append(sl + leg * level if direction == "BUY" else sh - leg * level)
+            source = f"FIB {fib.get('tp_levels', '1.272,1.618')}"
+            if len(targets) < 3:
+                source = f"{source} ({len(targets)} lv)"
+        elif exit_tactic == "PULLBACK_ZONE" or tp_source == "PULLBACK":
+            pull = ee_cfg.get("pullback_zone", {}) or {}
+            group = self._resolve_preview_group_name(ee_cfg.get("sl_source_group", "G2"), context)
+            atr = self._safe_float(context.get(f"atr_{group}", context.get("atr_entry", 0.0)))
+            mult = self._safe_float(pull.get("tp_atr_multiplier", 1.5), 1.5)
+            if price > 0 and atr > 0:
+                targets.extend(
+                    price + atr * mult * idx if direction == "BUY" else price - atr * mult * idx
+                    for idx in (1, 2, 3)
+                )
+            source = f"PULL {mult:g}ATR ({len(targets)} lv)"
+        elif exit_tactic in ("SWING_REJECTION", "SWING_STRUCTURE") or tp_source == "SWING":
+            group = self._resolve_preview_group_name(ee_cfg.get("sl_source_group", "G2"), context)
+            sh = self._safe_float(context.get(f"swing_high_{group}", 0.0))
+            sl = self._safe_float(context.get(f"swing_low_{group}", 0.0))
+            atr = self._safe_float(context.get(f"atr_{group}", 0.0))
+            buffer = atr * self._safe_float((ee_cfg.get("swing_rejection", {}) or {}).get("sl_atr_buffer", 0.2), 0.2)
+            if sh > 0 and sl > 0:
+                first = sh - buffer if direction == "BUY" else sl + buffer
+                step = abs(first - price)
+                if step > 0:
+                    targets.extend(
+                        price + step * idx if direction == "BUY" else price - step * idx
+                        for idx in (1, 2, 3)
+                    )
+                else:
+                    targets.append(first)
+            source = f"SWING {group} ({len(targets)} lv)"
+        elif exit_tactic in ("FALLBACK_R", "R", "AUTO") or tp_source in ("R", "--"):
+            rr = self._safe_float((ee_cfg.get("default_exit", {}) or {}).get("tp_rr_ratio", 1.5), 1.5)
+            sl = self._safe_float(setup.get("sl", 0.0))
+            dist = abs(price - sl) if price > 0 and sl > 0 else 0.0
+            if dist > 0:
+                targets.extend(
+                    price + dist * rr * idx if direction == "BUY" else price - dist * rr * idx
+                    for idx in (1, 2, 3)
+                )
+            source = f"{rr:g}R ({len(targets)} lv)"
+        else:
+            tp = self._safe_float((ee_decision or {}).get("tp", 0.0))
+            if tp > 0:
+                targets.append(tp)
+            source = tp_source
+
+        while len(targets) < 3:
+            targets.append(None)
+        return targets[:3], source
+
+    def _chip_color(self, kind, text):
+        raw = str(text or "").upper()
+        if kind == "danger" or "ERROR" in raw or "INVALID" in raw:
+            return "#4A1116", "#FF5252", "#FFB3AD"
+        if kind == "warn" or "WAIT" in raw or "MISSING" in raw or "THIẾU" in raw or "FALLBACK" in raw:
+            return "#40350D", "#FFD600", "#FFF0A3"
+        if kind == "good" or "READY" in raw or "OK" in raw:
+            return "#07351D", "#00E676", "#9AFFC4"
+        if kind == "tp":
+            return "#062F27", "#00E676", "#9AFFD2"
+        if kind == "sl":
+            return "#3A1117", "#FF5252", "#FFB3AD"
+        return "#132326", "#37565C", "#D9EEF2"
+
+    def _make_preview_chip(self, label, value, kind="info"):
+        fg, border, text_color = self._chip_color(kind, value)
+        return {"label": label, "value": value, "fg": fg, "border": border, "text_color": text_color}
+
+    def _preview_target_values(self, setup):
+        targets = []
+        for val in list((setup or {}).get("tp_targets") or [])[:3]:
+            num = self._safe_float(val, 0.0)
+            if num > 0:
+                targets.append(num)
+        return targets
+
+    def _preview_rule_notes(self, setup):
+        setup = setup or {}
+        notes = []
+        sl_mode = str(setup.get("manual_sl_mode", "") or "").upper()
+        tp_mode = str(setup.get("manual_tp_mode", "") or "").upper()
+        sl_source = str(setup.get("sl_source", "") or "").upper()
+        tp_source = str(setup.get("tp_source", "") or "").upper()
+        if sl_mode not in ("", "PERCENT") and sl_source == "PERCENT":
+            notes.append(self._make_preview_chip("SL Fallback", "Missing rule data, using Percent", "warn"))
+        if tp_mode not in ("", "RR") and (tp_source == "RR" or tp_source.endswith("R")):
+            notes.append(self._make_preview_chip("Exit Fallback", "Missing target data, using RR", "warn"))
+        return notes
+
+    def build_manual_preview_models(self):
+        symbol = self.cbo_symbol.get()
+        context = getattr(self, "latest_market_context", {}).get(symbol, {}) or {}
+        direction = self.var_direction.get()
+        preset = self.cbo_preset.get()
+        group = self._preview_tf_group(symbol, context)
+        latest_signal = int(context.get("latest_signal", 0) or 0)
+        trend = str(context.get(f"trend_{group}", context.get("trend", "NONE")) or "NONE").upper()
+        market_mode = str(context.get("market_mode", "ANY") or "ANY").upper()
+        mode = self.var_manual_trade_mode.get() if hasattr(self, "var_manual_trade_mode") else "NORMAL"
+
+        setup = self._resolve_manual_setup_preview(symbol, direction, preset, context)
+        setup["preview_group"] = group
+        setup["timeframe"] = getattr(config, f"{group}_TIMEFRAME", group)
+        status = "READY" if setup.get("ready") and mode == "NORMAL" else "BLOCK" if mode != "NORMAL" else "WAIT"
+        mode_note = "NORMAL manual only" if mode != "NORMAL" else setup.get("reason", "OK")
+        brain = self.trade_mgr._get_brain_settings(symbol)
+        ee_cfg = self._manual_preview_entry_exit_cfg(brain.get("entry_exit", {}) or {})
+        try:
+            from core.entry_exit_engine import format_decision
+
+            ee_decision = self._preview_entry_exit_decision(symbol, direction, setup.get("price", 0.0), context, ee_cfg)
+            ee_txt = format_decision(ee_decision)
+            self.latest_entry_exit_decisions[symbol] = ee_decision
+        except Exception as exc:
+            ee_decision = {}
+            ee_txt = f"E/E: ERROR {exc}"
+        pull_note = self._explain_pullback_data(context, ee_cfg)
+        tsl_line1, tsl_line2 = self._build_tsl_preview_lines(setup, context)
+        tp_targets = list(setup.get("tp_targets") or [setup.get("tp"), None, None])
+        tp_targets = tp_targets[:3] + [None] * max(0, 3 - len(tp_targets))
+        tp_ladder_source = setup.get("tp_source_label", setup.get("tp_source", "--"))
+        setup["tp_targets"] = tp_targets
+        setup["tp_ladder_source"] = tp_ladder_source
+        zone_decision = self._entry_zone_decision(ee_decision)
+        setup["ee_status"] = (ee_decision or {}).get("status", "OFF")
+        setup["ee_gate"] = self._format_ee_gate(zone_decision or ee_decision, setup.get("price", 0.0))
+        setup["entry_zone"] = self._fmt_zone((zone_decision or {}).get("entry_zone"))
+        if setup["entry_zone"] == "--" and str((zone_decision or ee_decision or {}).get("entry_tactic", "")).upper() == "FALLBACK_R":
+            setup["entry_zone"] = "Market"
+        setup["ee_reason"] = (ee_decision or {}).get("reason", "")
+        signal_text = "NONE" if latest_signal == 0 else "BUY" if latest_signal > 0 else "SELL"
+        trend_bias = "BUY" if trend == "UP" else "SELL" if trend == "DOWN" else "NONE"
+        if trend_bias == "NONE":
+            trend_kind = "warn"
+        elif trend_bias == direction:
+            trend_kind = "good"
+        else:
+            trend_kind = "danger"
+        ee_kind = "danger" if setup["ee_status"] == "ERROR" else "warn" if setup["ee_status"] in ("WAIT", "OFF") or "fallback" in ee_txt.lower() else "good"
+        tsl_kind = "warn" if "thiếu" in tsl_line2.lower() or "missing" in tsl_line2.lower() else "good"
+        manual_sl_group = setup.get("manual_sl_group", setup.get("group", "--"))
+        manual_tp_group = setup.get("manual_tp_group", "--")
+        manual_sl_label = self._group_tf_label(manual_sl_group)
+        manual_tp_label = self._group_tf_label(manual_tp_group)
+        setup["trend"] = trend
+        setup["market_mode"] = market_mode
+        setup["manual_mode"] = mode
+        setup["entry_signal"] = f"{signal_text} | Trend {self._group_tf_label(group)} {trend}"
+        setup["sl_rule"] = f"{self._fmt_price(setup.get('sl'))} | {setup.get('sl_source_label', '--')} {manual_sl_label}"
+        setup["exit_rule"] = (
+            "OFF"
+            if setup.get("tp_source") == "OFF"
+            else f"{self._fmt_price(setup.get('tp'))} | {setup.get('tp_source_label', '--')} {manual_tp_label}"
+        )
+        setup["tsl_rule"] = f"{tsl_line1.replace('TSL: ', '')} | {tsl_line2}"
+        setup["chips"] = [
+            self._make_preview_chip("Trend", f"Signal {signal_text} | {self._group_tf_label(group)} {trend} | {market_mode}", trend_kind),
+            self._make_preview_chip("ATR", f"SL {manual_sl_label}={self._fmt_price(setup.get('atr'))} | TP {manual_tp_label}", "info"),
+            self._make_preview_chip("TSL", tsl_line1.replace("TSL: ", ""), tsl_kind),
+            self._make_preview_chip("Entry Filter", setup.get("ee_gate", ee_txt.replace("E/E: ", "")), ee_kind),
+        ]
+        if pull_note:
+            setup["chips"][-1] = self._make_preview_chip("Entry Data", pull_note.replace("Pullback thiáº¿u data", "Missing pullback data").strip(" |"), "warn")
+        fallback_notes = self._preview_rule_notes(setup)
+        if fallback_notes:
+            setup["chips"] = (fallback_notes + setup["chips"])[:4]
+        primary_reason = ""
+        primary = self._make_preview_model(
+            "primary",
+            "MANUAL PREVIEW",
+            status,
+            primary_reason,
+            setup,
+            f"NORMAL | {market_mode}",
+            can_apply=status == "READY",
+        )
+
+        self.manual_preview_models = {
+            "primary": primary,
+        }
+        return self.manual_preview_models
+
+    def refresh_manual_preview_tab(self):
+        if not hasattr(self, "preview_cards"):
+            return
+        try:
+            preset_cfg = config.PRESETS.get(self.cbo_preset.get(), {})
+            tf_display = {
+                "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
+                "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
+                "G2": f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
+                "G3": f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
+                "DYNAMIC": "DYNAMIC",
+            }
+            if hasattr(self, "var_preview_sl_group"):
+                sl_group = str(preset_cfg.get("MANUAL_SL_GROUP", preset_cfg.get("MANUAL_SWING_SL_GROUP", "G2")) or "G2")
+                sl_group = "DYNAMIC" if "DYNAMIC" in sl_group else sl_group
+                self.var_preview_sl_group.set(tf_display.get(sl_group, tf_display["G2"]))
+                if getattr(self, "var_preview_tp_group", None) is getattr(self, "var_preview_sl_group", None):
+                    preset_cfg["MANUAL_TP_GROUP"] = sl_group
+                    preset_cfg["MANUAL_SWING_TP_GROUP"] = sl_group
+            if hasattr(self, "var_preview_tp_group"):
+                tp_group = str(preset_cfg.get("MANUAL_TP_GROUP", preset_cfg.get("MANUAL_SWING_TP_GROUP", preset_cfg.get("MANUAL_SL_GROUP", "G2"))) or "G2")
+                tp_group = "DYNAMIC" if "DYNAMIC" in tp_group else tp_group
+                if getattr(self, "var_preview_tp_group", None) is not getattr(self, "var_preview_sl_group", None):
+                    self.var_preview_tp_group.set(tf_display.get(tp_group, tf_display["G2"]))
+            if hasattr(self, "var_preview_sl_mode"):
+                sl_mode = str(preset_cfg.get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
+                self.var_preview_sl_mode.set(self._manual_mode_display(sl_mode, "SL"))
+            if hasattr(self, "var_preview_tp_mode"):
+                tp_mode = str(preset_cfg.get("MANUAL_TP_MODE", "RR") or "RR").upper()
+                self.var_preview_tp_mode.set(self._manual_mode_display(tp_mode, "TP"))
+            models = self.build_manual_preview_models()
+            for key, widgets in self.preview_cards.items():
+                model = models.get(key, {})
+                status = model.get("status", "WAIT")
+                direction = model.get("apply_direction") or model.get("direction")
+                color = self._preview_color_for_status(status, direction)
+                bias = model.get("bias", "WAIT")
+                widgets["frame"].configure(border_color=color)
+                widgets["title"].configure(text=model.get("title", key.upper()), text_color=color)
+                widgets["badge"].configure(text=f"{bias} | {status}", text_color=color)
+                setup = model.get("setup", {}) or {}
+                atr_group = self._group_tf_label(setup.get("manual_sl_group", setup.get("group", "--")))
+                atr_txt = self._fmt_price(setup.get("atr"))
+                trend_raw = str(setup.get("trend", "") or "").upper()
+                meta_color = "#FF5252" if trend_raw == "DOWN" else "#00E676" if trend_raw == "UP" else "#FFD600" if trend_raw in ("NONE", "FLAT", "SIDEWAY") else "#B2EBF2"
+                widgets["meta"].configure(
+                    text=f"{model.get('symbol', '--')} | {model.get('timeframe', '--')} | ATR {atr_group}={atr_txt} | {setup.get('market_mode', '--')} | {trend_raw or '--'}",
+                    text_color=meta_color,
+                )
+                def _set_preview_text(widget, text):
+                    if isinstance(widget, (tuple, list)) and len(widget) >= 2:
+                        widget[1].configure(text=text)
+                    elif widget is not None:
+                        widget.configure(text=text)
+
+                levels = widgets.get("levels", {})
+                if isinstance(levels, dict):
+                    if "ee_detail" in levels:
+                        gate = str(model.get("ee_gate", "") or "")
+                        zone = str(model.get("entry_zone", "--") or "--")
+                        zone_txt = zone if zone != "--" else "Market"
+                        entry_txt = f"{model.get('entry_signal', '--')} | Price {model.get('entry_price', '--')} | Zone {zone_txt}"
+                        _set_preview_text(levels["entry_signal"], entry_txt)
+                        if hasattr(levels["entry_signal"], "configure"):
+                            levels["entry_signal"].configure(text_color=meta_color)
+                        tp_parts = []
+                        for idx, target_key in enumerate(("tp1", "tp2", "tp3"), start=1):
+                            val = model.get(target_key)
+                            tp_parts.append(f"TP{idx} {self._fmt_price(val) if val else '--'}")
+                        if model.get("tp_source") == "OFF":
+                            tp_parts = ["TP OFF"]
+                        _set_preview_text(levels["sl"], f"SL {self._fmt_price(model.get('sl'))}")
+                        _set_preview_text(levels["tp_main"], " | ".join(tp_parts))
+                        if "stats" in levels:
+                            lot = float(setup.get("lot", 0.0) or 0.0)
+                            risk_usd = float(setup.get("risk_usd", 0.0) or 0.0)
+                            reward_usd = float(setup.get("reward_usd", 0.0) or 0.0)
+                            equity = float(setup.get("equity", 0.0) or 0.0)
+                            pnl_pct = (reward_usd / equity * 100.0) if equity > 0 else 0.0
+                            risk_pct = float(setup.get("risk_pct", 0.0) or 0.0)
+                            _set_preview_text(levels["stats"], f"Lot {lot:.2f} | Risk ${risk_usd:.2f} ({risk_pct:g}%) | Reward@TP1 ${reward_usd:.2f} | PnL {pnl_pct:.2f}%")
+                        tsl_txt = str(model.get("tsl_rule", "--") or "--").replace(" trigger ", " @").replace("WIN ", "")
+                        _set_preview_text(levels["tsl"], tsl_txt)
+                        ee_reason = str(model.get("setup", {}).get("ee_reason", "") or "")
+                        ee_txt = gate or "Entry filter OFF"
+                        if "MISSING E/E DATA" in ee_reason.upper() and "FALLBACK R" in ee_reason.upper():
+                            ee_reason = ""
+                        if ee_reason and ee_reason not in ee_txt:
+                            ee_txt = f"{ee_txt} | {ee_reason}"
+                        ee_txt = ee_txt.replace("Giá đã vào vùng ", "In ").replace("GiÃ¡ Ä‘Ã£ vÃ o vÃ¹ng ", "In ")
+                        _set_preview_text(levels["ee_detail"], ee_txt)
+                    else:
+                        if "entry_signal" in levels:
+                            _set_preview_text(levels["entry_signal"], model.get("entry_signal", "--"))
+                        if "entry" in levels:
+                            _set_preview_text(levels["entry"], model.get("entry_price", model.get("entry", "--")))
+                        if "entry_zone" in levels:
+                            gate = str(model.get("ee_gate", "") or "")
+                            zone = str(model.get("entry_zone", "--") or "--")
+                            zone_txt = zone if zone != "--" else gate or "Entry filter OFF"
+                            _set_preview_text(levels["entry_zone"], zone_txt[:80])
+                        if "sl" in levels:
+                            _set_preview_text(levels["sl"], model.get("sl_rule", "--"))
+                        if "tp_main" in levels:
+                            _set_preview_text(levels["tp_main"], model.get("exit_rule", "--"))
+                        if "tsl" in levels:
+                            _set_preview_text(levels["tsl"], model.get("tsl_rule", "--"))
+                        if "rr" in levels:
+                            _set_preview_text(levels["rr"], f"{model.get('setup', {}).get('rr', 0.0):.2f}")
+                        if "lot" in levels:
+                            _set_preview_text(levels["lot"], f"{model.get('setup', {}).get('lot', 0.0):.2f}")
+                        if "risk" in levels:
+                            _set_preview_text(levels["risk"], f"${model.get('setup', {}).get('risk_usd', 0.0):.2f}")
+                        if "reward" in levels:
+                            _set_preview_text(levels["reward"], f"${model.get('setup', {}).get('reward_usd', 0.0):.2f}")
+                targets = widgets.get("targets", {})
+                if isinstance(targets, dict):
+                    for target_key in ("tp1", "tp2", "tp3"):
+                        if target_key in targets and targets[target_key] is not None:
+                            val = model.get(target_key)
+                            target_widget = targets[target_key]
+                            show_target = bool(model.get("show_tp_ladder") and val)
+                            if isinstance(target_widget, (tuple, list)) and target_widget:
+                                if show_target:
+                                    target_widget[0].grid()
+                                    target_widget[1].configure(text=self._fmt_price(val))
+                                else:
+                                    target_widget[0].grid_remove()
+                            elif show_target:
+                                target_widget.configure(text=self._fmt_price(val))
+                            else:
+                                target_widget.configure(text="")
+                    if "rr" in targets and targets["rr"] is not None:
+                        _set_preview_text(targets["rr"], f"{model.get('setup', {}).get('rr', 0.0):.2f}")
+                chip_widgets = widgets.get("chip_widgets", [])
+                if chip_widgets:
+                    model_chips = list(model.get("chips", []))
+                    for idx, (chip_box, chip_label) in enumerate(chip_widgets):
+                        chip = model_chips[idx] if idx < len(model_chips) else {}
+                        text = f"{chip.get('label', '')}: {chip.get('value', '')}" if chip else "--"
+                        chip_box.configure(
+                            fg_color=chip.get("fg", "#102326"),
+                            border_color=chip.get("border", "#263238"),
+                        )
+                        chip_label.configure(
+                            text=text,
+                            text_color=chip.get("text_color", "#607D8B"),
+                            font=("Roboto", 12 if idx == 6 else 11, "bold"),
+                            wraplength=680 if idx in (1, 6, 7, 8, 9) else 440,
+                        )
+                if model.get("reason"):
+                    widgets["reason"].grid()
+                    widgets["reason"].configure(text=model.get("reason", "---"))
+                else:
+                    widgets["reason"].grid_remove()
+                apply_text = "APPLY"
+                if direction == "BUY":
+                    apply_text = "APPLY LONG"
+                elif direction == "SELL":
+                    apply_text = "APPLY SHORT"
+                widgets["apply"].configure(
+                    text=apply_text,
+                    state="normal" if model.get("can_apply") else "disabled",
+                    fg_color=color if model.get("can_apply") else "#37474F",
+                    hover_color=color if model.get("can_apply") else "#37474F",
+                )
+        except Exception as exc:
+            self.log_message(f"[PREVIEW] Error: {exc}", error=True, target="manual")
+
+    def apply_manual_preview_setup(self, key):
+        model = getattr(self, "manual_preview_models", {}).get(key)
+        if not model:
+            model = self.build_manual_preview_models().get(key)
+        if not model or not model.get("can_apply"):
+            return
+        if self.var_manual_trade_mode.get() != "NORMAL":
+            self.log_message("[PREVIEW] Direct apply is only available in NORMAL manual mode.", error=True, target="manual")
+            return
+        direction = model.get("apply_direction")
+        if direction in ("BUY", "SELL"):
+            self.on_direction_change(direction)
+        if model.get("apply_tp", 0) > 0:
+            self.var_manual_tp.set(f"{float(model['apply_tp']):.2f}")
+        if model.get("apply_sl", 0) > 0:
+            self.var_manual_sl.set(f"{float(model['apply_sl']):.2f}")
+        self.log_message(
+            f"[PREVIEW] Applied {model.get('source')} {model.get('symbol')} {direction} TP={self.var_manual_tp.get()} SL={self.var_manual_sl.get()}",
+            target="manual",
+        )
+        if self.var_preview_trade_after_apply.get():
+            self.log_message("[PREVIEW] Trade after Apply is ON. Sending NORMAL manual order.", target="manual")
+            self.on_click_trade()
+
+    # ==========================================
+    # CÁC HÀM MỞ POPUP & GIAO DIỆN PHỤ
+    # ==========================================
+    def open_bot_setting_popup(self):
+        ui_popups.open_bot_setting_popup(self)
+
+    def open_preset_config_popup(self):
+        ui_popups.open_preset_config_popup(self)
+
+    def open_tsl_popup(self):
+        ui_popups.open_tsl_popup(self)
+
+    def open_entry_exit_popup(self):
+        from ui_entry_exit_popup import open_entry_exit_popup
+
+        open_entry_exit_popup(self)
+
+    def open_edit_popup(self, ticket):
+        ui_popups.open_edit_popup(self, ticket)
+
+    def show_history_popup(self):
+        ui_popups.show_history_popup(self)
+
+    # [V3.0] Hàm gọi Strategy Sandbox
+    def open_strategy_sandbox(self):
+        sandbox_window = BotStrategyUI(self)
+
+        def on_sandbox_close():
+            # [FIX JOB 1]: XÓA bỏ hàm tự động save ghi đè cấu hình cũ
+            # GỌI hàm Reload để nạp dữ liệu Sandbox vừa lưu trên file vào bộ nhớ
+            self.reload_config_from_json()
+            self.log_message(
+                "📡 [V3.0] Đã đóng Sandbox. Hệ thống đã nạp cấu hình mới (Hot-Reload) từ JSON.",
+                error=False,
+            )
+            sandbox_window.destroy()
+
+        sandbox_window.protocol("WM_DELETE_WINDOW", on_sandbox_close)
+
+    def open_advanced_tools_popup(self):
+        ui_popups.open_advanced_tools_popup(self)
+
+    def open_advisor_popup(self):
+        ui_popups.open_advisor_popup(self)
+
+    # ==========================================
+    # LOG TAILER - THEO DÕI DAEMON VÀ HIỂN THỊ LÊN UI
+    # ==========================================
+    def _tail_daemon_logs(self):
+        import time
+        import os
+        
+        while self.running:
+            # Wait until workspace is ready
+            log_candidates = [os.path.join("data", "logs", "daemon_system_events.log")]
+            try:
+                import core.storage_manager as storage_manager
+                if getattr(storage_manager, "_active_account_dir", None):
+                    log_candidates.append(os.path.join(storage_manager._active_account_dir, "daemon_system_events.log"))
+            except:
+                pass
+            log_path = next((p for p in log_candidates if os.path.exists(p)), log_candidates[0])
+                
+            if not os.path.exists(log_path):
+                time.sleep(2)
+                continue
+                
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    f.seek(0, 2)  # Nhảy đến cuối file
+                    while self.running:
+                        line = f.readline()
+                        if not line:
+                            time.sleep(0.5)
+                            continue
+                            
+                        self._process_daemon_line(line)
+            except Exception:
+                time.sleep(1)
+
+    def _process_daemon_line(self, line: str):
+        line = line.strip()
+        if not line: return
+        msg = line.split("] - ")[-1] if "] - " in line else line
+
+        if "[HEDGE]" in msg or "HEDGE_" in msg:
+            self.log_message(f"[DAEMON] {msg}", target="hedge")
+            return
+        if "[GRID]" in msg or "GRID_" in msg:
+            self.log_message(f"[DAEMON] {msg}", target="grid")
+            return
+
+        # Nhận diện các sự kiện quan trọng (Vào lệnh, Chốt lệnh, Watermark)
+        if "B�P C�" in line or "WATERMARK" in line or "ĐÓNG LỆNH" in line or "REVERSE TACTIC" in line:
+            # Cắt bớt phần timestamp của daemon nếu có
+            msg = line.split("] - ")[-1] if "] - " in line else line
+            self.log_message(f"[DAEMON] {msg}", target="bot")
+            return
+            
+        # Lọc rác (Scanned, No Signal)
+        if "Scanned" in line or "No Signal" in line or "Đang tìm và kết nối" in line or "Sẵn sàng kết nối" in line:
+            return
+            
+        # Nhận diện Checklist Fail / Lỗi
+        if "FAIL" in line or "ERROR" in line or "TỪ CHỐI" in line or "bị chặn" in line or "SAFEGUARD" in line or "Lỗi" in line or "Bỏ qua" in line:
+            # Tạo signature cho lỗi để filter spam
+            msg = line.split("] - ")[-1] if "] - " in line else line
+            # Trích xuất lý do chính để filter (loại bỏ timestamp, số dư, etc)
+            import re
+            sig = re.sub(r'\d+', '', msg) # Xoá số đi để gom nhóm lỗi
+            
+            import time
+            now = time.time()
+            last_time = self.log_cooldown_cache.get(sig, 0)
+            
+            # Đọc cooldown time
+            try:
+                import json
+                from core.storage_manager import BRAIN_FILE
+                with open(BRAIN_FILE, "r", encoding="utf-8") as cf:
+                    b_set = json.load(cf)
+                    cd_mins = float(b_set.get("bot_safeguard", {}).get("LOG_COOLDOWN_MINUTES", 60.0))
+            except:
+                cd_mins = 60.0
+                
+            if now - last_time > (cd_mins * 60):
+                self.log_message(f"⚠️ [DAEMON LOGIC]: {msg}", target="bot-log")
+                self.log_cooldown_cache[sig] = now
+
+    # ==========================================
+
+    def load_settings(self):
+        if os.path.exists(TSL_SETTINGS_FILE):
+            try:
+                with open(TSL_SETTINGS_FILE, "r") as f:
+                    config.TSL_CONFIG.update(json.load(f))
+            except:
+                pass
+        if os.path.exists(PRESETS_FILE):
+            try:
+                with open(PRESETS_FILE, "r") as f:
+                    config.PRESETS.update(json.load(f))
+            except:
+                pass
+        if os.path.exists(BRAIN_SETTINGS_FILE):
+            try:
+                with open(BRAIN_SETTINGS_FILE, "r") as f:
+                    bs = json.load(f)
+                    for k, v in bs.items():
+                        if hasattr(config, k) and k != "COIN_LIST":
+                            current_val = getattr(config, k)
+                            if isinstance(current_val, dict) and isinstance(v, dict):
+                                self._merge_dict(current_val, v)
+                            else:
+                                setattr(config, k, v)
+                    ee_cfg = bs.get("entry_exit", {})
+                    active_entry_tactics = set(ee_cfg.get("entry_tactics", ee_cfg.get("active_tactics", [])))
+                    for key in self.entry_exit_tactic_states:
+                        self.entry_exit_tactic_states[key] = key in active_entry_tactics
+                    if hasattr(self, "btn_entry_swing"):
+                        self.update_entry_exit_buttons_ui()
+                    self.refresh_hedge_runtime_light()
+            except:
+                pass
+
+    def save_settings(self):
+        try:
+            os.makedirs(os.path.dirname(TSL_SETTINGS_FILE), exist_ok=True)
+            with open(TSL_SETTINGS_FILE, "w") as f:
+                json.dump(config.TSL_CONFIG, f, indent=4)
+            with open(PRESETS_FILE, "w") as f:
+                json.dump(config.PRESETS, f, indent=4)
+
+            # [HOTFIX V4.4] Đồng bộ ngay lập tức sang brain_settings.json để không bị Sandbox ghi đè ngược
+            brain = load_brain_settings()
+            brain["TSL_CONFIG"] = dict(config.TSL_CONFIG)
+            brain["TSL_LOGIC_MODE"] = getattr(config, "TSL_LOGIC_MODE", "STATIC")
+            brain.setdefault("risk_tsl", {})["tsl_mode"] = brain["TSL_LOGIC_MODE"]
+            save_brain_settings(brain)
+            self._save_brain_live_config()
+        except:
+            pass
+
+    def get_fee_config(self, symbol):
+        acc_type = self.cbo_account_type.get()
+        if acc_type in ["PRO", "STANDARD"]:
+            return 0.0
+        specific_rate = config.COMMISSION_RATES.get(symbol, -1)
+        if specific_rate != -1:
+            return specific_rate
+        acc_cfg = config.ACCOUNT_TYPES_CONFIG.get(
+            acc_type, config.ACCOUNT_TYPES_CONFIG["STANDARD"]
+        )
+        return acc_cfg.get("COMMISSION_PER_LOT", 0.0)
+
+    def bg_update_loop(self):
+        while self.running:
+            try:
+                sym = self.cbo_symbol.get()
+                new_map = self.trade_mgr.update_running_trades(
+                    self.cbo_account_type.get(), self.latest_market_context
+                )
+                self.tsl_states_map.update(new_map)
+
+                acc = self.connector.get_account_info()
+                
+                import core.storage_manager as storage_manager
+                
+                # [FIX V6.9.5] Nếu mất kết nối hoặc đang Swap tài khoản trên MT5 -> Ép reconnect
+                if acc is None:
+                    self.connector._is_connected = False
+                    self.connector.connect()
+                    acc = self.connector.get_account_info()
+                    
+                if acc:
+                    current_acc_id = str(acc['login'])
+                    if current_acc_id != storage_manager._active_account_id:
+                        storage_manager.set_active_account(current_acc_id)
+                        self.log_message(f"🔄 MT5 ĐỔI TÀI KHOẢN SANG {current_acc_id}. ĐANG TỰ ĐỘNG CHUYỂN SINH WORKSPACE...", target="bot")
+                        
+                        # Cập nhật biến global
+                        global TSL_SETTINGS_FILE, PRESETS_FILE, BRAIN_SETTINGS_FILE
+                        TSL_SETTINGS_FILE = os.path.join(storage_manager._active_account_dir, "tsl_settings.json")
+                        PRESETS_FILE = os.path.join(storage_manager._active_account_dir, "presets_config.json")
+                        BRAIN_SETTINGS_FILE = storage_manager.BRAIN_FILE
+                        self.group_status_tracker = storage_manager.load_group_status_tracker()
+                        
+                        # Reload account-scoped state instead of creating an incomplete in-memory state.
+                        self.trade_mgr.state = load_state()
+                        
+                        # Reload config trên UI thread
+                        self.after(100, self.load_settings)
+
+                tick = mt5.symbol_info_tick(sym)
+                magics = storage_manager.get_magic_numbers()
+                
+                pos = [
+                    p
+                    for p in self.connector.get_all_open_positions()
+                    if (
+                        is_bot_position(p, magics)
+                        or is_manual_position(p, magics)
+                        or is_grid_position(p, magics)
+                        or is_hedge_position(p, magics)
+                    )
+                ]
+                self.after(
+                    0,
+                    self.update_ui,
+                    acc,
+                    self.trade_mgr.state,
+                    self.checklist_mgr.run_pre_trade_checks(
+                        acc, self.trade_mgr.state, sym, self.var_strict_mode.get()
+                    ),
+                    tick,
+                    self.cbo_preset.get(),
+                    sym,
+                    pos,
+                )
+                self.run_advisor_triggers_tick()
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[BG_LOOP ERROR] {e}")
+            time.sleep(config.LOOP_SLEEP_SECONDS)
+
+    def update_ui(self, acc, state, check_res, tick, preset, sym, positions):
+        sym_count = len(self.brain_active_symbols)
+        if "SLEEPING" in self.brain_status:
+            rem = int(self.brain_wakeup_time - time.time())
+            if rem > 0:
+                self.lbl_brain_status.configure(
+                    text=f"🧠 BRAIN: SLEEP ({rem}s) [{sym_count} Sym]",
+                    text_color="#2196F3",
+                )
+            else:
+                self.lbl_brain_status.configure(
+                    text=f"🧠 BRAIN: SYNC... [{sym_count} Sym]", text_color=COL_WARN
+                )
+        elif self.brain_status in ["HEALTHY", "MONITORING"]:
+            self.lbl_brain_status.configure(
+                text=f"🧠 BRAIN: ONLINE [{sym_count} Sym]", text_color=COL_GREEN
+            )
+        else:
+            self.lbl_brain_status.configure(
+                text=f"🧠 BRAIN: {self.brain_status}", text_color=COL_RED
+            )
+
+        sym_ctx = self.latest_market_context.get(sym, {})
+
+        if sym_ctx:
+            # 1. Đọc khung thời gian Ngài đang chọn xem trên Dashboard
+            selected_tf = getattr(
+                self, "var_dashboard_tf", tk.StringVar(value="G1")
+            ).get()
+
+            # 2. Lấy dữ liệu kỹ thuật theo khung đó
+            sh = sym_ctx.get(f"swing_high_{selected_tf}", "--")
+            sl = sym_ctx.get(f"swing_low_{selected_tf}", "--")
+            atr = sym_ctx.get(f"atr_{selected_tf}", "--")
+
+            # Ép UI chỉ đọc Trend của Group đang được chọn ở ComboBox
+            tr = sym_ctx.get(f"trend_{selected_tf}", "NONE")
+
+            mode = sym_ctx.get("market_mode", "ANY")
+            mode_src = sym_ctx.get("mode_source", "NONE")
+
+            # 3. Đổ dữ liệu vào DÒNG 1
+            m_color = (
+                COL_GREEN if tr == "UP" else (COL_RED if tr == "DOWN" else "#78909C")
+            )
+            self.lbl_market_mode.configure(
+                text=f"Mode: {mode} (by {mode_src}) | Trend: {tr}", text_color=m_color
+            )
+
+            # 4. Đổ dữ liệu vào DÒNG 2: Thông số (Cái Label lbl_market_context)
+            if tr == "UP":
+                ctx_color = COL_GREEN
+            elif tr == "DOWN":
+                ctx_color = COL_RED
+            else:
+                ctx_color = "white"
+
+            if atr == 0.0 or atr == "--":
+                self.lbl_market_context.configure(
+                    text="Syncing Data...", text_color="#FFA500"
+                )
+            else:
+                sh_str = f"{sh:.2f}" if isinstance(sh, (int, float)) else "--"
+                sl_str = f"{sl:.2f}" if isinstance(sl, (int, float)) else "--"
+                atr_str = f"{atr:.2f}" if isinstance(atr, (int, float)) else "--"
+
+                self.lbl_market_context.configure(
+                    text=f"H: {sh_str} | L: {sl_str} | ATR: {atr_str}",
+                    text_color=ctx_color,
+                )
+        else:
+            # [FIX CORE UI]: Làm sạch nhãn nếu không có dữ liệu (Ví dụ đổi sang đồng Coin không có trong Watchlist)
+            self.lbl_market_mode.configure(
+                text=f"Mode: -- | Trend: --", text_color="gray"
+            )
+            self.lbl_market_context.configure(
+                text="H: -- | L: -- | ATR: --", text_color="gray"
+            )
+
+        d = self.var_direction.get()
+        cur_tactic_str = self.get_current_tactic_string()
+
+        balance = acc["balance"] if acc else 1.0
+        if balance == 0:
+            balance = 1.0
+
+        if acc:
+            self.lbl_equity.configure(text=f"${acc['equity']:,.2f}")
+            self.lbl_acc_info.configure(
+                text=f"ID: {acc['login']}\nServer: {acc['server']}"
+            )
+        base_pnl = float(state.get("pnl_today", 0.0) or 0.0)
+        grid_pnl = 0.0
+        hedge_pnl = 0.0
+        try:
+            from grid.grid_storage import load_grid_state
+
+            grid_pnl = float(load_grid_state().get("grid_pnl_today", 0.0) or 0.0)
+        except Exception:
+            grid_pnl = 0.0
+        try:
+            from hedge.hedge_storage import load_hedge_state
+
+            hedge_pnl = float(load_hedge_state().get("hedge_pnl_today", 0.0) or 0.0)
+        except Exception:
+            hedge_pnl = 0.0
+        pnl = base_pnl + grid_pnl + hedge_pnl
+        self.lbl_stats.configure(
+            text=f"PNL: ${pnl:.2f}",
+            text_color=COL_GREEN if pnl >= 0 else COL_RED,
+        )
+        # FEE label sẽ được cập nhật sau vòng lặp positions (cần data lệnh đang mở)
+
+        cur_price, c_size, point = 0.0, 1.0, 0.00001
+        vol_min, vol_max, vol_step = config.MIN_LOT_SIZE, config.MAX_LOT_SIZE, getattr(config, "LOT_STEP", 0.01)
+        if tick:
+            cur_price = tick.ask if d == "BUY" else tick.bid
+            self.lbl_dashboard_price.configure(
+                text=f"{cur_price:.2f}",
+                text_color=COL_GREEN if cur_price >= self.last_price_val else COL_RED,
+            )
+            self.last_price_val = cur_price
+            s_info = mt5.symbol_info(sym)
+            if s_info:
+                c_size, point = s_info.trade_contract_size, s_info.point
+                vol_min, vol_max, vol_step = s_info.volume_min, s_info.volume_max, s_info.volume_step
+
+        for item in check_res["checks"]:
+            name, stt, msg = item["name"], item["status"], item["msg"]
+            if name in self.check_labels:
+                self.check_labels[name].configure(
+                    text=f"{'✔' if stt == 'OK' else '✖'} {name}: {msg}",
+                    text_color=COL_GREEN
+                    if stt == "OK"
+                    else (COL_WARN if stt == "WARN" else COL_RED),
+                )
+
+        if tick and acc:
+            params = config.PRESETS.get(preset, config.PRESETS["SCALPING"])
+            current_risk_pct = params.get("RISK_PERCENT", 0.3)
+            sl_pct_display = params.get("SL_PERCENT", 0.0)
+            tp_r_display = params.get("TP_RR_RATIO", 0.0)
+
+            # --- ĐOẠN CẦN THAY THẾ BẮT ĐẦU TỪ ĐÂY ---
+            try:
+                mlot = float(self.var_manual_lot.get() or 0)
+                msl = float(self.var_manual_sl.get() or 0)
+                mtp = float(self.var_manual_tp.get() or 0)
+            except:
+                mlot, msl, mtp = 0.0, 0.0, 0.0
+
+            p_sl, active_sl_dist, sl_label, sl_missing = self._resolve_manual_sl_price(
+                sym, d, cur_price, params, sym_ctx, msl
+            )
+            if sl_missing or active_sl_dist <= 0:
+                active_sl_dist = cur_price * (params["SL_PERCENT"] / 100)
+                p_sl = (cur_price - active_sl_dist) if d == "BUY" else (cur_price + active_sl_dist)
+                sl_label = f"PERCENT:{sl_pct_display}%"
+            def resolve_manual_group(key):
+                group = str(params.get(key, "G2") or "G2")
+                if "DYNAMIC" in group:
+                    market_mode = sym_ctx.get("market_mode", "ANY") if sym_ctx else "ANY"
+                    return "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
+                return group
+
+            # 2. XÁC ĐỊNH LỢI NHUẬN MỤC TIÊU (TP)
+            use_swing_tp = params.get("USE_SWING_TP", False)
+            p_tp_tech = 0
+            if use_swing_tp and sym_ctx:
+                tp_group = resolve_manual_group("MANUAL_SWING_TP_GROUP")
+                
+                sh = sym_ctx.get(f"swing_high_{tp_group}")
+                sl_val = sym_ctx.get(f"swing_low_{tp_group}")
+                atr_val = sym_ctx.get(f"atr_{tp_group}")
+                
+                if sh and sl_val and atr_val:
+                    tp_mult = float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))))
+                    buffer = atr_val * tp_mult
+                    p_tp_tech = (sh - buffer) if d == "BUY" else (sl_val + buffer)
+
+            if mtp > 0:
+                p_tp = mtp
+                tp_label = "MANUAL"
+                swing_tp_missing = False
+            elif use_swing_tp:
+                p_tp = p_tp_tech
+                tp_label = "SWING"
+                swing_tp_missing = p_tp_tech <= 0
+            else:
+                p_tp = (
+                    cur_price + (active_sl_dist * params["TP_RR_RATIO"]) if d == "BUY" else cur_price - (active_sl_dist * params["TP_RR_RATIO"])
+                )
+                tp_label = f"{tp_r_display}R"
+                swing_tp_missing = False
+
+            self.lbl_head_sl.configure(text=f"STOPLOSS ({sl_label.split(':', 1)[0]})")
+            self.lbl_head_tp.configure(text=f"TARGET ({tp_label})")
+            try:
+                from core.entry_exit_engine import evaluate_entry_exit, format_decision
+
+                brain = self.trade_mgr._get_brain_settings(sym)
+                ee_decision = evaluate_entry_exit(
+                    sym,
+                    d,
+                    cur_price,
+                    sym_ctx or {},
+                    brain.get("entry_exit", {}),
+                )
+                self.latest_entry_exit_decisions[sym] = ee_decision
+                if hasattr(self, "lbl_entry_exit_preview"):
+                    self.lbl_entry_exit_preview.configure(
+                        text=format_decision(ee_decision),
+                        text_color=COL_GREEN
+                        if ee_decision.get("status") == "READY"
+                        else (COL_WARN if ee_decision.get("status") == "WAIT" else "#00B8D4"),
+                    )
+            except Exception as exc:
+                if hasattr(self, "lbl_entry_exit_preview"):
+                    self.lbl_entry_exit_preview.configure(
+                        text=f"E/E: ERROR | {exc}",
+                        text_color=COL_WARN,
+                    )
+
+            # 4. TÍNH TOÁN LOT PREVIEW DỰA TRÊN active_sl_dist
+            f_lot = mlot if mlot > 0 else 0
+            if f_lot == 0 and active_sl_dist > 0:
+                risk_usd = acc["equity"] * (current_risk_pct / 100)
+                strict_fee = 0.0
+                if params.get("STRICT_RISK", False):
+                    comm_rate = self.get_fee_config(sym)
+                    spread_cost_per_lot = (tick.ask - tick.bid) * c_size
+                    strict_fee = comm_rate + spread_cost_per_lot
+
+                order_type = mt5.ORDER_TYPE_BUY if d == "BUY" else mt5.ORDER_TYPE_SELL
+                calc_loss = mt5.order_calc_profit(order_type, sym, 1.0, cur_price, p_sl)
+                loss_per_lot = abs(float(calc_loss)) if calc_loss is not None and calc_loss < 0 else active_sl_dist * c_size
+                if (loss_per_lot + strict_fee) > 0:
+                    raw_calc = risk_usd / (loss_per_lot + strict_fee)
+                    f_lot = round(raw_calc / vol_step) * vol_step
+
+            auto_lot_cap = 0.0
+            try:
+                brain = self.trade_mgr._get_brain_settings(sym)
+                auto_lot_cap = float((brain.get("symbol_configs", {}).get(sym, {}) or {}).get("max_lot_cap", 0.0) or 0.0)
+            except Exception:
+                auto_lot_cap = 0.0
+            if auto_lot_cap <= 0:
+                auto_lot_cap = float(getattr(config, "MAX_LOT_CAP", 0.0) or 0.0)
+            if mlot <= 0 and auto_lot_cap > 0 and f_lot > auto_lot_cap:
+                self.lbl_prev_lot.configure(text=f"CHẶN AUTO LOT: {f_lot:.2f} > {auto_lot_cap:.2f}", text_color=COL_RED)
+                if hasattr(self, "btn_action"):
+                    self.btn_action.configure(state="normal")
+            elif hasattr(self, "btn_action"):
+                self.btn_action.configure(state="normal")
+
+            if f_lot < vol_min:
+                self.lbl_prev_lot.configure(text=f"LOT: KHÔNG HỢP LỆ (Min {vol_min})", text_color=COL_RED)
+                f_lot = vol_min
+            else:
+                f_lot = min(f_lot, vol_max)
+                self.lbl_prev_lot.configure(
+                    text=f"{'(TAY)' if mlot > 0 else '(TỰ ĐỘNG)'} VOL: {f_lot:.2f}",
+                    text_color="white" if mlot == 0 else "#FFD700",
+                )
+
+            # Hiển thị phí (Giữ nguyên)
+            comm_rate = self.get_fee_config(sym)
+            comm_total = comm_rate * f_lot
+            spread_cost = (tick.ask - tick.bid) * f_lot * c_size
+            acc_type = self.cbo_account_type.get()
+            if acc_type in ["PRO", "STANDARD"]:
+                self.lbl_fee_info.configure(text=f"Chi phí (Spread): -${spread_cost:.2f}")
+            else:
+                self.lbl_fee_info.configure(text=f"Chi phí (Comm): -${comm_total:.2f}")
+
+            # 5. HIỂN THỊ RỦI RO LÊN GIAO DIỆN
+            is_valid_sl = True
+            if d == "BUY" and p_sl >= cur_price: is_valid_sl = False
+            if d == "SELL" and p_sl <= cur_price: is_valid_sl = False
+
+            if is_valid_sl:
+                self.lbl_prev_sl.configure(text=f"{p_sl:.2f}", text_color=COL_RED)
+                loss_dist = abs(cur_price - p_sl)
+                loss_val = loss_dist * f_lot * c_size
+                loss_pct = (loss_val / balance) * 100
+                self.lbl_prev_risk.configure(
+                    text=f"-${loss_val:.2f} ({loss_pct:.2f}%)", text_color=COL_RED
+                )
+            else:
+                self.lbl_prev_sl.configure(text="LỖI", text_color=COL_WARN)
+                self.lbl_prev_risk.configure(text="$ ---", text_color=COL_WARN)
+
+            is_valid_tp = not swing_tp_missing
+            if is_valid_tp and d == "BUY" and p_tp <= cur_price:
+                is_valid_tp = False
+            if is_valid_tp and d == "SELL" and p_tp >= cur_price:
+                is_valid_tp = False
+
+            if is_valid_tp:
+                self.lbl_prev_tp.configure(text=f"{p_tp:.2f}", text_color=COL_GREEN)
+                prof_dist = abs(p_tp - cur_price)
+                prof_val = prof_dist * f_lot * c_size
+                prof_pct = (prof_val / balance) * 100
+                self.lbl_prev_rew.configure(
+                    text=f"+${prof_val:.2f} ({prof_pct:.2f}%)", text_color=COL_GREEN
+                )
+            else:
+                self.lbl_prev_tp.configure(text="LỖI", text_color=COL_WARN)
+                self.lbl_prev_rew.configure(text="$ ---", text_color=COL_WARN)
+
+            if cur_tactic_str == "OFF":
+                self.lbl_tsl_preview.configure(text="TSL: OFF")
+            else:
+                milestones = []
+                one_r_dist = abs(cur_price - p_sl)
+                is_buy = d == "BUY"
+                t_cfg = config.TSL_CONFIG
+
+                cur_tactic_modes = cur_tactic_str.split("+")
+                if "BE" in cur_tactic_modes and one_r_dist > 0:
+                    trig_r = t_cfg.get("BE_OFFSET_RR", 0.8)
+                    trig_p = (
+                        cur_price + (one_r_dist * trig_r)
+                        if is_buy
+                        else cur_price - (one_r_dist * trig_r)
+                    )
+                    fee_d = (
+                        (comm_total + spread_cost) / (f_lot * c_size)
+                        if (f_lot * c_size) > 0
+                        else 0
+                    )
+                    mode = t_cfg.get("BE_MODE", "SOFT")
+                    base = (
+                        cur_price - fee_d
+                        if (is_buy and mode == "SOFT")
+                        else (
+                            cur_price + fee_d
+                            if (is_buy and mode == "SMART")
+                            else cur_price
+                        )
+                    )
+                    if not is_buy:
+                        base = (
+                            cur_price + fee_d
+                            if mode == "SOFT"
+                            else (cur_price - fee_d if mode == "SMART" else cur_price)
+                        )
+                    be_sl = (
+                        base + (t_cfg.get("BE_OFFSET_POINTS", 0) * point)
+                        if is_buy
+                        else base - (t_cfg.get("BE_OFFSET_POINTS", 0) * point)
+                    )
+                    milestones.append(
+                        (abs(cur_price - trig_p), f"BE_SL | {trig_p:.2f} -> {be_sl:.2f}")
+                    )
+
+                if "STEP_R" in cur_tactic_str and one_r_dist > 0:
+                    sz, rt = (
+                        t_cfg.get("STEP_R_SIZE", 1.0),
+                        t_cfg.get("STEP_R_RATIO", 0.8),
+                    )
+                    n_trig = (
+                        cur_price + (sz * one_r_dist)
+                        if is_buy
+                        else cur_price - (sz * one_r_dist)
+                    )
+                    n_sl = (
+                        cur_price + (sz * one_r_dist * rt)
+                        if is_buy
+                        else cur_price - (sz * one_r_dist * rt)
+                    )
+                    milestones.append(
+                        (
+                            abs(cur_price - n_trig),
+                            f"Step 1 | {n_trig:.2f} -> {n_sl:.2f}",
+                        )
+                    )
+
+                if "PNL" in cur_tactic_str and t_cfg.get("PNL_LEVELS") and acc:
+                    lvl = t_cfg["PNL_LEVELS"][0]
+                    req_profit_usd = acc["balance"] * (lvl[0] / 100.0)
+                    trig_p = (
+                        cur_price + (req_profit_usd / (f_lot * c_size))
+                        if is_buy
+                        else cur_price - (req_profit_usd / (f_lot * c_size))
+                    )
+                    milestones.append(
+                        (abs(cur_price - trig_p), f"PnL {lvl[0]}% | {trig_p:.2f}")
+                    )
+
+                if "SWING" in cur_tactic_str and sym_ctx:
+                    brain = self.trade_mgr._get_brain_settings()
+                    trail_group = brain.get("risk_tsl", {}).get("base_sl", "G2")
+                    market_mode = sym_ctx.get("market_mode", "ANY")
+                    if "DYNAMIC" in trail_group:
+                        trail_group = (
+                            "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
+                        )
+
+                    sh, sl, atr_val = (
+                        sym_ctx.get(f"swing_high_{trail_group}", "--"),
+                        sym_ctx.get(f"swing_low_{trail_group}", "--"),
+                        sym_ctx.get(f"atr_{trail_group}", "--"),
+                    )
+                    if sh != "--" and sl != "--" and atr_val != "--":
+                        t_buf = float(brain.get("risk_tsl", {}).get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)))
+                        swing_sl = (
+                            float(sl) - (t_buf * float(atr_val))
+                            if is_buy
+                            else float(sh) + (t_buf * float(atr_val))
+                        )
+                        milestones.append((0, f"SWING | Đợi mốc ➔ {swing_sl:.2f}"))
+
+                if milestones:
+                    closest = sorted(milestones, key=lambda x: x[0])[0][1]
+                    self.lbl_tsl_preview.configure(text=f"TSL: {closest}")
+                else:
+                    preview_setup = {
+                        "price": cur_price,
+                        "sl": p_sl,
+                        "lot": f_lot,
+                        "risk_usd": loss_val if "loss_val" in locals() else 0.0,
+                        "direction": d,
+                        "group": trail_group if "trail_group" in locals() else "G2",
+                    }
+                    line1, line2 = self._build_tsl_preview_lines(preview_setup, sym_ctx)
+                    self.lbl_tsl_preview.configure(text=f"{line1}\n{line2}")
+
+        self.refresh_manual_preview_tab()
+
+        existing_items = self.tree.get_children()
+        current_tickets_on_chart = []
+        child_to_parent = self.trade_mgr.state.get("child_to_parent", {})
+        open_fee_total = 0.0  # [NEW] Tổng fee từ lệnh đang mở
+        hedge_ticket_map = {}
+        try:
+            from hedge.hedge_storage import load_hedge_state
+
+            hedge_state = load_hedge_state()
+            for _sym, _session in (hedge_state.get("active_sessions") or {}).items():
+                if not isinstance(_session, dict):
+                    continue
+                for _role, _key in (("BUY", "buy_ticket"), ("SELL", "sell_ticket")):
+                    _ticket = _session.get(_key)
+                    if _ticket:
+                        hedge_ticket_map[str(_ticket)] = {"role": _role, "session": _session}
+        except Exception:
+            hedge_ticket_map = {}
+
+        for p in positions:
+            ticket_str = str(p.ticket)
+            current_tickets_on_chart.append(ticket_str)
+
+            p_tick = mt5.symbol_info_tick(p.symbol)
+            p_sym_info = mt5.symbol_info(p.symbol)
+            p_c_size = p_sym_info.trade_contract_size if p_sym_info else 1.0
+            swap_val = getattr(p, "swap", 0.0)
+
+            current_spread = (p_tick.ask - p_tick.bid) if p_tick else 0.0
+            spread_cost_usd = current_spread * p.volume * p_c_size
+            comm_rate = self.get_fee_config(p.symbol)
+            comm_total_usd = comm_rate * p.volume
+
+            # [NEW] Cộng fee lệnh đang mở vào tổng (spread + commission + |swap|)
+            open_fee_total += spread_cost_usd + comm_total_usd + abs(swap_val)
+
+            acc_type = self.cbo_account_type.get()
+            if acc_type in ["PRO", "STANDARD"]:
+                fee_str = f"Spr: -${spread_cost_usd:.2f} | Sw: ${swap_val:.2f}"
+            else:
+                fee_str = f"Com: -${comm_total_usd:.2f} | Sw: ${swap_val:.2f}"
+
+            time_str = datetime.fromtimestamp(p.time).strftime("%d/%m %H:%M")
+            is_buy = p.type == mt5.ORDER_TYPE_BUY
+            icon = "🟢" if is_buy else "🔴"
+            side_txt = "BUY" if is_buy else "SELL"
+
+            display_ticket = f"#{ticket_str}"
+            is_child = ticket_str in child_to_parent
+
+            if is_child:
+                display_ticket = f" ┗━ #{ticket_str}"
+
+            origin_tag = "[UI]"
+            try:
+                import core.storage_manager as storage_manager
+                magics = storage_manager.get_magic_numbers()
+                is_grid = is_grid_position(p, magics)
+                is_hedge = is_hedge_position(p, magics)
+            except Exception:
+                is_grid = "[GRID]" in str(p.comment) or str(p.comment).startswith("GRID_")
+                is_hedge = "[HEDGE]" in str(p.comment) or str(p.comment).startswith("HEDGE_")
+
+            if is_grid:
+                origin_tag = "[GRID]"
+            elif is_hedge:
+                hedge_info = hedge_ticket_map.get(ticket_str, {})
+                hedge_session = hedge_info.get("session", {}) if isinstance(hedge_info, dict) else {}
+                hedge_source = str(hedge_session.get("source", "") or "").upper()
+                origin_tag = f"[HEDGE-{hedge_source}]" if hedge_source else "[HEDGE]"
+            elif "[BOT]_AUTO_DCA" in p.comment:
+                origin_tag = "[BOT-DCA]"
+            elif "[BOT]_AUTO_PCA" in p.comment:
+                origin_tag = "[BOT-PCA]"
+            elif "[BOT]" in p.comment:
+                origin_tag = "[BOT]"
+            elif "_Child" in p.comment:
+                origin_tag = "[UI+BOT]"
+
+            order_str = f"{origin_tag} {icon} {side_txt} {p.volume:.2f} {p.symbol} @ {p.price_open:.2f}"
+
+            sl_txt = f"{p.sl:.2f}" if p.sl > 0 else "---"
+            tp_txt = f"{p.tp:.2f}" if p.tp > 0 else "---"
+            targets_str = f"{sl_txt}  |  {tp_txt}"
+
+            risk_usd = abs(p.price_open - p.sl) * p.volume * p_c_size if p.sl > 0 else 0
+            rew_usd = abs(p.price_open - p.tp) * p.volume * p_c_size if p.tp > 0 else 0
+            risk_pct = (risk_usd / balance * 100) if balance > 0 else 0
+            rew_pct = (rew_usd / balance * 100) if balance > 0 else 0
+
+            is_sl_in_profit = False
+            if is_buy and p.sl > p.price_open:
+                is_sl_in_profit = True
+            if not is_buy and p.sl > 0 and p.sl < p.price_open:
+                is_sl_in_profit = True
+
+            if p.sl == 0:
+                risk_str = "No SL"
+            elif is_sl_in_profit:
+                risk_str = f"+${risk_usd:.1f} ({risk_pct:.1f}%)"
+            else:
+                risk_str = f"-${risk_usd:.1f} ({risk_pct:.1f}%)"
+
+            rew_str = f"+${rew_usd:.1f} ({rew_pct:.1f}%)" if p.tp > 0 else "No TP"
+            rr_str = f"{risk_str}  |  {rew_str}"
+
+            stt_txt = self.tsl_states_map.get(p.ticket, "Running")
+
+            # [KAISER FIX] Hiển thị rõ loại lệnh con trên Status nếu là lệnh DCA/PCA
+            if is_grid:
+                risk_str = "GRID Basket"
+                rew_str = f"TP ${rew_usd:.1f} ({rew_pct:.1f}%)" if p.tp > 0 else "GRID No TP"
+                rr_str = f"{risk_str}  |  {rew_str}"
+                if "[GRID]_CHILD" in str(p.comment) or str(p.comment).startswith("GRID_"):
+                    stt_txt = "GRID Child"
+                else:
+                    stt_txt = "GRID Running"
+            elif is_hedge:
+                hedge_info = hedge_ticket_map.get(ticket_str, {})
+                hedge_session = hedge_info.get("session", {}) if isinstance(hedge_info, dict) else {}
+                hedge_role = hedge_info.get("role", "---") if isinstance(hedge_info, dict) else "---"
+                hedge_tactic = str(hedge_session.get("tactic", "HEDGE") or "HEDGE").upper()
+                hedge_status = str(hedge_session.get("status", "RUNNING") or "RUNNING").upper()
+                hedge_source = str(hedge_session.get("source", "---") or "---").upper()
+                hedge_tsl = str(hedge_session.get("hedge_tsl_mode", "") or "").upper()
+                hedge_tsl_txt = f" | TSL:{hedge_tsl}" if hedge_tsl and hedge_tsl != "OFF" else ""
+                survivor = ""
+                if str(p.ticket) in (hedge_session.get("survivor_protected") or {}):
+                    survivor = " | SURVIVOR"
+                rr_str = f"HEDGE Dual | {hedge_tactic}"
+                stt_txt = f"HEDGE {hedge_source} | {hedge_tactic} | {hedge_status}:{hedge_role}{hedge_tsl_txt}{survivor}"
+            elif "[BOT]_AUTO_DCA" in p.comment:
+                stt_txt = "DCA Child"
+            elif "[BOT]_AUTO_PCA" in p.comment:
+                stt_txt = "PCA Child"
+            else:
+                tactic_info = self.trade_mgr.get_trade_tactic(p.ticket)
+                tactic_badges = []
+                tactic_modes = tactic_info.split("+")
+                if "BE_CASH" in tactic_modes:
+                    tactic_badges.append("BE_CASH")
+                elif "BE" in tactic_modes:
+                    tactic_badges.append("BE_SL")
+                if "PSAR_TRAIL" in tactic_modes:
+                    tactic_badges.append("PSAR")
+                if "ANTI_CASH" in tactic_modes:
+                    tactic_badges.append("ANTI")
+                if "REV_C" in tactic_modes:
+                    tactic_badges.append("REV")
+                stt_extras = []
+                if "AUTO_DCA" in tactic_modes:
+                    stt_extras.append("DCA")
+                if "AUTO_PCA" in tactic_modes:
+                    stt_extras.append("PCA")
+                if stt_extras:
+                    tactic_badges.append("+".join(stt_extras))
+                if tactic_badges:
+                    stt_txt += f" | {'+'.join(tactic_badges)}"
+                ee_tactic = self.trade_mgr.get_trade_entry_exit_tactic(p.ticket)
+                if ee_tactic and ee_tactic != "OFF":
+                    ee_labels = {
+                        "FALLBACK_R": "R",
+                        "SWING_REJECTION": "RETEST",
+                        "SWING_STRUCTURE": "STRUCT",
+                        "FIB_RETRACE": "FIB",
+                        "PULLBACK_ZONE": "PULL",
+                    }
+                    ee_badges = [
+                        ee_labels.get(mode, mode)
+                        for mode in ee_tactic.split("+")
+                        if mode and mode != "OFF"
+                    ]
+                    if ee_badges:
+                        stt_txt += f" | E/E:{'+'.join(ee_badges)}"
+
+            net_pnl = p.profit + getattr(p, "swap", 0.0)
+            if acc_type not in ["PRO", "STANDARD"]:
+                net_pnl -= comm_total_usd
+            excursion = self.trade_mgr.state.get("trade_excursions", {}).get(
+                ticket_str, {}
+            )
+            mae_usd = float(excursion.get("mae_usd", min(net_pnl, 0.0)))
+            mfe_usd = float(excursion.get("mfe_usd", max(net_pnl, 0.0)))
+            pnl_excursion_str = (
+                f"P:{net_pnl:+.2f} | A:{mae_usd:+.2f} | F:{mfe_usd:+.2f}"
+            )
+
+            values_data = (
+                display_ticket,
+                time_str,
+                order_str,
+                targets_str,
+                fee_str,
+                rr_str,
+                pnl_excursion_str,
+                stt_txt,
+                "❌",
+            )
+            tag_to_apply = "hedge_row" if is_hedge else ("grid_row" if is_grid else ("buy_row" if is_buy else "sell_row"))
+
+            if ticket_str in existing_items:
+                self.tree.item(ticket_str, values=values_data, tags=(tag_to_apply,))
+            else:
+                self.tree.insert(
+                    "", "end", iid=ticket_str, values=values_data, tags=(tag_to_apply,)
+                )
+
+        for item in existing_items:
+            if item not in current_tickets_on_chart:
+                self.tree.delete(item)
+
+        # [NEW] Cập nhật FEE label = fee đã đóng (state) + fee lệnh đang mở (real-time)
+        total_fee = state.get("fee_today", 0.0) + open_fee_total
+        self.lbl_fee_today.configure(
+            text=f"FEE: -${total_fee:.2f}",
+            text_color="#FFD700" if total_fee > 0 else "gray",
+        )
+
+    def on_click_trade(self):
+        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "HEDGE":
+            symbol = self.cbo_symbol.get()
+            context = self.latest_market_context.get(symbol, {})
+
+            def run_hedge_thread():
+                result = self.hedge_mgr.start_manual_session(symbol, context=context)
+                scan_result = self.hedge_mgr.scan([symbol], {symbol: context})
+                if "SUCCESS" in result:
+                    self.log_message(
+                        f"[HEDGE] Manual dual session started for {symbol}. Manage actions: {scan_result.get('actions', [])}",
+                        target="hedge",
+                    )
+                else:
+                    self.log_message(f"[HEDGE] START failed: {result}", error=True, target="hedge")
+
+            threading.Thread(target=run_hedge_thread, daemon=True).start()
+            return
+
+        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "GRID":
+            symbol = self.cbo_symbol.get()
+            mode = self.var_grid_manual_mode.get()
+            context = self.latest_market_context.get(symbol, {})
+
+            def run_grid_thread():
+                result = self.grid_mgr.start_manual_session(
+                    symbol,
+                    mode=mode,
+                    bypass_signal=self.var_grid_bypass_signal.get(),
+                    context=context,
+                )
+                if "SUCCESS" in result:
+                    scan_result = self.grid_mgr.scan([symbol], {symbol: context})
+                    self.log_message(
+                        f"[GRID] Manual {mode} session started for {symbol}. Scan actions: {scan_result.get('actions', [])}",
+                        target="grid",
+                    )
+                else:
+                    self.log_message(f"[GRID] START failed: {result}", error=True, target="grid")
+
+            threading.Thread(target=run_grid_thread, daemon=True).start()
+            return
+
+        d, s, p, t = (
+            self.var_direction.get(),
+            self.cbo_symbol.get(),
+            self.cbo_preset.get(),
+            self.get_current_tactic_string(),
+        )
+        try:
+            ml, mt, ms = (
+                float(self.var_manual_lot.get() or 0),
+                float(self.var_manual_tp.get() or 0),
+                float(self.var_manual_sl.get() or 0),
+            )
+        except:
+            ml = mt = ms = 0.0
+
+        if ms == 0.0 and self.var_assist_math_sl.get():
+            target_sym_ctx = self.latest_market_context.get(s, {})
+            if d == "BUY":
+                sl_val = target_sym_ctx.get(
+                    "swing_low_entry", target_sym_ctx.get("swing_low")
+                )
+            else:
+                sl_val = target_sym_ctx.get(
+                    "swing_high_entry", target_sym_ctx.get("swing_high")
+                )
+
+            atr_val = target_sym_ctx.get("atr_entry", target_sym_ctx.get("atr"))
+
+            if sl_val and atr_val:
+                brain = self.trade_mgr._get_brain_settings()
+                sl_mult = float(brain.get("risk_tsl", {}).get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)))
+                ms = (
+                    float(sl_val) - (float(atr_val) * sl_mult)
+                    if d == "BUY"
+                    else float(sl_val) + (float(atr_val) * sl_mult)
+                )
+                self.log_message(f"🧠 Auto-Math SL: {ms:.2f}", error=False)
+
+        # Truyền thêm biến target_sym_ctx vào execute_manual_trade
+        target_sym_ctx = self.latest_market_context.get(s, {})
+        try:
+            ee_decision = self.latest_entry_exit_decisions.get(s, {})
+            if ee_decision.get("status") == "READY":
+                if ms == 0.0 and ee_decision.get("sl"):
+                    ms = float(ee_decision["sl"])
+                if mt == 0.0 and ee_decision.get("tp"):
+                    mt = float(ee_decision["tp"])
+        except Exception:
+            pass
+
+        def run_trade_thread():
+            result = self.trade_mgr.execute_manual_trade(
+                d,
+                p,
+                s,
+                self.var_strict_mode.get(),
+                target_sym_ctx,   # <--- Đã thêm biến này
+                ml,
+                mt,
+                ms,
+                self.var_bypass_checklist.get(),
+                t,
+            )
+            if "SUCCESS" not in result:
+                self.log_message(f"❌ THẤT BẠI: {result}", error=True)
+
+        threading.Thread(target=run_trade_thread).start()
+
+    def _set_advisor_status(self, status, error=""):
+        self.advisor_last_export_status = status
+        self.advisor_last_error = error or ""
+        label = getattr(self, "lbl_advisor_status", None)
+        if label and label.winfo_exists():
+            text = status if not error else f"{status} | {error}"
+            color = COL_RED if error else (COL_GREEN if "OK" in status else COL_WARN)
+            label.configure(text=text, text_color=color)
+        inline = getattr(self, "lbl_advisor_inline_status", None)
+        if inline and inline.winfo_exists():
+            color = COL_RED if error else (COL_GREEN if "OK" in status else "gray")
+            inline.configure(text="OK" if "OK" in status else ("ERR" if error else "AI"), text_color=color)
+
+    def _advisor_stdout_log(self, message):
+        try:
+            print(f"[AI ADVISOR] {message}", flush=True)
+        except Exception:
+            pass
+
+    def _advisor_worker(self, send_api=False, reason="manual"):
+        if self._advisor_worker_active:
+            return
+        self._advisor_worker_active = True
+        try:
+            from ai_advisor.exporter import generate_advisor_package
+
+            try:
+                days = int(self.var_advisor_export_days.get() or 7)
+            except Exception:
+                days = 7
+            self._advisor_stdout_log(f"worker started reason={reason} send_api={send_api} export_days={days}")
+            self.log_message(
+                f"[AI ADVISOR] Worker started reason={reason} send_api={send_api} export_days={days}",
+                target="manual",
+            )
+            if send_api:
+                self.after(0, lambda: self._set_advisor_status("Advisor exporting before API..."))
+            result = generate_advisor_package(
+                export_days=days,
+                save_archive=False,
+                connector=self.connector,
+                state=getattr(self.trade_mgr, "state", {}),
+                market_contexts=getattr(self, "latest_market_context", {}),
+                reason=reason,
+            )
+            if not result.get("ok"):
+                err = result.get("error", "advisor export failed")
+                self.after(0, lambda: self._set_advisor_status("Advisor ERR", err))
+                self._advisor_stdout_log(f"export failed: {err}")
+                self.log_message(f"[AI ADVISOR] Export failed: {err}", error=True, target="manual")
+                return
+            self._advisor_stdout_log(
+                "export ready "
+                f"closed={result.get('export_closed_trades', 0)} "
+                f"open={result.get('open_trades', 0)}"
+            )
+            self.log_message(
+                "[AI ADVISOR] Export ready "
+                f"closed={result.get('export_closed_trades', 0)} "
+                f"open={result.get('open_trades', 0)}",
+                target="manual",
+            )
+
+            api_result = None
+            telegram_result = None
+            if send_api:
+                from ai_advisor.api_client import estimate_api_payload, send_package_to_api
+
+                response_file_var = getattr(
+                    self,
+                    "var_advisor_send_response_file",
+                    getattr(self, "var_advisor_send_previous_response", None),
+                )
+                include_response_file = bool(response_file_var.get()) if response_file_var else False
+                try:
+                    estimate = estimate_api_payload(include_previous_response=include_response_file)
+                    status_msg = (
+                        "Advisor API calling "
+                        f"{estimate.get('model')} | "
+                        f"tokens~{estimate.get('tokens')} | "
+                        f"web={estimate.get('web_search_enabled')}"
+                    )
+                    self.after(0, lambda m=status_msg: self._set_advisor_status(m))
+                    self._advisor_stdout_log(
+                        "API sending "
+                        f"model={estimate.get('model')} "
+                        f"chars={estimate.get('chars')} "
+                        f"tokens~{estimate.get('tokens')} "
+                        f"web_search={estimate.get('web_search_enabled')} "
+                        f"include_response={include_response_file}"
+                    )
+                    self.log_message(
+                        "[AI ADVISOR] API sending "
+                        f"model={estimate.get('model')} "
+                        f"chars={estimate.get('chars')} "
+                        f"tokens~{estimate.get('tokens')} "
+                        f"web_search={estimate.get('web_search_enabled')} "
+                        f"include_response={include_response_file}",
+                        target="manual",
+                    )
+                except Exception as exc:
+                    self.log_message(f"[AI ADVISOR] API estimate warning: {exc}", error=True, target="manual")
+                api_wait_stop = threading.Event()
+
+                def api_wait_status():
+                    started = time.time()
+                    while not api_wait_stop.wait(15):
+                        elapsed = int(time.time() - started)
+                        mins = elapsed // 60
+                        secs = elapsed % 60
+                        self.after(
+                            0,
+                            lambda m=f"Advisor API calling... {mins}m{secs:02d}s": self._set_advisor_status(m),
+                        )
+                        self._advisor_stdout_log(f"API still waiting elapsed={mins}m{secs:02d}s")
+
+                threading.Thread(target=api_wait_status, daemon=True).start()
+                api_result = send_package_to_api(include_previous_response=include_response_file)
+                api_wait_stop.set()
+                if not api_result.get("ok"):
+                    err = api_result.get("error", "API failed")
+                    self.after(0, lambda e=err: self._set_advisor_status("Advisor API ERR", e))
+                    self._advisor_stdout_log(f"API failed: {err}")
+                    self.log_message(
+                        f"[AI ADVISOR] API skipped/failed: {err}",
+                        error=True,
+                        target="manual",
+                    )
+                    return
+                try:
+                    from telegram_notify.reporter import send_advisor_response
+
+                    telegram_result = send_advisor_response(api_result.get("response"))
+                    if telegram_result.get("ok"):
+                        self.log_message(
+                            f"[TELEGRAM] Advisor response sent to report group ({telegram_result.get('sent', 0)} parts).",
+                            target="manual",
+                        )
+                    elif not telegram_result.get("skipped"):
+                        self.log_message(
+                            f"[TELEGRAM] Advisor report skipped/failed: {telegram_result.get('error', 'Telegram failed')}",
+                            error=True,
+                            target="manual",
+                        )
+                except Exception as exc:
+                    telegram_result = {"ok": False, "error": str(exc)}
+                    self.log_message(f"[TELEGRAM] Advisor report error: {exc}", error=True, target="manual")
+
+            msg = (
+                f"Advisor OK | export={result.get('export_days', days)}d "
+                f"closed={result.get('export_closed_trades', 0)} "
+                f"open={result.get('open_trades', 0)}"
+            )
+            if api_result and api_result.get("ok"):
+                msg += " | API OK"
+            if telegram_result and telegram_result.get("ok"):
+                msg += " | TG OK"
+            elif telegram_result and not telegram_result.get("skipped"):
+                msg += " | TG WARN"
+            self.after(0, lambda m=msg: self._set_advisor_status(m))
+            self._advisor_stdout_log(msg)
+            self.log_message(f"[AI ADVISOR] {msg}", target="manual")
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): self._set_advisor_status("Advisor ERR", e))
+            self._advisor_stdout_log(f"error: {exc}")
+            self.log_message(f"[AI ADVISOR] Error: {exc}", error=True, target="manual")
+        finally:
+            self._advisor_worker_active = False
+
+    def _advisor_api_worker(self, reason="api_button"):
+        if self._advisor_worker_active:
+            return
+        self._advisor_worker_active = True
+        api_wait_stop = None
+        try:
+            from ai_advisor import paths as advisor_paths
+            from ai_advisor.api_client import estimate_api_payload, send_package_to_api
+
+            required_files = [
+                ("advisor_export.xlsx", advisor_paths.export_path()),
+                ("technical_settings.json", advisor_paths.technical_settings_path()),
+                ("advisor_flow.md", advisor_paths.advisor_flow_path()),
+                ("user_context.md", advisor_paths.user_context_path()),
+            ]
+            missing = [name for name, path in required_files if not os.path.exists(path)]
+            if missing:
+                msg = "Missing advisor package file(s): " + ", ".join(missing) + ". Generate Advisor Package first."
+                self.after(0, lambda m=msg: self._set_advisor_status("Advisor API ERR", m))
+                self._advisor_stdout_log(msg)
+                self.log_message(f"[AI ADVISOR] API skipped: {msg}", error=True, target="manual")
+                return
+
+            response_file_var = getattr(
+                self,
+                "var_advisor_send_response_file",
+                getattr(self, "var_advisor_send_previous_response", None),
+            )
+            include_response_file = bool(response_file_var.get()) if response_file_var else False
+
+            try:
+                estimate = estimate_api_payload(include_previous_response=include_response_file)
+                status_msg = (
+                    "Advisor API calling "
+                    f"{estimate.get('model')} | "
+                    f"tokens~{estimate.get('tokens')} | "
+                    f"web={estimate.get('web_search_enabled')}"
+                )
+                self.after(0, lambda m=status_msg: self._set_advisor_status(m))
+                self._advisor_stdout_log(
+                    "API sending existing package "
+                    f"reason={reason} "
+                    f"model={estimate.get('model')} "
+                    f"chars={estimate.get('chars')} "
+                    f"tokens~{estimate.get('tokens')} "
+                    f"web_search={estimate.get('web_search_enabled')} "
+                    f"include_response={include_response_file}"
+                )
+                self.log_message(
+                    "[AI ADVISOR] API sending existing package "
+                    f"model={estimate.get('model')} "
+                    f"chars={estimate.get('chars')} "
+                    f"tokens~{estimate.get('tokens')} "
+                    f"web_search={estimate.get('web_search_enabled')} "
+                    f"include_response={include_response_file}",
+                    target="manual",
+                )
+            except Exception as exc:
+                self.log_message(f"[AI ADVISOR] API estimate warning: {exc}", error=True, target="manual")
+
+            api_wait_stop = threading.Event()
+
+            def api_wait_status():
+                started = time.time()
+                while not api_wait_stop.wait(15):
+                    elapsed = int(time.time() - started)
+                    mins = elapsed // 60
+                    secs = elapsed % 60
+                    self.after(
+                        0,
+                        lambda m=f"Advisor API calling... {mins}m{secs:02d}s": self._set_advisor_status(m),
+                    )
+                    self._advisor_stdout_log(f"API still waiting elapsed={mins}m{secs:02d}s")
+
+            threading.Thread(target=api_wait_status, daemon=True).start()
+            api_result = send_package_to_api(include_previous_response=include_response_file)
+            if not api_result.get("ok"):
+                err = api_result.get("error", "API failed")
+                self.after(0, lambda e=err: self._set_advisor_status("Advisor API ERR", e))
+                self._advisor_stdout_log(f"API failed: {err}")
+                self.log_message(f"[AI ADVISOR] API skipped/failed: {err}", error=True, target="manual")
+                return
+
+            telegram_result = None
+            try:
+                from telegram_notify.reporter import send_advisor_response
+
+                telegram_result = send_advisor_response(api_result.get("response"))
+                if telegram_result.get("ok"):
+                    self.log_message(
+                        f"[TELEGRAM] Advisor response sent to report group ({telegram_result.get('sent', 0)} parts).",
+                        target="manual",
+                    )
+                elif not telegram_result.get("skipped"):
+                    self.log_message(
+                        f"[TELEGRAM] Advisor report skipped/failed: {telegram_result.get('error', 'Telegram failed')}",
+                        error=True,
+                        target="manual",
+                    )
+            except Exception as exc:
+                telegram_result = {"ok": False, "error": str(exc)}
+                self.log_message(f"[TELEGRAM] Advisor report error: {exc}", error=True, target="manual")
+
+            msg = "Advisor API OK"
+            if telegram_result and telegram_result.get("ok"):
+                msg += " | TG OK"
+            elif telegram_result and not telegram_result.get("skipped"):
+                msg += " | TG WARN"
+            self.after(0, lambda m=msg: self._set_advisor_status(m))
+            self._advisor_stdout_log(msg)
+            self.log_message(f"[AI ADVISOR] {msg}", target="manual")
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): self._set_advisor_status("Advisor API ERR", e))
+            self._advisor_stdout_log(f"API error: {exc}")
+            self.log_message(f"[AI ADVISOR] API error: {exc}", error=True, target="manual")
+        finally:
+            if api_wait_stop:
+                api_wait_stop.set()
+            self._advisor_worker_active = False
+
+    def generate_advisor_package_ui(self):
+        if self._advisor_worker_active:
+            self._set_advisor_status("Advisor busy")
+            return
+        self._set_advisor_status("Advisor exporting...")
+        threading.Thread(target=self._advisor_worker, kwargs={"send_api": False, "reason": "manual_button"}, daemon=True).start()
+
+    def send_advisor_api_now(self):
+        if self._advisor_worker_active:
+            self._set_advisor_status("Advisor busy")
+            return
+        self._set_advisor_status("Advisor API sending...")
+        threading.Thread(target=self._advisor_api_worker, kwargs={"reason": "api_button"}, daemon=True).start()
+
+    def preview_advisor_api_payload(self):
+        try:
+            from ai_advisor.api_client import estimate_api_payload
+
+            response_file_var = getattr(
+                self,
+                "var_advisor_send_response_file",
+                getattr(self, "var_advisor_send_previous_response", None),
+            )
+            include_response_file = bool(response_file_var.get()) if response_file_var else False
+            estimate = estimate_api_payload(include_previous_response=include_response_file)
+            tokens = estimate.get("tokens", 0)
+            cost = estimate.get("input_cost_usd", 0.0)
+            out_2k = estimate.get("estimated_output_2k_usd", 0.0)
+            out_4k = estimate.get("estimated_output_4k_usd", 0.0)
+            model = estimate.get("model", "gpt-5.4-mini")
+            context_tokens = estimate.get("context_tokens", 0)
+            max_output_tokens = estimate.get("max_output_tokens", 0)
+            remaining_tokens = estimate.get("context_remaining_tokens", 0)
+            context_status = "OK" if estimate.get("fits_context") else "TOO LARGE"
+            web_status = "ON" if estimate.get("web_search_enabled") else "OFF"
+            text = (
+                f"API payload: ~{tokens:,} input tokens\n"
+                f"Input cost: ~${cost:.4f} | Output 2k/4k: ~${out_2k:.4f}/${out_4k:.4f}\n"
+                f"Model: {model} | Context: {context_status} "
+                f"(limit {context_tokens:,}, output reserve {max_output_tokens:,}, remain {remaining_tokens:,})\n"
+                f"Web Search: {web_status} | Tool cost is not included in this token preview"
+            )
+            detail_parts = []
+            for item in estimate.get("breakdown", []):
+                name = str(item.get("name") or "")
+                marker = "[AUTO]" if name in {"technical_settings.json", "advisor_export.xlsx"} else "[EDIT]"
+                detail_parts.append(
+                    f"{marker} {name:<24} ~{int(item.get('tokens', 0)):>8,} tok   {int(item.get('chars', 0)):>10,} chars"
+                )
+            detail = "\n".join(detail_parts)
+            self.advisor_api_preview_text = text
+            self.advisor_api_preview_detail_text = detail
+            label = getattr(self, "lbl_advisor_api_preview", None)
+            if label and label.winfo_exists():
+                label.configure(text=text, text_color="#E3F2FD")
+            detail_label = getattr(self, "lbl_advisor_api_preview_detail", None)
+            if detail_label and detail_label.winfo_exists():
+                detail_label.configure(text=detail, text_color="#B3E5FC")
+            self._set_advisor_status("API preview OK")
+        except Exception as exc:
+            text = f"API payload preview ERR: {exc}"
+            self.advisor_api_preview_text = text
+            self.advisor_api_preview_detail_text = ""
+            label = getattr(self, "lbl_advisor_api_preview", None)
+            if label and label.winfo_exists():
+                label.configure(text=text, text_color=COL_RED)
+            detail_label = getattr(self, "lbl_advisor_api_preview_detail", None)
+            if detail_label and detail_label.winfo_exists():
+                detail_label.configure(text="", text_color=COL_RED)
+            self._set_advisor_status("API preview ERR", str(exc))
+
+    def open_advisor_folder(self):
+        try:
+            from ai_advisor.paths import advisor_root, ensure_advisor_dirs
+
+            ensure_advisor_dirs()
+            os.startfile(advisor_root())
+            self.log_message("[AI ADVISOR] Opened Advisor folder.", target="manual")
+        except Exception as exc:
+            self._set_advisor_status("Advisor folder ERR", str(exc))
+            self.log_message(f"[AI ADVISOR] Cannot open folder: {exc}", error=True, target="manual")
+
+    def run_advisor_triggers_tick(self):
+        if self.var_advisor_mode.get() != "API Trigger":
+            return
+        now = time.time()
+        if now - self._advisor_last_trigger_check < 30:
+            return
+        self._advisor_last_trigger_check = now
+        if self._advisor_worker_active:
+            return
+        try:
+            fixed_time = (self.var_advisor_fixed_time.get() or "").strip()
+            reasons = []
+            if fixed_time and time.strftime("%H:%M") == fixed_time:
+                reasons.append("fixed_time_report")
+            if self.var_advisor_global_emergency.get():
+                from ai_advisor.triggers import evaluate
+
+                reasons.extend(evaluate(getattr(self.trade_mgr, "state", {}), connector=self.connector))
+            fresh = []
+            for reason in sorted(set(reasons)):
+                last = self._advisor_last_trigger_fire.get(reason, 0.0)
+                if now - last >= 3600:
+                    fresh.append(reason)
+                    self._advisor_last_trigger_fire[reason] = now
+            if fresh:
+                reason_text = "+".join(fresh)
+                self.log_message(f"[AI ADVISOR] Trigger: {reason_text}", target="manual")
+                threading.Thread(
+                    target=self._advisor_worker,
+                    kwargs={"send_api": True, "reason": f"trigger:{reason_text}"},
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            self.log_message(f"[AI ADVISOR] Trigger check error: {exc}", error=True, target="manual")
+
+    def log_message(self, msg, error=False, target="manual"):
+        if "Retcode: 10025" in msg:
+            return
+
+        ts = time.strftime("%H:%M:%S")
+        txt = f"[{ts}] {msg}\n"
+
+        if "PnL: +$" in msg or "SUCCESS" in msg or "H�p" in msg:
+            tag = "SUCCESS"
+        elif "PnL: $-" in msg or error or "ERR" in msg or "FAIL" in msg:
+            tag = "ERROR"
+        elif "Đóng lệnh" in msg:
+            tag = "INFO"
+        elif "BUY" in msg:
+            tag = "SUCCESS"
+        elif "SELL" in msg:
+            tag = "ERROR"
+        else:
+            tag = "INFO"
+
+        # [NEW V4.4 FINAL] Tự động định tuyến log của bot vào 2 Tab (BOT và BOT-LOG)
+        grid_markers = ("[GRID]", "[GRID]_", "GRID SAFEGUARD")
+        hedge_markers = ("[HEDGE]", "[HEDGE]_", "HEDGE_")
+        bot_markers = ("[BOT]", "[BOT]_", "[BOT-DCA]", "[BOT-PCA]", "AUTO_DCA", "AUTO_PCA", "BOT SAFEGUARD")
+        if target == "manual" and any(k in msg for k in grid_markers):
+            target = "grid"
+        if target == "manual" and any(k in msg for k in hedge_markers):
+            target = "hedge"
+        if target == "manual" and any(k in msg for k in bot_markers):
+            target = "bot"
+        if target == "manual" and "[USER EXEC]" in msg:
+            target = "manual"
+
+        if target == "bot":
+            if "[BOT EXEC]" in msg or "[TSL]" in msg:
+                target = "bot"
+            elif any(
+                k in msg
+                for k in ["🚀", "Đóng lệnh", "B�p c�", "PnL", "SUCCESS", "FAIL"]
+            ):
+                target = "bot"  # Lệnh thực thi -> Sang Tab BOT
+            else:
+                target = "bot-log"  # Log logic/check -> Sang Tab BOT-LOG
+        elif target == "grid" and "ORDER " in msg:
+            target = "grid"
+        elif target == "grid" and "DECISION" in msg:
+            target = "grid"
+        elif target == "grid":
+            if any(k in msg for k in ["ENTRY", "CHILD", "Đóng lệnh", "PnL", "SUCCESS", "FAIL"]):
+                target = "grid"
+            else:
+                target = "grid-log"
+        elif target == "hedge" and any(k in msg for k in ["OPEN", "CLOSE", "Closed", "SUCCESS", "FAIL", "PAIR_OPENED", "SURVIVOR_ARMED"]):
+            target = "hedge"
+        elif target == "hedge":
+            target = "hedge-log"
+
+        self.after(0, lambda: self._write_log(txt, tag, target))
+
+    def _log_target_from_tab_name(self, tab_name):
+        tab_name = str(tab_name or "").replace(" *", "")
+        if "Preview" in tab_name:
+            return "preview"
+        if "Bot-Log" in tab_name:
+            return "bot-log"
+        if "GRID-Log" in tab_name:
+            return "grid-log"
+        if "HEDGE-Log" in tab_name:
+            return "hedge-log"
+        if "Bot" in tab_name:
+            return "bot"
+        if "GRID" in tab_name:
+            return "grid"
+        if "HEDGE" in tab_name:
+            return "hedge"
+        return "manual"
+
+    def _set_log_tab_unread(self, target, unread):
+        tabview = getattr(self, "log_tabview", None)
+        keys = getattr(self, "log_tab_keys", {})
+        if not tabview or target not in keys:
+            return
+        self.log_tab_unread[target] = bool(unread)
+        base = keys[target]
+        label = f"{base} *" if unread else base
+        try:
+            buttons = tabview._segmented_button._buttons_dict
+            for key, candidate in buttons.items():
+                try:
+                    current = str(candidate.cget("text"))
+                    clean = current.replace(" *", "")
+                    if key == base or clean == base:
+                        candidate.configure(text=label)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def clear_active_log_unread(self):
+        tabview = getattr(self, "log_tabview", None)
+        if not tabview:
+            return
+        active = tabview.get().replace(" *", "")
+        self._set_log_tab_unread(self._log_target_from_tab_name(active), False)
+
+    def clear_log_unread_by_tab_name(self, tab_name):
+        clean = str(tab_name or "").replace(" *", "")
+        self._set_log_tab_unread(self._log_target_from_tab_name(clean), False)
+        self.after(50, self.clear_active_log_unread)
+
+    def _write_log(self, txt, tag, target="manual"):
+        if target == "bot":
+            widget = getattr(self, "txt_log_bot", None)
+        elif target == "bot-log":
+            # Fallback về txt_log_bot nếu Ngài chưa tạo Text widget cho bot_log
+            widget = getattr(
+                self, "txt_log_bot_log", getattr(self, "txt_log_bot", None)
+            )
+        elif target == "grid":
+            widget = getattr(self, "txt_log_grid", None)
+        elif target == "grid-log":
+            widget = getattr(
+                self, "txt_log_grid_log", getattr(self, "txt_log_grid", None)
+            )
+        elif target == "hedge":
+            widget = getattr(self, "txt_log_hedge", None)
+        elif target == "hedge-log":
+            widget = getattr(
+                self, "txt_log_hedge_log", getattr(self, "txt_log_hedge", None)
+            )
+        else:
+            widget = getattr(self, "txt_log_manual", None)
+
+        if widget and widget.winfo_exists():
+            widget.configure(state="normal")
+            widget.insert("end", txt, tag)
+            widget.see("end")
+            widget.configure(state="disabled")
+            tabview = getattr(self, "log_tabview", None)
+            if tabview and self._log_target_from_tab_name(tabview.get()) != target:
+                self._set_log_tab_unread(target, True)
+            if tabview:
+                self.after(50, self.clear_active_log_unread)
+
+    def reset_daily_stats(self):
+        if messagebox.askyesno("Xác nhận", "Tạo Phiên/Group mới (Clear Cache)?", parent=self):
+            self.trade_mgr.state.update(
+                {
+                    "pnl_today": 0.0,
+                    "fee_today": 0.0,
+                    "trades_today_count": 0,
+                    "daily_loss_count": 0,
+                    "bot_pnl_today": 0.0,
+                    "bot_trades_today": 0,
+                    "bot_daily_loss_count": 0,
+                    "bot_losing_streak": 0,
+                    "bot_symbol_losing_streak": {},
+                    "manual_pnl_today": 0.0,
+                    "manual_trades_today": 0,
+                    "manual_daily_loss_count": 0,
+                    "losing_streak": 0,
+                    "cooldown_until": 0.0,
+                    "active_brake": {"global": None, "symbols": {}},
+                    "bot_last_entry_times": {},
+                    "bot_last_fail_times": {},
+                    "pending_entry_exit": {},
+                    "last_close_times": {},
+                    "trade_excursions": {},
+                    "anti_cash_locks": {},
+                    "be_sl_locks": {},
+                    "be_sl_arms": {},
+                    "current_session_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                }
+            )
+            save_state(self.trade_mgr.state)
+            try:
+                from grid.grid_storage import load_grid_state, save_grid_state
+
+                grid_state = load_grid_state()
+                grid_state.update(
+                    {
+                        "grid_pnl_today": 0.0,
+                        "grid_trades_today": 0,
+                        "grid_daily_loss_count": 0,
+                    }
+                )
+                save_grid_state(grid_state)
+            except Exception:
+                pass
+            try:
+                from hedge.hedge_storage import load_hedge_state, save_hedge_state
+
+                hedge_state = load_hedge_state()
+                hedge_state.update(
+                    {
+                        "hedge_pnl_today": 0.0,
+                        "hedge_sessions_today": 0,
+                        "hedge_daily_loss_count": 0,
+                    }
+                )
+                save_hedge_state(hedge_state)
+            except Exception:
+                pass
+            try:
+                import core.storage_manager as storage_manager
+
+                signal_file = os.path.join(
+                    storage_manager._active_account_dir, "live_signals.json"
+                )
+                if os.path.exists(signal_file):
+                    with open(signal_file, "r", encoding="utf-8") as f:
+                        signal_payload = json.load(f)
+                    signal_payload["pending_signals"] = []
+                    with open(signal_file, "w", encoding="utf-8") as f:
+                        json.dump(signal_payload, f, indent=4, ensure_ascii=False)
+            except Exception:
+                pass
+            if hasattr(self, "signal_listener"):
+                self.signal_listener.processed_signals.clear()
+                self.signal_listener.last_safeguard_reason.clear()
+                self.signal_listener.last_safeguard_time.clear()
+            if self.daemon_process:
+                try:
+                    self.daemon_process.terminate()
+                    self.daemon_process.wait(timeout=5)
+                except Exception:
+                    pass
+                daemon_output = getattr(self, "daemon_output_file", None)
+                if daemon_output:
+                    try:
+                        daemon_output.close()
+                    except Exception:
+                        pass
+                self.start_daemon_process()
+            self.log_message("🔄 Đã xóa Cache và tạo Phiên/Group mới.", target="bot")
+
+    def close_all_trades(self):
+        items = self.tree.get_children()
+        if not items:
+            return
+        if self.var_confirm_close.get() and not messagebox.askyesno(
+            "Xác nhận", "ĐÓNG TOÀN BỘ LỆNH?", parent=self
+        ):
+            return
+        for item in items:
+            p = next(
+                (
+                    p
+                    for p in self.connector.get_all_open_positions()
+                    if p.ticket == int(item)
+                ),
+                None,
+            )
+            if p:
+                self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
+                threading.Thread(
+                    target=lambda: self.connector.close_position(p)
+                ).start()
+
+    def close_selected_trades(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        if self.var_confirm_close.get() and not messagebox.askyesno(
+            "Xác nhận", f"Đóng {len(selected)} lệnh đã chọn?", parent=self
+        ):
+            return
+        for item in selected:
+            p = next(
+                (
+                    p
+                    for p in self.connector.get_all_open_positions()
+                    if p.ticket == int(item)
+                ),
+                None,
+            )
+            if p:
+                self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
+                threading.Thread(
+                    target=lambda: self.connector.close_position(p)
+                ).start()
+
+    def on_tree_click(self, event):
+        region = self.tree.identify("region", event.x, event.y)
+        if region == "cell":
+            col = self.tree.identify_column(event.x)
+            row_id = self.tree.identify_row(event.y)
+            if row_id and col == "#9":
+                if self.var_confirm_close.get() and not messagebox.askyesno(
+                    "Đóng lệnh", f"Dóng lệnh #{row_id}?", parent=self
+                ):
+                    return
+                p = next(
+                    (
+                        p
+                        for p in self.connector.get_all_open_positions()
+                        if p.ticket == int(row_id)
+                    ),
+                    None,
+                )
+                if p:
+                    self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
+                    threading.Thread(
+                        target=lambda: self.connector.close_position(p)
+                    ).start()
+
+    def on_tree_right_click(self, event):
+        row_id = self.tree.identify_row(event.y)
+        selected = self.tree.selection()
+        menu = Menu(self, tearoff=0, font=("Arial", 14))
+
+        if len(selected) > 1:
+            menu.add_command(
+                label=f"❌ Đóng {len(selected)} Lệnh Đã Chọn",
+                command=self.close_selected_trades,
+            )
+        else:
+            if row_id:
+                self.tree.selection_set(row_id)
+                ticket = int(row_id)
+                hedge_session = None
+                hedge_symbol = None
+                hedge_role = None
+
+                def close_hedge_session():
+                    if not hedge_session:
+                        return
+                    tickets = [
+                        int(t)
+                        for t in (hedge_session.get("buy_ticket"), hedge_session.get("sell_ticket"))
+                        if t
+                    ]
+                    positions = [
+                        p
+                        for p in self.connector.get_all_open_positions()
+                        if int(getattr(p, "ticket", 0) or 0) in tickets
+                    ]
+                    if not positions:
+                        return
+                    if self.var_confirm_close.get() and not messagebox.askyesno(
+                        "Confirm",
+                        f"Close HEDGE pair {hedge_symbol or ''} ({len(positions)} open legs)?",
+                        parent=self,
+                    ):
+                        return
+                    for pos in positions:
+                        self.trade_mgr.set_exit_reason(pos.ticket, "Manual_Close_HEDGE_Pair")
+                        threading.Thread(target=lambda p=pos: self.connector.close_position(p)).start()
+
+                try:
+                    import core.storage_manager as storage_manager
+                    from hedge.hedge_storage import load_hedge_state
+
+                    magics = storage_manager.get_magic_numbers()
+                    pos = next((p for p in self.connector.get_all_open_positions() if p.ticket == ticket), None)
+                    if pos and is_hedge_position(pos, magics):
+                        hedge_state = load_hedge_state()
+                        hedge_label = "HEDGE"
+                        for _sym, _session in (hedge_state.get("active_sessions") or {}).items():
+                            if not isinstance(_session, dict):
+                                continue
+                            ticket_roles = {
+                                str(_session.get("buy_ticket")): "BUY",
+                                str(_session.get("sell_ticket")): "SELL",
+                            }
+                            role = ticket_roles.get(str(ticket))
+                            if role:
+                                hedge_session = _session
+                                hedge_symbol = _sym
+                                hedge_role = role
+                                hedge_label = (
+                                    f"HEDGE {_session.get('source', '-')}"
+                                    f" | {_session.get('tactic', '-')}"
+                                    f" | {_session.get('status', '-')}"
+                                    f" | {role}"
+                                )
+                                break
+                        menu.add_command(label=hedge_label, state="disabled")
+                        menu.add_separator()
+                        if hedge_session:
+                            menu.add_command(
+                                label=f"Close HEDGE Pair {hedge_symbol or ''}",
+                                command=close_hedge_session,
+                            )
+                            menu.add_separator()
+                except Exception:
+                    pass
+
+                menu.add_command(
+                    label=f"📝 Sửa lệnh #{ticket}",
+                    command=lambda: self.open_edit_popup(ticket),
+                )
+                menu.add_separator()
+                menu.add_command(
+                    label="❌ Đóng Lệnh Này",
+                    command=lambda: self.close_selected_trades(),
+                )
+
+        menu.post(event.x_root, event.y_root)
+
+
+if __name__ == "__main__":
+    # Khởi tạo hệ thống Log 3 Lớp trước khi bật App
+    # data/logs/sẽ tự động được tạo ra
+    setup_logging(debug_mode=getattr(config, "ENABLE_DEBUG_LOGGING", False))
+
+    try:
+        app = BotUI()
+        app.mainloop()
+    except Exception as e:
+        logger = logging.getLogger("ExnessBot")
+        logger.critical(f"💥 Lỗi nghiêm trọng tại Main Loop: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(0)

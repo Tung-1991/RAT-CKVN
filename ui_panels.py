@@ -1,0 +1,1427 @@
+# -*- coding: utf-8 -*-
+# FILE: ui_panels.py
+# V8.4.1: UPDATED UI PANELS - OPTIMIZED TOP HEADER & CONTEXT PREVIEW (KAISER EDITION)
+
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import ttk
+import config
+
+# --- HẰNG SỐ UI ---
+FONT_MAIN = ("Roboto", 13)
+FONT_BOLD = ("Roboto", 13, "bold")
+FONT_EQUITY = ("Roboto", 36, "bold")
+FONT_PNL = ("Roboto", 18, "bold")
+FONT_SECTION = ("Roboto", 12, "bold")
+FONT_BIG_VAL = ("Consolas", 18, "bold")
+FONT_PRICE = ("Roboto", 28, "bold")
+FONT_FEE = ("Roboto", 13, "bold")
+
+COL_GREEN = "#00C853"
+COL_RED = "#D50000"
+COL_BLUE_ACCENT = "#0D47A1"
+COL_BLUE_ACCENT_HOVER = "#0A3578"
+COL_WARN = "#FFAB00"
+COL_BOT_TAG = "#E040FB"
+COL_SETTING = "#0E7490"
+COL_SETTING_HOVER = "#155E75"
+
+
+def setup_left_panel(app, parent):
+    """Xây dựng toàn bộ thanh điều khiển bên trái"""
+
+    # 1. TOP HEADER (Equity & Info) - REWORKED LAYOUT
+    f_top = ctk.CTkFrame(parent, fg_color="#1a1a1a", corner_radius=8)
+    f_top.pack(fill="x", pady=(5, 5), padx=5)
+
+    # Khung trên: Equity & ID/Server
+    f_top_1 = ctk.CTkFrame(f_top, fg_color="transparent")
+    f_top_1.pack(fill="x", padx=5, pady=(5, 0))
+
+    app.lbl_equity = ctk.CTkLabel(
+        f_top_1, text="$----", font=FONT_EQUITY, text_color=COL_GREEN
+    )
+    app.lbl_equity.pack(side="left", padx=5)
+
+    app.lbl_acc_info = ctk.CTkLabel(
+        f_top_1,
+        text="ID: --- \nServer: ---",
+        font=("Roboto", 10),
+        text_color="gray",
+        justify="right",
+    )
+    app.lbl_acc_info.pack(side="right", padx=5, anchor="e")
+
+    # Khung dưới: PNL & Brain Status
+    f_top_2 = ctk.CTkFrame(f_top, fg_color="transparent")
+    f_top_2.pack(fill="x", padx=5, pady=(0, 5))
+
+    f_pnl = ctk.CTkFrame(f_top_2, fg_color="transparent")
+    f_pnl.pack(side="left")
+
+    app.lbl_stats = ctk.CTkLabel(
+        f_pnl, text="PNL: $0.00", font=FONT_PNL, text_color="white"
+    )
+    app.lbl_stats.pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        f_pnl,
+        text="⟳",
+        width=25,
+        height=20,
+        fg_color="#333",
+        hover_color="#444",
+        command=app.reset_daily_stats,
+    ).pack(side="left", padx=2)
+
+    app.lbl_fee_today = ctk.CTkLabel(
+        f_pnl, text="FEE: -$0.00", font=FONT_FEE, text_color="gray"
+    )
+    app.lbl_fee_today.pack(side="left", padx=(8, 0))
+
+    app.lbl_brain_status = ctk.CTkLabel(
+        f_top_2,
+        text="🧠 BRAIN: CHỜ...",
+        font=("Roboto", 11, "bold"),
+        text_color="#FF8F00",
+    )
+    app.lbl_brain_status.pack(side="right", padx=5)
+
+    # 2. SETTINGS PANEL
+    f_set = ctk.CTkFrame(parent, fg_color="#1f1f1f", corner_radius=8)
+    f_set.pack(fill="x", padx=5, pady=(6, 8))
+    f_set.columnconfigure(0, minsize=42)
+    f_set.columnconfigure(1, weight=1)
+
+    def setting_label(row, text):
+        ctk.CTkLabel(
+            f_set,
+            text=text,
+            font=("Roboto", 11, "bold"),
+            text_color="#B0BEC5",
+            anchor="e",
+        ).grid(row=row, column=0, sticky="e", padx=(6, 6), pady=4)
+
+    def setting_row(row):
+        frame = ctk.CTkFrame(f_set, fg_color="transparent")
+        frame.grid(row=row, column=1, sticky="ew", padx=(0, 6), pady=4)
+        return frame
+
+    def stretch_columns(frame, widths):
+        for col, width in enumerate(widths):
+            frame.grid_columnconfigure(col, weight=1, minsize=width)
+
+    def set_force_button_state():
+        enabled = app.var_bypass_checklist.get()
+        app.btn_force.configure(
+            fg_color=COL_BLUE_ACCENT if enabled else "#424242",
+            hover_color=COL_BLUE_ACCENT_HOVER if enabled else "#616161",
+        )
+
+    def toggle_force_button():
+        app.var_bypass_checklist.set(not app.var_bypass_checklist.get())
+        set_force_button_state()
+
+    setting_label(0, "COIN")
+    f_coin_row = setting_row(0)
+    stretch_columns(f_coin_row, (112, 154))
+    app.cbo_symbol = ctk.CTkOptionMenu(
+        f_coin_row,
+        values=config.COIN_LIST,
+        font=FONT_BOLD,
+        width=112,
+        height=32,
+        command=app.on_symbol_change,
+    )
+    if config.DEFAULT_SYMBOL in config.COIN_LIST:
+        app.cbo_symbol.set(config.DEFAULT_SYMBOL)
+    elif len(config.COIN_LIST) > 0:
+        app.cbo_symbol.set(config.COIN_LIST[0])
+    app.cbo_symbol.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+    app.cbo_preset = ctk.CTkOptionMenu(
+        f_coin_row,
+        values=list(config.PRESETS.keys()),
+        font=FONT_MAIN,
+        width=154,
+        height=32,
+        command=app.on_preset_change,
+    )
+    app.cbo_preset.set(config.DEFAULT_PRESET)
+    app.cbo_preset.grid(row=0, column=1, sticky="ew")
+
+    setting_label(1, "ACC")
+    f_account_row = setting_row(1)
+    stretch_columns(f_account_row, (128, 74, 104))
+    app.cbo_account_type = ctk.CTkOptionMenu(
+        f_account_row,
+        values=list(config.ACCOUNT_TYPES_CONFIG.keys()),
+        font=FONT_MAIN,
+        width=128,
+        height=32,
+    )
+    app.cbo_account_type.set(config.DEFAULT_ACCOUNT_TYPE)
+    app.cbo_account_type.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+    ctk.CTkButton(
+        f_account_row,
+        text="\u2699 PRESET",
+        width=92,
+        height=32,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_preset_config_popup,
+    ).grid(row=0, column=2, sticky="ew")
+    app.btn_force = ctk.CTkButton(
+        f_account_row,
+        text="Force",
+        font=("Roboto", 11, "bold"),
+        text_color="white",
+        width=74,
+        height=32,
+        fg_color="#424242",
+        hover_color="#616161",
+        command=toggle_force_button,
+    )
+    app.btn_force.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+    set_force_button_state()
+
+    setting_label(2, "TSL")
+    f_tsl_row = setting_row(2)
+    stretch_columns(f_tsl_row, (36, 40, 46, 54, 48, 48, 42))
+    app.btn_tactic_be = ctk.CTkButton(
+        f_tsl_row, text="BE", width=36, height=32, command=lambda: app.toggle_tactic("BE")
+    )
+    app.btn_tactic_be.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    app.btn_tactic_pnl = ctk.CTkButton(
+        f_tsl_row, text="PNL", width=40, height=32, command=lambda: app.toggle_tactic("PNL")
+    )
+    app.btn_tactic_pnl.grid(row=0, column=1, sticky="ew", padx=3)
+    app.btn_tactic_step = ctk.CTkButton(
+        f_tsl_row, text="STEP", width=46, height=32, command=lambda: app.toggle_tactic("STEP_R")
+    )
+    app.btn_tactic_step.grid(row=0, column=2, sticky="ew", padx=3)
+    app.btn_tactic_swing = ctk.CTkButton(
+        f_tsl_row, text="SWING", width=54, height=32, command=lambda: app.toggle_tactic("SWING")
+    )
+    app.btn_tactic_swing.grid(row=0, column=3, sticky="ew", padx=3)
+    app.btn_tactic_cash = ctk.CTkButton(
+        f_tsl_row, text="CASH", width=48, height=32, command=lambda: app.toggle_tactic("BE_CASH")
+    )
+    app.btn_tactic_cash.grid(row=0, column=4, sticky="ew", padx=3)
+    app.btn_tactic_psar = ctk.CTkButton(
+        f_tsl_row, text="PSAR", width=48, height=32, command=lambda: app.toggle_tactic("PSAR_TRAIL")
+    )
+    app.btn_tactic_psar.grid(row=0, column=5, sticky="ew", padx=3)
+    ctk.CTkButton(
+        f_tsl_row,
+        text="TSL",
+        width=42,
+        height=32,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_tsl_popup,
+    ).grid(row=0, column=6, sticky="ew", padx=(3, 0))
+
+    setting_label(3, "E/E")
+    f_entry = setting_row(3)
+    stretch_columns(f_entry, (36, 62, 62, 40, 42, 42))
+    app.btn_entry_r = ctk.CTkButton(
+        f_entry, text="R", width=36, height=32, command=lambda: app.toggle_entry_exit_tactic("FALLBACK_R")
+    )
+    app.btn_entry_r.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    app.btn_entry_swing = ctk.CTkButton(
+        f_entry, text="RETEST", width=62, height=32, command=lambda: app.toggle_entry_exit_tactic("SWING_REJECTION")
+    )
+    app.btn_entry_swing.grid(row=0, column=1, sticky="ew", padx=3)
+    app.btn_entry_struct = ctk.CTkButton(
+        f_entry, text="STRUCT", width=62, height=32, command=lambda: app.toggle_entry_exit_tactic("SWING_STRUCTURE")
+    )
+    app.btn_entry_struct.grid(row=0, column=2, sticky="ew", padx=3)
+    app.btn_entry_fib = ctk.CTkButton(
+        f_entry, text="FIB", width=40, height=32, command=lambda: app.toggle_entry_exit_tactic("FIB_RETRACE")
+    )
+    app.btn_entry_fib.grid(row=0, column=3, sticky="ew", padx=3)
+    app.btn_entry_pullback = ctk.CTkButton(
+        f_entry, text="PULL", width=42, height=32, command=lambda: app.toggle_entry_exit_tactic("PULLBACK_ZONE")
+    )
+    app.btn_entry_pullback.grid(row=0, column=4, sticky="ew", padx=3)
+    ctk.CTkButton(
+        f_entry,
+        text="EE",
+        width=42,
+        height=32,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_entry_exit_popup,
+    ).grid(row=0, column=5, sticky="ew", padx=(3, 0))
+
+    setting_label(4, "DEF")
+    f_def = setting_row(4)
+    stretch_columns(f_def, (50, 50, 50, 58, 110))
+    app.btn_tactic_dca = ctk.CTkButton(
+        f_def, text="DCA", width=50, height=32, command=lambda: app.toggle_tactic("AUTO_DCA")
+    )
+    app.btn_tactic_dca.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    app.btn_tactic_pca = ctk.CTkButton(
+        f_def, text="PCA", width=50, height=32, command=lambda: app.toggle_tactic("AUTO_PCA")
+    )
+    app.btn_tactic_pca.grid(row=0, column=1, sticky="ew", padx=3)
+    app.btn_tactic_rev_c = ctk.CTkButton(
+        f_def, text="REV", width=50, height=32, command=lambda: app.toggle_tactic("REV_C")
+    )
+    app.btn_tactic_rev_c.grid(row=0, column=2, sticky="ew", padx=3)
+    app.btn_tactic_anti_cash = ctk.CTkButton(
+        f_def, text="A.CUT", width=58, height=32, command=lambda: app.toggle_tactic("ANTI_CASH")
+    )
+    app.btn_tactic_anti_cash.grid(row=0, column=3, sticky="ew", padx=3)
+    ctk.CTkButton(
+        f_def,
+        text="\u2699 AI ADVISOR",
+        width=110,
+        height=32,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_advisor_popup,
+    ).grid(row=0, column=4, sticky="ew", padx=(3, 0))
+
+    setting_label(5, "BOT")
+    f_bot_row = setting_row(5)
+    stretch_columns(f_bot_row, (20, 112, 120))
+    app.ind_auto_light = ctk.CTkFrame(
+        f_bot_row, width=14, height=14, corner_radius=7, fg_color=COL_RED
+    )
+    app.ind_auto_light.grid(row=0, column=0, padx=(0, 6))
+    ctk.CTkButton(
+        f_bot_row,
+        text="\u2699 BOT",
+        width=112,
+        height=32,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_bot_setting_popup,
+    ).grid(row=0, column=1, sticky="ew", padx=(0, 3))
+    app.btn_strategy = ctk.CTkButton(
+        f_bot_row,
+        text="\u2699 SANDBOX",
+        width=120,
+        height=32,
+        font=("Roboto", 11, "bold"),
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_strategy_sandbox,
+    )
+    app.btn_strategy.grid(row=0, column=2, sticky="ew", padx=(3, 0))
+
+    setting_label(6, "TOOLS")
+    f_tools = setting_row(6)
+    stretch_columns(f_tools, (112, 210))
+    try:
+        from grid.grid_storage import load_grid_settings
+
+        _grid_on = bool(load_grid_settings().get("ENABLED", False))
+    except Exception:
+        _grid_on = False
+    f_ad_status = ctk.CTkFrame(f_tools, fg_color="transparent")
+    f_ad_status.grid(row=0, column=0, sticky="w", padx=(0, 6))
+
+    f_grid_state = ctk.CTkFrame(f_ad_status, fg_color="transparent")
+    f_grid_state.pack(anchor="w", pady=0)
+    app.ind_ad_grid_light = ctk.CTkFrame(
+        f_grid_state,
+        width=9,
+        height=9,
+        corner_radius=5,
+        fg_color=COL_GREEN if _grid_on else COL_RED,
+    )
+    app.ind_ad_grid_light.pack(side="left", padx=(0, 4))
+    ctk.CTkLabel(
+        f_grid_state,
+        text="GRID",
+        font=("Roboto", 11, "bold"),
+        height=14,
+        text_color="#00B8D4" if _grid_on else "gray",
+    ).pack(side="left")
+
+    f_hedge_state = ctk.CTkFrame(f_ad_status, fg_color="transparent")
+    f_hedge_state.pack(anchor="w", pady=0)
+    app.ind_ad_hedge_light = ctk.CTkFrame(
+        f_hedge_state,
+        width=9,
+        height=9,
+        corner_radius=5,
+        fg_color=COL_RED,
+    )
+    app.ind_ad_hedge_light.pack(side="left", padx=(0, 4))
+    ctk.CTkLabel(
+        f_hedge_state,
+        text="HEDGE",
+        font=("Roboto", 11, "bold"),
+        height=14,
+        text_color="gray",
+    ).pack(side="left")
+
+    ctk.CTkButton(
+        f_tools,
+        text="\u2699 ADVANCED TOOLS",
+        width=210,
+        height=32,
+        font=("Roboto", 11, "bold"),
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+        command=app.open_advanced_tools_popup,
+    ).grid(row=0, column=1, sticky="ew")
+
+    app.update_tactic_buttons_ui()
+    app.update_entry_exit_buttons_ui()
+
+    # 3. MANUAL INPUT PANEL
+    f_input = ctk.CTkFrame(parent, fg_color="transparent")
+    f_input.pack(fill="x", padx=5, pady=(5, 0))
+    f_input.grid_columnconfigure((0, 1, 2), weight=1)
+
+    def make_inp(p, t, v, c):
+        f = ctk.CTkFrame(p, fg_color="#2b2b2b", corner_radius=6)
+        f.grid(row=0, column=c, padx=3, sticky="ew")
+        ctk.CTkLabel(f, text=t, font=("Roboto", 10, "bold"), text_color="#aaa").pack(
+            pady=(2, 0)
+        )
+        ctk.CTkEntry(
+            f,
+            textvariable=v,
+            font=("Consolas", 14, "bold"),
+            height=30,
+            justify="center",
+            fg_color="transparent",
+            border_width=0,
+        ).pack(fill="x")
+
+    make_inp(f_input, "VOL (Lot)", app.var_manual_lot, 0)
+    make_inp(f_input, "TP (Price)", app.var_manual_tp, 1)
+    make_inp(f_input, "SL (Price)", app.var_manual_sl, 2)
+    for _manual_var in (app.var_manual_lot, app.var_manual_tp, app.var_manual_sl):
+        try:
+            _manual_var.trace_add("write", app.on_manual_input_change)
+        except Exception:
+            pass
+
+    # --- PHẦN ĐÃ FIX: MULTI-TF CONTEXT PREVIEW (V8.4.1) ---
+    f_context = ctk.CTkFrame(parent, fg_color="#1E1E1E", corner_radius=6)
+    f_context.pack(fill="x", padx=5, pady=(5, 5))
+
+    # Dòng 1: Chế độ (Mode) & Xu hướng (Trend)
+    app.lbl_market_mode = ctk.CTkLabel(
+        f_context,
+        text="Mode: -- | Trend: --",
+        font=("Roboto", 13, "bold"),
+        text_color="#29B6F6",
+        anchor="w",
+    )
+    app.lbl_market_mode.pack(fill="x", padx=10, pady=(5, 0))
+
+    # Dòng 2: Khung chứa Dropdown chọn G và Thông số H/L/ATR
+    f_context_bottom = ctk.CTkFrame(f_context, fg_color="transparent")
+    f_context_bottom.pack(fill="x", padx=5, pady=(2, 5))
+
+    app.var_dashboard_tf = tk.StringVar(value="G1")
+    app.cbo_dashboard_tf = ctk.CTkOptionMenu(
+        f_context_bottom,
+        values=["G0", "G1", "G2", "G3"],
+        variable=app.var_dashboard_tf,
+        width=60,
+        height=24,
+        font=("Roboto", 11, "bold"),
+    )
+    app.cbo_dashboard_tf.pack(side="left", padx=5)
+
+    # Label DUY NHẤT để hiển thị Swing/ATR (Xóa các bản trùng lặp cũ)
+    # Label DUY NHẤT để hiển thị Swing/ATR
+    app.lbl_market_context = ctk.CTkLabel(
+        f_context_bottom,
+        text="H: -- | L: -- | ATR: --",
+        font=("Consolas", 14, "bold"),
+        text_color="#78909C",
+        anchor="w",
+    )
+    app.lbl_market_context.pack(side="left", fill="x", expand=True, padx=5)
+    f_context.pack_forget()
+
+    app.btn_action = ctk.CTkButton(
+        parent,
+        text="EXECUTE BUY",
+        font=("Roboto", 15, "bold"),
+        height=40,
+        fg_color=COL_GREEN,
+        hover_color="#009624",
+        command=app.on_click_trade,
+    )
+    app.btn_action.pack(fill="x", padx=10, pady=(3, 6))
+
+    # 4. LIVE DASHBOARD
+    f_dashboard = ctk.CTkFrame(
+        parent, fg_color="#252526", corner_radius=8, border_width=1, border_color="#333"
+    )
+    f_dashboard.pack(fill="x", padx=5, pady=(2, 8))
+
+    f_head_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
+    f_head_db.pack(fill="x", padx=10, pady=(5, 0))
+    app.lbl_prev_lot = ctk.CTkLabel(
+        f_head_db, text="LOT: 0.00", font=FONT_BOLD, text_color="#FFD700"
+    )
+    app.lbl_prev_lot.pack(side="left")
+    app.lbl_fee_info = ctk.CTkLabel(
+        f_head_db, text="Cost: $0.00", font=FONT_FEE, text_color="#FFD700"
+    )
+    app.lbl_fee_info.pack(side="right")
+    f_price_row = ctk.CTkFrame(f_dashboard, fg_color="transparent")
+    f_price_row.pack(fill="x", padx=8, pady=(3, 3))
+    f_price_row.grid_columnconfigure(0, minsize=106)
+    f_price_row.grid_columnconfigure(1, weight=1)
+    f_price_row.grid_columnconfigure(2, minsize=106)
+
+    app.frame_trade_mode = ctk.CTkFrame(
+        f_price_row, fg_color="#424242", corner_radius=6
+    )
+    app.frame_trade_mode.grid(row=0, column=0, sticky="w", padx=(0, 8))
+    app.btn_mode_normal = ctk.CTkButton(
+        app.frame_trade_mode,
+        text="NORMAL",
+        width=96,
+        height=24,
+        font=("Roboto", 10, "bold"),
+        fg_color="#00838F",
+        hover_color="#006064",
+        command=lambda: app.on_manual_trade_mode_change("NORMAL"),
+    )
+    app.btn_mode_normal.pack(fill="x", padx=4, pady=(4, 1))
+    app.btn_mode_grid = ctk.CTkButton(
+        app.frame_trade_mode,
+        text="GRID",
+        width=96,
+        height=24,
+        font=("Roboto", 10, "bold"),
+        fg_color="#424242",
+        hover_color="#616161",
+        command=lambda: app.on_manual_trade_mode_change("GRID"),
+    )
+    app.btn_mode_grid.pack(fill="x", padx=4, pady=(1, 4))
+    app.btn_mode_hedge = ctk.CTkButton(
+        app.frame_trade_mode,
+        text="HEDGE",
+        width=96,
+        height=24,
+        font=("Roboto", 10, "bold"),
+        fg_color="#424242",
+        hover_color="#616161",
+        command=lambda: app.on_manual_trade_mode_change("HEDGE"),
+    )
+    app.btn_mode_hedge.pack(fill="x", padx=4, pady=(1, 4))
+
+    app.lbl_dashboard_price = ctk.CTkLabel(
+        f_price_row, text="----.--", font=FONT_PRICE, text_color="white"
+    )
+    app.lbl_dashboard_price.grid(row=0, column=1, sticky="ew")
+
+    app.frame_direction = ctk.CTkFrame(f_price_row, fg_color="#424242", corner_radius=6)
+    app.frame_direction.grid(row=0, column=2, sticky="e", padx=(8, 0))
+    app.btn_dir_buy = ctk.CTkButton(
+        app.frame_direction,
+        text="BUY",
+        width=96,
+        height=24,
+        font=("Roboto", 10, "bold"),
+        fg_color=COL_GREEN,
+        hover_color="#009624",
+        command=lambda: app.on_direction_change("BUY"),
+    )
+    app.btn_dir_buy.pack(fill="x", padx=4, pady=(4, 1))
+    app.btn_dir_sell = ctk.CTkButton(
+        app.frame_direction,
+        text="SELL",
+        width=96,
+        height=24,
+        font=("Roboto", 10, "bold"),
+        fg_color="#424242",
+        hover_color="#616161",
+        command=lambda: app.on_direction_change("SELL"),
+    )
+    app.btn_dir_sell.pack(fill="x", padx=4, pady=(1, 4))
+
+    ctk.CTkFrame(f_dashboard, height=1, fg_color="#444").pack(fill="x", padx=5)
+    f_grid_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
+    f_grid_db.pack(fill="x", padx=5, pady=3)
+    f_grid_db.columnconfigure((0, 1), weight=1)
+
+    f_rew = ctk.CTkFrame(f_grid_db, fg_color="transparent")
+    f_rew.grid(row=0, column=0, sticky="nsew", padx=2)
+    app.lbl_head_tp = ctk.CTkLabel(
+        f_rew, text="TARGET (TP)", font=("Roboto", 10), text_color=COL_GREEN
+    )
+    app.lbl_head_tp.pack()
+    app.lbl_prev_tp = ctk.CTkLabel(
+        f_rew, text="---", font=("Consolas", 14), text_color=COL_GREEN
+    )
+    app.lbl_prev_tp.pack()
+    app.lbl_prev_rew = ctk.CTkLabel(
+        f_rew, text="+$0.0", font=FONT_BIG_VAL, text_color=COL_GREEN
+    )
+    app.lbl_prev_rew.pack()
+
+    f_risk = ctk.CTkFrame(f_grid_db, fg_color="transparent")
+    f_risk.grid(row=0, column=1, sticky="nsew", padx=2)
+    app.lbl_head_sl = ctk.CTkLabel(
+        f_risk, text="STOPLOSS (SL)", font=("Roboto", 10), text_color=COL_RED
+    )
+    app.lbl_head_sl.pack()
+    app.lbl_prev_sl = ctk.CTkLabel(
+        f_risk, text="---", font=("Consolas", 14), text_color=COL_RED
+    )
+    app.lbl_prev_sl.pack()
+    app.lbl_prev_risk = ctk.CTkLabel(
+        f_risk, text="-$0.0", font=FONT_BIG_VAL, text_color=COL_RED
+    )
+    app.lbl_prev_risk.pack()
+
+    f_preview_tabs = ctk.CTkFrame(f_dashboard, fg_color="transparent")
+    f_preview_body = ctk.CTkFrame(f_dashboard, fg_color="transparent", height=1)
+    f_preview_body.pack_propagate(False)
+
+    def show_preview_tab(tab_name):
+        if hasattr(app, "lbl_tsl_preview"):
+            app.lbl_tsl_preview.pack_forget()
+        if hasattr(app, "lbl_entry_exit_preview"):
+            app.lbl_entry_exit_preview.pack_forget()
+
+        if tab_name == "E/E":
+            app.lbl_entry_exit_preview.pack(fill="x", padx=2, pady=(2, 0))
+        else:
+            app.lbl_tsl_preview.pack(fill="x", padx=2, pady=(2, 0))
+
+    app.seg_preview_mode = ctk.CTkSegmentedButton(
+        f_preview_tabs,
+        values=["TSL", "E/E"],
+        font=("Roboto", 10, "bold"),
+        height=24,
+        command=show_preview_tab,
+        selected_color="#1f538d",
+        selected_hover_color="#14375e",
+    )
+    # Preview chi tiet da chuyen sang tab Preview ben khu log.
+
+    app.lbl_tsl_preview = ctk.CTkLabel(
+        f_preview_body,
+        text="TSL: OFF",
+        font=("Roboto", 11),
+        text_color="#2196F3",
+        anchor="w",
+        justify="left",
+        wraplength=720,
+    )
+    app.lbl_entry_exit_preview = ctk.CTkLabel(
+        f_preview_body,
+        text="E/E: OFF",
+        font=("Roboto", 11, "bold"),
+        text_color="#00B8D4",
+        anchor="w",
+        justify="left",
+        wraplength=720,
+    )
+    app.seg_preview_mode.set("TSL")
+
+    # 5. EXECUTION CONTROLS
+    app.seg_grid_mode = ctk.CTkSegmentedButton(
+        parent,
+        values=["NEUTRAL", "LONG", "SHORT"],
+        font=("Roboto", 13, "bold"),
+        command=app.on_grid_mode_change,
+        height=32,
+        selected_color="#00838F",
+        selected_hover_color="#006064",
+    )
+    app.seg_grid_mode.set(app.var_grid_manual_mode.get())
+
+    app.frame_grid_options = ctk.CTkFrame(parent, fg_color="transparent")
+    app.frame_grid_options.grid_columnconfigure(1, weight=1)
+    app.chk_grid_bypass = ctk.CTkCheckBox(
+        app.frame_grid_options,
+        text="Bypass GRID Signal",
+        variable=app.var_grid_bypass_signal,
+        font=("Roboto", 11, "bold"),
+        text_color="#00B8D4",
+        checkbox_width=18,
+        checkbox_height=18,
+    )
+    app.chk_grid_bypass.grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 4))
+    app.frame_grid_status = ctk.CTkFrame(app.frame_grid_options, fg_color="transparent")
+    app.frame_grid_status.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+    app.ind_grid_ready_light = ctk.CTkFrame(
+        app.frame_grid_status,
+        width=14,
+        height=14,
+        corner_radius=7,
+        fg_color="#FFB300",
+    )
+    app.ind_grid_ready_light.pack(side="left", padx=(0, 6))
+    app.ind_grid_ready_light.pack_propagate(False)
+    app.lbl_grid_manual_preview = ctk.CTkLabel(
+        app.frame_grid_status,
+        text="Mode: ---",
+        font=("Roboto", 11, "bold"),
+        text_color="#80DEEA",
+        anchor="w",
+        justify="left",
+        wraplength=560,
+    )
+    app.lbl_grid_manual_preview.pack(side="left")
+
+    app.frame_hedge_options = ctk.CTkFrame(parent, fg_color="transparent")
+    app.frame_hedge_status = ctk.CTkFrame(app.frame_hedge_options, fg_color="transparent")
+    app.frame_hedge_status.pack(fill="x", pady=(2, 0))
+    app.ind_hedge_ready_light = ctk.CTkFrame(
+        app.frame_hedge_status,
+        width=14,
+        height=14,
+        corner_radius=7,
+        fg_color="#FFB300",
+    )
+    app.ind_hedge_ready_light.pack(side="left", padx=(0, 6))
+    app.ind_hedge_ready_light.pack_propagate(False)
+    app.lbl_hedge_manual_preview = ctk.CTkLabel(
+        app.frame_hedge_status,
+        text="HEDGE: ---",
+        font=("Roboto", 11, "bold"),
+        text_color="#CE93D8",
+        anchor="w",
+        justify="left",
+        wraplength=560,
+    )
+    app.lbl_hedge_manual_preview.pack(side="left")
+
+    app.on_manual_trade_mode_change(app.var_manual_trade_mode.get())
+
+    # 6. SYSTEM HEALTH
+    f_sys = ctk.CTkFrame(parent, fg_color="#1a1a1a")
+    f_sys.pack(fill="x", padx=5, pady=(5, 20))
+    ctk.CTkLabel(
+        f_sys, text=" SYSTEM HEALTH", font=("Roboto", 11, "bold"), text_color="gray"
+    ).pack(anchor="w", padx=5, pady=(5, 0))
+
+    app.check_labels = {}
+    checks = ["Mạng/Spread", "Daily Loss", "Số Lệnh Thua", "Số Lệnh", "Trạng thái"]
+    for name in checks:
+        l = ctk.CTkLabel(
+            f_sys, text=f"• {name}", font=("Roboto", 12), text_color="gray", anchor="w"
+        )
+        l.pack(fill="x", padx=10)
+        app.check_labels[name] = l
+
+
+def setup_right_panel(app, parent):
+    """Xây dựng khung theo dõi lệnh (Treeview) và Log (Text)"""
+
+    # 1. HEADER ROW
+    f_head = ctk.CTkFrame(parent, fg_color="transparent", height=30)
+    f_head.pack(fill="x", pady=(0, 5))
+    ctk.CTkLabel(
+        f_head, text="DANH SÁCH LỆNH ĐANG CHẠY", font=("Roboto", 16, "bold")
+    ).pack(side="left")
+
+    ctk.CTkButton(
+        f_head,
+        text="Lịch sử",
+        width=80,
+        height=24,
+        command=app.show_history_popup,
+        fg_color="#444",
+    ).pack(side="right")
+    ctk.CTkButton(
+        f_head,
+        text="Đóng hết",
+        width=70,
+        height=24,
+        fg_color="#D50000",
+        hover_color="#B71C1C",
+        command=app.close_all_trades,
+    ).pack(side="right", padx=5)
+    ctk.CTkButton(
+        f_head,
+        text="Đóng mục chọn",
+        width=110,
+        height=24,
+        fg_color="#FF8F00",
+        hover_color="#FF6F00",
+        command=app.close_selected_trades,
+    ).pack(side="right", padx=5)
+
+    # 2. TREEVIEW CONTAINER
+    f_tree_container = ctk.CTkFrame(parent, fg_color="#2b2b2b")
+    f_tree_container.pack(fill="both", expand=True)
+
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure(
+        "Treeview",
+        background="#2b2b2b",
+        foreground="white",
+        fieldbackground="#2b2b2b",
+        rowheight=50,
+        font=("Consolas", 18),
+    )
+    style.configure(
+        "Treeview.Heading",
+        background="#1f1f1f",
+        foreground="#e0e0e0",
+        font=("Roboto", 20, "bold"),
+        relief="flat",
+    )
+    style.map("Treeview", background=[("selected", "#3949ab")])
+
+    cols = (
+        "Ticket",
+        "Time",
+        "Order",
+        "Targets",
+        "CostInfo",
+        "RR",
+        "PnL_MAE_MFE",
+        "Status",
+        "X",
+    )
+    app.tree = ttk.Treeview(
+        f_tree_container,
+        columns=cols,
+        show="headings",
+        style="Treeview",
+        selectmode="extended",
+    )
+
+    app.tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
+    app.tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
+    app.tree.tag_configure("grid_row", background="#153942", foreground="#E0F7FA")
+    app.tree.tag_configure("hedge_row", background="#3B1744", foreground="#F3E5F5")
+
+    headers = [
+        "Ticket",
+        "Thời gian",
+        "Thông tin Lệnh",
+        "Chốt lời/Lỗ (SL|TP)",
+        "Chi phí/Phí qua đêm",
+        "Rủi ro/Kỳ vọng (%)",
+        "Lợi nhuận",
+        "Trạng thái",
+        "✖",
+    ]
+    widths = [200, 200, 500, 400, 400, 440, 440, 700, 60]
+    anchors = [
+        "center",
+        "center",
+        "w",
+        "center",
+        "center",
+        "center",
+        "center",
+        "w",
+        "center",
+    ]
+
+    for c, h, w, a in zip(cols, headers, widths, anchors):
+        if c == "PnL_MAE_MFE":
+            h = "PnL / MAE / MFE"
+        app.tree.heading(c, text=h)
+        app.tree.column(c, width=w, anchor=a, minwidth=w, stretch=False)
+
+    sb = ttk.Scrollbar(f_tree_container, orient="vertical", command=app.tree.yview)
+    sb_x = ttk.Scrollbar(f_tree_container, orient="horizontal", command=app.tree.xview)
+    app.tree.configure(yscrollcommand=sb.set, xscrollcommand=sb_x.set)
+
+    app.tree.grid(row=0, column=0, sticky="nsew")
+    sb.grid(row=0, column=1, sticky="ns")
+    sb_x.grid(row=1, column=0, sticky="ew")
+    f_tree_container.grid_rowconfigure(0, weight=1)
+    f_tree_container.grid_columnconfigure(0, weight=1)
+
+    app.tree.bind("<ButtonRelease-1>", app.on_tree_click)
+    app.tree.bind("<Button-3>", app.on_tree_right_click)
+
+    # 3. LOGGING CONSOLE (2 TAB: MANUAL & BOT)
+    f_log = ctk.CTkFrame(parent, height=350, fg_color="#1e1e1e")
+    f_log.pack(fill="x", pady=(10, 0))
+    f_log.pack_propagate(False)
+
+    f_log_head = ctk.CTkFrame(f_log, fg_color="transparent", height=25)
+    f_log_head.pack(fill="x", padx=5, pady=2)
+    ctk.CTkLabel(
+        f_log_head,
+        text="HỆ THỐNG GHI NHẬT KÝ (LOG)",
+        font=("Roboto", 12, "bold"),
+        text_color="#aaa",
+    ).pack(side="left")
+    ctk.CTkCheckBox(
+        f_log_head,
+        text="Xác nhận đóng lệnh",
+        variable=app.var_confirm_close,
+        font=("Roboto", 11),
+        checkbox_width=16,
+        checkbox_height=16,
+    ).pack(side="right")
+
+    # Tabview chứa 2 tab Log
+    log_tabview = ctk.CTkTabview(
+        f_log,
+        height=300,
+        fg_color="#121212",
+        segmented_button_fg_color="#2b2b2b",
+        segmented_button_selected_color="#1565C0",
+        segmented_button_unselected_color="#333333",
+    )
+    log_tabview.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+
+    def _clear_active_log():
+        """Xóa log ở tab đang được chọn"""
+        active_tab = log_tabview.get()
+        if "Preview" in active_tab:
+            app.refresh_manual_preview_tab()
+            return
+        if "Bot-Log" in active_tab:
+            widget = app.txt_log_bot_log
+        elif "GRID-Log" in active_tab:  # [FIX] GRID-Log phải check trước GRID
+            widget = app.txt_log_grid_log
+        elif "HEDGE-Log" in active_tab:
+            widget = app.txt_log_hedge_log
+        elif "Bot" in active_tab:  # [FIX] Bot phải check trước khi dùng GRID
+            widget = app.txt_log_bot
+        elif "GRID" in active_tab:
+            widget = app.txt_log_grid
+        elif "HEDGE" in active_tab:
+            widget = app.txt_log_hedge
+        else:
+            widget = app.txt_log_manual
+
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.configure(state="disabled")
+
+    ctk.CTkButton(
+        f_log_head,
+        text="🗑 Clear",
+        width=70,
+        height=22,
+        fg_color="#444",
+        hover_color="#c62828",
+        font=("Roboto", 11),
+        command=_clear_active_log,
+    ).pack(side="right", padx=(0, 8))
+
+    tab_preview = log_tabview.add("Preview")
+
+    tab_manual = log_tabview.add("📋 Manual")
+    tab_bot = log_tabview.add("🤖 Bot")
+    tab_bot_log = log_tabview.add("🤖 Bot-Log")
+
+    tab_grid = log_tabview.add("GRID")
+    tab_grid_log = log_tabview.add("GRID-Log")
+    tab_hedge = log_tabview.add("HEDGE")
+    tab_hedge_log = log_tabview.add("HEDGE-Log")
+    app.log_tabview = log_tabview
+    app.log_tab_keys = {
+        "manual": "ðŸ“‹ Manual",
+        "bot": "ðŸ¤– Bot",
+        "bot-log": "ðŸ¤– Bot-Log",
+        "grid": "GRID",
+        "grid-log": "GRID-Log",
+        "hedge": "HEDGE",
+        "hedge-log": "HEDGE-Log",
+    }
+    app.log_tab_unread = {k: False for k in app.log_tab_keys}
+
+    def _clear_unread_after_click(event=None):
+        try:
+            tab_text = event.widget.cget("text") if event and event.widget else log_tabview.get()
+            app.after(20, lambda t=tab_text: app.clear_log_unread_by_tab_name(t))
+            if "Preview" in str(tab_text):
+                app.after(25, app.refresh_manual_preview_tab)
+        except Exception:
+            app.after(60, app.clear_active_log_unread)
+
+    def _on_log_tab_change():
+        app.clear_active_log_unread()
+        try:
+            if "Preview" in str(log_tabview.get()):
+                app.refresh_manual_preview_tab()
+        except Exception:
+            pass
+
+    try:
+        log_tabview.configure(command=_on_log_tab_change)
+        log_tabview._segmented_button.bind("<ButtonRelease-1>", _clear_unread_after_click)
+        for _btn in log_tabview._segmented_button._buttons_dict.values():
+            _btn.bind("<ButtonRelease-1>", _clear_unread_after_click)
+    except Exception:
+        pass
+
+    # --- Tab Preview ---
+    preview_body = ctk.CTkScrollableFrame(
+        tab_preview,
+        fg_color="#071113",
+        scrollbar_button_color="#164B52",
+        scrollbar_button_hover_color="#1D626B",
+    )
+    preview_body.pack(fill="both", expand=True, padx=4, pady=4)
+
+    preview_panel = ctk.CTkFrame(
+        preview_body,
+        fg_color="#0D1719",
+        corner_radius=8,
+        border_width=1,
+        border_color="#00C853",
+    )
+    preview_panel.pack(fill="x", padx=4, pady=(4, 6))
+    preview_panel.grid_columnconfigure(0, weight=1)
+    preview_panel.grid_columnconfigure(1, minsize=132)
+
+    preview_head = ctk.CTkFrame(preview_panel, fg_color="transparent")
+    preview_head.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
+    preview_head.grid_columnconfigure(2, weight=1)
+
+    lbl_title = ctk.CTkLabel(
+        preview_head,
+        text="MANUAL PREVIEW",
+        font=("Roboto", 16, "bold"),
+        text_color="#26C6DA",
+        anchor="w",
+    )
+    lbl_title.grid(row=0, column=0, padx=(0, 10), pady=2, sticky="w")
+
+    app.lbl_preview_symbol = ctk.CTkLabel(
+        preview_head,
+        text=app.cbo_symbol.get(),
+        font=("Roboto", 12, "bold"),
+        text_color="#ECEFF1",
+        fg_color="#172A2D",
+        corner_radius=6,
+        width=120,
+        height=30,
+    )
+    app.lbl_preview_symbol.grid(row=0, column=1, padx=(0, 10), pady=2, sticky="w")
+
+    lbl_badge = ctk.CTkLabel(
+        preview_head,
+        text="WAIT",
+        font=("Roboto", 13, "bold"),
+        text_color="#FFB300",
+        anchor="e",
+    )
+    lbl_badge.grid(row=0, column=2, padx=(8, 0), pady=2, sticky="e")
+
+    _preset_sl_group = config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SL_GROUP", config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SWING_SL_GROUP", "G2"))
+    _preset_sl_group = "DYNAMIC" if "DYNAMIC" in str(_preset_sl_group) else str(_preset_sl_group or "G2")
+    _preset_tp_group = config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_TP_GROUP", config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SWING_TP_GROUP", _preset_sl_group))
+    _preset_tp_group = "DYNAMIC" if "DYNAMIC" in str(_preset_tp_group) else str(_preset_tp_group or "G2")
+    _sl_mode = str(config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
+    _tp_mode = str(config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_TP_MODE", "RR") or "RR").upper()
+    _tf_display = {
+        "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
+        "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
+        "G2": f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
+        "G3": f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
+        "DYNAMIC": "DYNAMIC",
+    }
+    app.var_preview_sl_group = tk.StringVar(value=_tf_display.get(_preset_sl_group, _tf_display["G2"]))
+    app.var_preview_tp_group = tk.StringVar(value=_tf_display.get(_preset_tp_group, _tf_display["G2"]))
+    _mode_display = {
+        "PERCENT": "Percent",
+        "SANDBOX": "SL Sandbox",
+        "RR": "RR",
+        "SWING": "Swing Retest",
+        "SWING_REJECTION": "Swing Retest",
+        "SWING_RETEST": "Swing Retest",
+        "SWING_STRUCTURE": "Swing Struct",
+        "SWING_STRUCT": "Swing Struct",
+        "FIB": "FIB",
+        "PULLBACK": "Pullback",
+        "PULLBACK_ZONE": "Pullback",
+    }
+    app.var_preview_sl_mode = tk.StringVar(value=_mode_display.get(_sl_mode, "Percent"))
+    app.var_preview_tp_mode = tk.StringVar(value=_mode_display.get(_tp_mode, "RR"))
+    app.var_preview_tf = app.var_preview_sl_group
+    tf_values = [
+        f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
+        f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
+        f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
+        f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
+        "DYNAMIC",
+    ]
+    selector_row = ctk.CTkFrame(preview_panel, fg_color="#102326", corner_radius=6)
+    selector_row.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(2, 5))
+    selector_row.grid_columnconfigure(1, weight=1)
+    selector_row.grid_columnconfigure(3, weight=1)
+    ctk.CTkLabel(
+        selector_row,
+        text="SL",
+        font=("Roboto", 11, "bold"),
+        text_color="#FFB3AD",
+        width=34,
+        anchor="w",
+    ).grid(row=0, column=0, padx=(8, 4), pady=5, sticky="w")
+    app.cbo_preview_sl_mode = ctk.CTkOptionMenu(
+        selector_row,
+        values=["Percent", "SL Sandbox", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
+        variable=app.var_preview_sl_mode,
+        width=132,
+        height=28,
+        font=("Roboto", 12, "bold"),
+        command=app.on_preview_sl_mode_change,
+    )
+    app.cbo_preview_sl_mode.grid(row=0, column=1, padx=(0, 8), pady=5, sticky="ew")
+    ctk.CTkLabel(
+        selector_row,
+        text="TP",
+        font=("Roboto", 11, "bold"),
+        text_color="#9AFFC4",
+        width=34,
+        anchor="w",
+    ).grid(row=0, column=2, padx=(0, 4), pady=5, sticky="w")
+    app.cbo_preview_tp_mode = ctk.CTkOptionMenu(
+        selector_row,
+        values=["OFF", "RR", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
+        variable=app.var_preview_tp_mode,
+        width=132,
+        height=28,
+        font=("Roboto", 12, "bold"),
+        command=app.on_preview_tp_mode_change,
+    )
+    app.cbo_preview_tp_mode.grid(row=0, column=3, padx=(0, 8), pady=5, sticky="ew")
+    ctk.CTkLabel(
+        selector_row,
+        text="TF",
+        font=("Roboto", 11, "bold"),
+        text_color="#B2EBF2",
+        width=34,
+        anchor="w",
+    ).grid(row=0, column=4, padx=(0, 4), pady=5, sticky="w")
+    app.var_preview_tp_group = app.var_preview_sl_group
+    app.cbo_preview_sl_group = ctk.CTkOptionMenu(
+        selector_row,
+        values=tf_values,
+        variable=app.var_preview_sl_group,
+        width=112,
+        height=28,
+        font=("Roboto", 12, "bold"),
+        command=app.on_preview_group_change,
+    )
+    app.cbo_preview_sl_group.grid(row=0, column=5, padx=(0, 8), pady=5, sticky="e")
+    app.cbo_preview_tp_group = app.cbo_preview_sl_group
+
+    app.chk_preview_trade_after_apply = ctk.CTkCheckBox(
+        preview_head,
+        text="Trade after Apply",
+        variable=app.var_preview_trade_after_apply,
+        font=("Roboto", 11, "bold"),
+        text_color="#FFD600",
+        checkbox_width=18,
+        checkbox_height=18,
+    )
+    app.chk_preview_trade_after_apply.grid(row=0, column=3, padx=(12, 0), pady=2, sticky="e")
+
+    app.preview_cards = {}
+    card_key = "primary"
+    lbl_meta = ctk.CTkLabel(
+        preview_panel,
+        text="--",
+        font=("Consolas", 12, "bold"),
+        text_color="#78909C",
+        anchor="w",
+    )
+    lbl_meta.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 4))
+
+    def _preview_line(parent, row, title, color, wrap=1200):
+        ctk.CTkLabel(
+            parent,
+            text=title,
+            font=("Roboto", 11, "bold"),
+            text_color=color,
+            anchor="w",
+            width=74,
+        ).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=0)
+        val = ctk.CTkLabel(
+            parent,
+            text="--",
+            font=("Consolas", 12, "bold"),
+            text_color=color,
+            anchor="w",
+            justify="left",
+            wraplength=wrap,
+            height=16,
+        )
+        val.grid(row=row, column=1, sticky="ew", padx=(0, 4), pady=0)
+        return val
+
+    levels = ctk.CTkFrame(preview_panel, fg_color="transparent")
+    levels.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 0))
+    levels.grid_columnconfigure(1, weight=1)
+    level_widgets = {}
+    target_widgets = {}
+    level_widgets["entry_signal"] = _preview_line(levels, 0, "Entry", "#B2EBF2")
+    level_widgets["entry"] = level_widgets["entry_signal"]
+    level_widgets["entry_zone"] = level_widgets["entry_signal"]
+    ctk.CTkLabel(
+        levels,
+        text="SL / TP",
+        font=("Roboto", 11, "bold"),
+        text_color="#B2EBF2",
+        anchor="w",
+        width=74,
+    ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=0)
+    sltp_line = ctk.CTkFrame(levels, fg_color="transparent")
+    sltp_line.grid(row=1, column=1, sticky="ew", padx=(0, 4), pady=0)
+    sltp_line.grid_columnconfigure(1, weight=1)
+    level_widgets["sl"] = ctk.CTkLabel(
+        sltp_line,
+        text="SL --",
+        font=("Consolas", 12, "bold"),
+        text_color="#FF5252",
+        anchor="w",
+    )
+    level_widgets["sl"].grid(row=0, column=0, sticky="w", padx=(0, 18))
+    level_widgets["tp_main"] = ctk.CTkLabel(
+        sltp_line,
+        text="TP1 -- | TP2 -- | TP3 --",
+        font=("Consolas", 12, "bold"),
+        text_color="#69F0AE",
+        anchor="w",
+        justify="left",
+        wraplength=900,
+    )
+    level_widgets["tp_main"].grid(row=0, column=1, sticky="ew")
+    level_widgets["rr"] = level_widgets["tp_main"]
+    level_widgets["stats"] = _preview_line(levels, 2, "Risk", "#FFD600", wrap=900)
+    level_widgets["tsl"] = _preview_line(levels, 3, "TSL", "#9AFFC4", wrap=900)
+    level_widgets["ee_detail"] = _preview_line(levels, 4, "E/E", "#FFD600", wrap=780)
+
+    chips = ctk.CTkFrame(preview_panel, fg_color="transparent")
+    chips.grid(row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8))
+    chips.grid_remove()
+    for col in range(4):
+        chips.grid_columnconfigure(col, weight=1, uniform="chips")
+    chip_widgets = []
+    for idx in range(4):
+        chip_box = ctk.CTkFrame(
+            chips,
+            fg_color="#132326",
+            border_width=1,
+            border_color="#37565C",
+            corner_radius=6,
+        )
+        chip_box.grid(row=0, column=idx, sticky="ew", padx=3, pady=2)
+        chip_label = ctk.CTkLabel(
+            chip_box,
+            text="--",
+            text_color="#D9EEF2",
+            font=("Roboto", 11, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=320,
+        )
+        chip_label.pack(fill="x", padx=8, pady=4)
+        chip_widgets.append((chip_box, chip_label))
+
+    lbl_reason = ctk.CTkLabel(
+        preview_panel,
+        text="--",
+        font=("Roboto", 11),
+        text_color="#B0BEC5",
+        anchor="w",
+        justify="left",
+        wraplength=1280,
+    )
+    lbl_reason.grid(row=5, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8))
+
+    btn_apply = ctk.CTkButton(
+        preview_head,
+        text="APPLY",
+        width=116,
+        height=40,
+        fg_color="#164B52",
+        hover_color="#1D626B",
+        font=("Roboto", 11, "bold"),
+        command=lambda k=card_key: app.apply_manual_preview_setup(k),
+    )
+    btn_apply.grid(row=0, column=4, sticky="e", padx=(12, 0), pady=2)
+
+    app.preview_cards[card_key] = {
+        "frame": preview_panel,
+        "title": lbl_title,
+        "badge": lbl_badge,
+        "meta": lbl_meta,
+        "levels": level_widgets,
+        "targets": target_widgets,
+        "chips": chips,
+        "chip_widgets": chip_widgets,
+        "reason": lbl_reason,
+        "apply": btn_apply,
+    }
+
+    app.refresh_manual_preview_tab()
+
+    # --- Tab Manual ---
+    app.txt_log_manual = tk.Text(
+        tab_manual,
+        font=("Consolas", 18),
+        bg="#121212",
+        fg="#e0e0e0",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_manual_x = ttk.Scrollbar(
+        tab_manual, orient="horizontal", command=app.txt_log_manual.xview
+    )
+    app.txt_log_manual.configure(xscrollcommand=sb_manual_x.set)
+    sb_manual_x.pack(fill="x", side="bottom")
+    app.txt_log_manual.pack(fill="both", expand=True)
+    app.txt_log_manual.tag_config("INFO", foreground="#b0bec5")
+    app.txt_log_manual.tag_config("SUCCESS", foreground=COL_GREEN)
+    app.txt_log_manual.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_manual.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_manual.tag_config("BLUE", foreground="#29B6F6")
+
+    # --- Tab Bot ---
+    app.txt_log_bot = tk.Text(
+        tab_bot,
+        font=("Consolas", 18),
+        bg="#121212",
+        fg="#e0e0e0",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_bot_x = ttk.Scrollbar(
+        tab_bot, orient="horizontal", command=app.txt_log_bot.xview
+    )
+    app.txt_log_bot.configure(xscrollcommand=sb_bot_x.set)
+    sb_bot_x.pack(fill="x", side="bottom")
+    app.txt_log_bot.pack(fill="both", expand=True)
+    app.txt_log_bot.tag_config("INFO", foreground="#b0bec5")
+    app.txt_log_bot.tag_config("SUCCESS", foreground=COL_GREEN)
+    app.txt_log_bot.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_bot.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_bot.tag_config("BLUE", foreground="#29B6F6")
+
+    # --- Tab Bot-Log ---
+    app.txt_log_bot_log = tk.Text(
+        tab_bot_log,
+        font=("Consolas", 18),
+        bg="#121212",
+        fg="#e0e0e0",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_bot_log_x = ttk.Scrollbar(
+        tab_bot_log, orient="horizontal", command=app.txt_log_bot_log.xview
+    )
+    app.txt_log_bot_log.configure(xscrollcommand=sb_bot_log_x.set)
+    sb_bot_log_x.pack(fill="x", side="bottom")
+    app.txt_log_bot_log.pack(fill="both", expand=True)
+    app.txt_log_bot_log.tag_config("INFO", foreground="#b0bec5")
+    app.txt_log_bot_log.tag_config("SUCCESS", foreground=COL_GREEN)
+    app.txt_log_bot_log.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_bot_log.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_bot_log.tag_config("BLUE", foreground="#29B6F6")
+
+    # Giữ backward compat: txt_log trỏ vào manual (cho các module cũ)
+    # --- Tab GRID ---
+    app.txt_log_grid = tk.Text(
+        tab_grid,
+        font=("Consolas", 18),
+        bg="#081416",
+        fg="#E0F7FA",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_grid_x = ttk.Scrollbar(
+        tab_grid, orient="horizontal", command=app.txt_log_grid.xview
+    )
+    app.txt_log_grid.configure(xscrollcommand=sb_grid_x.set)
+    sb_grid_x.pack(fill="x", side="bottom")
+    app.txt_log_grid.pack(fill="both", expand=True)
+    app.txt_log_grid.tag_config("INFO", foreground="#B2EBF2")
+    app.txt_log_grid.tag_config("SUCCESS", foreground="#00E5FF")
+    app.txt_log_grid.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_grid.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_grid.tag_config("BLUE", foreground="#29B6F6")
+
+    # --- Tab GRID Log ---
+    app.txt_log_grid_log = tk.Text(
+        tab_grid_log,
+        font=("Consolas", 18),
+        bg="#081416",
+        fg="#B2EBF2",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_grid_log_x = ttk.Scrollbar(
+        tab_grid_log, orient="horizontal", command=app.txt_log_grid_log.xview
+    )
+    app.txt_log_grid_log.configure(xscrollcommand=sb_grid_log_x.set)
+    sb_grid_log_x.pack(fill="x", side="bottom")
+    app.txt_log_grid_log.pack(fill="both", expand=True)
+    app.txt_log_grid_log.tag_config("INFO", foreground="#B2EBF2")
+    app.txt_log_grid_log.tag_config("SUCCESS", foreground="#00E5FF")
+    app.txt_log_grid_log.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_grid_log.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_grid_log.tag_config("BLUE", foreground="#29B6F6")
+
+    # --- Tab HEDGE ---
+    app.txt_log_hedge = tk.Text(
+        tab_hedge,
+        font=("Consolas", 18),
+        bg="#140816",
+        fg="#F3E5F5",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_hedge_x = ttk.Scrollbar(
+        tab_hedge, orient="horizontal", command=app.txt_log_hedge.xview
+    )
+    app.txt_log_hedge.configure(xscrollcommand=sb_hedge_x.set)
+    sb_hedge_x.pack(fill="x", side="bottom")
+    app.txt_log_hedge.pack(fill="both", expand=True)
+    app.txt_log_hedge.tag_config("INFO", foreground="#E1BEE7")
+    app.txt_log_hedge.tag_config("SUCCESS", foreground="#CE93D8")
+    app.txt_log_hedge.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_hedge.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_hedge.tag_config("BLUE", foreground="#29B6F6")
+
+    # --- Tab HEDGE Log ---
+    app.txt_log_hedge_log = tk.Text(
+        tab_hedge_log,
+        font=("Consolas", 18),
+        bg="#140816",
+        fg="#E1BEE7",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+    )
+    sb_hedge_log_x = ttk.Scrollbar(
+        tab_hedge_log, orient="horizontal", command=app.txt_log_hedge_log.xview
+    )
+    app.txt_log_hedge_log.configure(xscrollcommand=sb_hedge_log_x.set)
+    sb_hedge_log_x.pack(fill="x", side="bottom")
+    app.txt_log_hedge_log.pack(fill="both", expand=True)
+    app.txt_log_hedge_log.tag_config("INFO", foreground="#E1BEE7")
+    app.txt_log_hedge_log.tag_config("SUCCESS", foreground="#CE93D8")
+    app.txt_log_hedge_log.tag_config("ERROR", foreground=COL_RED)
+    app.txt_log_hedge_log.tag_config("WARN", foreground=COL_WARN)
+    app.txt_log_hedge_log.tag_config("BLUE", foreground="#29B6F6")
+
+    app.txt_log = app.txt_log_manual

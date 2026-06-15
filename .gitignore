@@ -1,0 +1,47 @@
+# Virtual environments
+ratvenv/
+exnessvenv/
+venv/
+env/
+
+# Python cache/test artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data: ignore everything by default
+data/*
+
+# Keep strategy templates only
+!data/templates/
+!data/templates/**
+!data/*/
+data/*/*
+!data/templates/**/*
+!data/*/templates/
+!data/*/templates/**
+
+# Runtime logs
+*.log
+data/logs/
+
+# Runtime/private JSON outside whitelisted templates
+*.json
+!data/templates/**/*.json
+!data/*/templates/**/*.json
+
+# Local secrets/config
+.env
+.env.*
+# config.py
+
+# IDE/system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

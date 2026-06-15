@@ -1,0 +1,29 @@
+{
+    "MASTER_EVAL_MODE": "VETO",
+    "MIN_MATCHING_VOTES": 3,
+    "FORCE_ANY_MODE": false,
+    "G0_TIMEFRAME": "1d",
+    "G1_TIMEFRAME": "4h",
+    "G2_TIMEFRAME": "1h",
+    "G3_TIMEFRAME": "15m",
+    "voting_rules": {
+        "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G1": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+        "G2": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+        "G3": {"max_opposite": 1, "max_none": 1, "master_rule": "IGNORE"}
+    },
+    "risk_tsl": {
+        "base_risk": 0.3,
+        "base_sl": "G1",
+        "tsl_mode": "DYNAMIC",
+        "bot_tsl": "BE+STEP_R+SWING",
+        "mode_multipliers": {"ANY": 1.0, "TREND": 1.0, "RANGE": 0.5, "BREAKOUT": 2.0, "EXHAUSTION": 1.0},
+        "strict_risk": false
+    },
+    "indicators": {
+        "ema": {"active": true, "groups": ["G0", "G1"], "is_trend": true, "macro_role": "BASE", "active_modes": ["ANY"], "trigger_mode": "STRICT_CLOSE", "params": {"period": 200}},
+        "adx": {"active": true, "groups": ["G1"], "is_trend": false, "macro_role": "BREAKOUT", "active_modes": ["TREND"], "trigger_mode": "STRICT_CLOSE", "params": {"period": 14, "strong": 25}}
+    },
+    "dca_config": {"ENABLED": false, "MAX_STEPS": 3, "STEP_MULTIPLIER": 1.5, "DISTANCE_ATR_R": 1.0},
+    "pca_config": {"ENABLED": true, "MAX_STEPS": 3, "STEP_MULTIPLIER": 0.5, "DISTANCE_ATR_R": 2.0}
+}
