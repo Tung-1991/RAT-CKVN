@@ -8,7 +8,7 @@ from . import config_snapshot, history, paths
 USER_CONTEXT_TEMPLATE = """# RAT6 AI Advisor Context
 
 ## Bot overview
-RAT6 is a trading bot/workstation with manual, bot, GRID, HEDGE, DCA/PCA, TSL, BE, BE_CASH, REV_C, safeguard, and multi-timeframe signal context.
+RAT6 is a trading bot/workstation with manual, bot, DCA/PCA, TSL, BE, BE_CASH, REV_C, safeguard, and multi-timeframe signal context.
 
 ## Current operating goal
 
@@ -85,12 +85,10 @@ advisor_export.xlsx is a compact evidence workbook, not a full source dump.
 - trade_config_map: Links trade ticket to the config snapshot recorded near open time.
 
 ## Core trading modes
-RAT6 has four major trading surfaces:
+RAT6 has two major trading surfaces:
 
 - Manual: Operator-triggered order from the UI. Uses manual magic/comment classification. Manual orders can still use configured SL/TP logic depending on selected mode and fields.
 - Bot: Signal-driven automatic order flow. Uses active symbols, signal context, checklist/safeguard, lot, SL/TP, TSL, DCA/PCA, REV_C, and entry/exit tactic settings.
-- GRID: Isolated grid strategy with its own settings/state, magic, order comments, boundaries, levels, spacing, and safeguards.
-- HEDGE: Isolated dual-leg hedge strategy with its own settings/state, paired BUY/SELL entry, survivor protection, and post-leg TSL behavior.
 
 ## Timeframe groups
 The bot describes multi-timeframe signal context with groups:
@@ -105,13 +103,13 @@ When reviewing losses or missed trades, compare signal group, market mode, and t
 ## High-level bot order flow
 1. Market data and indicators produce symbol context.
 2. Signal engine evaluates configured groups and produces BUY/SELL/NONE plus details.
-3. Signal listener/router decides whether an entry, DCA, PCA, reverse-close, GRID, HEDGE, or manual action should be considered.
+3. Signal listener/router decides whether an entry, DCA, PCA, reverse-close, or manual action should be considered.
 4. Safeguards/checklists can block order entry before lot/SL/TP are finalized.
 5. Entry/Exit engine may run as preview-only or as a real entry gate depending on config.
 6. SL, TP, lot, tactic labels, parent/child relation, session id, and comments are resolved.
-7. MT5 order is sent.
+7. DNSE order is sent.
 8. Trade-open metadata and config snapshot are recorded for later advisor analysis.
-9. Runtime managers scan open trades and apply TSL, BE, BE_CASH, REV_C, DCA/PCA, GRID basket logic, or HEDGE survivor logic.
+9. Runtime managers scan open trades and apply TSL, BE, BE_CASH, REV_C, and DCA/PCA logic.
 10. Closed trades are written into history and later exported into advisor_export.xlsx.
 
 ## Safeguards and gates
@@ -151,8 +149,6 @@ SL/TP can come from multiple sources depending on mode:
 - Manual direct fields: Operator can type lot, TP, SL.
 - Swing-based logic: SL/TP can use group references such as G2 plus ATR buffer.
 - RR/percent/cash logic: Some modes calculate TP/SL from risk, reward ratio, or cash targets.
-- HEDGE can calculate per-leg SL/TP from HEDGE rules.
-- GRID V1 uses TP-only market orders and does not use per-order SL as part of V1.
 
 Advisor interpretation:
 - If MAE is tiny but SL hit occurs, inspect SL too tight, spread, volatility, and swing/ATR buffer.

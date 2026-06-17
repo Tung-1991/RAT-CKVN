@@ -4,7 +4,7 @@
 
 import logging
 import json
-import os
+
 import copy
 import config
 from core.storage_manager import get_brain_settings_for_symbol
@@ -31,7 +31,7 @@ from signals.simple_breakout import get_signal_vector as simple_breakout_signal
 
 class SignalGenerator:
     def __init__(self):
-        self.brain_path = "data/brain_settings.json"
+
         
         # Đồng bộ toàn bộ Key về chữ thường khớp với cấu hình JSON từ UI
         self.indicator_map = {
@@ -359,51 +359,6 @@ class SignalGenerator:
         # 5. Đẩy vào Phễu Vote
         return self._evaluate_pipeline_v4(dfs, context, current_mode, voting_rules, active_inds_by_group, eval_mode, min_votes)
 
-    # =========================================================================
-    # HÀM CŨ (GIỮ LẠI ĐỂ BACKWARD-COMPATIBLE KHÔNG CRASH)
-    # =========================================================================
-    def _evaluate_master_rules(self, g1_status, g2_status, g3_status, voting_rules):
-        groups_status = {"G1": g1_status, "G2": g2_status, "G3": g3_status}
-        final_direction = 0
-        potential_directions = []
-        for grp in ["G1", "G2", "G3"]:
-            rule = voting_rules.get(grp, {}).get("master_rule", "FIX")
-            status = groups_status[grp]
-            if rule != "IGNORE" and status != 0:
-                potential_directions.append(status)
-                
-        if not potential_directions: return 0
-        if len(set(potential_directions)) > 1: return 0
-        final_direction = potential_directions[0]
-        
-        for grp in ["G1", "G2", "G3"]:
-            rule = voting_rules.get(grp, {}).get("master_rule", "FIX")
-            status = groups_status[grp]
-            if rule == "FIX" and status != final_direction: return 0
-            elif rule == "PASS" and status != 0 and status != final_direction: return 0
 
-        return final_direction
-
-    def generate_signal(self, df_entry, df_trend, context, symbol=None):
-        settings = self._get_brain_settings(symbol)
-        voting_rules = settings.get("voting_rules", {})
-        inds_config = settings.get("indicators", {})
-        
-        current_mode, _, _ = self._detect_market_mode(df_trend, context, symbol=symbol)
-
-        active_inds_by_group = {"G1": {}, "G2": {}, "G3": {}}
-        for name, cfg in inds_config.items():
-            if cfg.get("active", False):
-                modes = cfg.get("active_modes", ["ANY"])
-                if "ANY" in modes or current_mode in modes:
-                    grp = cfg.get("group", "G2")
-                    if grp in active_inds_by_group:
-                        active_inds_by_group[grp][name] = cfg
-
-        g1_status = self._evaluate_group("G1", active_inds_by_group["G1"], df_entry, context, current_mode, voting_rules.get("G1", {}))
-        g2_status = self._evaluate_group("G2", active_inds_by_group["G2"], df_entry, context, current_mode, voting_rules.get("G2", {}))
-        g3_status = self._evaluate_group("G3", active_inds_by_group["G3"], df_entry, context, current_mode, voting_rules.get("G3", {}))
-
-        return self._evaluate_master_rules(g1_status, g2_status, g3_status, voting_rules)
 
 signal_generator = SignalGenerator()

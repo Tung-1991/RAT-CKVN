@@ -12,20 +12,18 @@ import json
 import os
 import subprocess
 from datetime import datetime
-import MetaTrader5 as mt5
 import logging
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log 3 lớp
 import config
-from core.exness_connector import ExnessConnector
+from core.dnse_connector import DNSEConnector
 from core.checklist_manager import ChecklistManager
 from core.trade_manager import TradeManager
 from core.storage_manager import load_brain_settings, load_state, save_brain_settings, save_state
 from core.signal_listener import SignalListener
 from core.data_engine import data_engine
-from core.position_classifier import is_bot_position, is_grid_position, is_hedge_position, is_manual_position
+from core.money import format_vnd, money_unit_note
+from core.position_classifier import is_bot_position, is_manual_position
 from signals.signal_generator import signal_generator
-from grid.grid_manager import GridManager
-from hedge.hedge_manager import HedgeManager
 import traceback
 
 def handle_exception(exc_type, exc_value, exc_traceback):
@@ -33,7 +31,7 @@ def handle_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    logger = logging.getLogger("ExnessBot")
+    logger = logging.getLogger("RAT_CKVN")
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     logger.critical(f"💥 TOÀN BỘ HỆ THỐNG CRASH:\n{error_msg}")
     
@@ -86,7 +84,7 @@ class Suppress10025Filter(logging.Filter):
         return "Retcode: 10025" not in record.getMessage()
 
 
-main_logger = logging.getLogger("ExnessBot")
+main_logger = logging.getLogger("RAT_CKVN")
 main_logger.addFilter(Suppress10025Filter())
 
 
@@ -114,9 +112,6 @@ class BotUI(ctk.CTk):
         )
         self.var_direction = tk.StringVar(value="BUY")
         self.var_manual_trade_mode = tk.StringVar(value="NORMAL")
-        self.var_grid_manual_mode = tk.StringVar(value="NEUTRAL")
-        self.var_grid_bypass_signal = tk.BooleanVar(value=False)
-        self.var_hedge_bypass_entry = tk.BooleanVar(value=False)
         self.var_preview_trade_after_apply = tk.BooleanVar(value=False)
 
         self.tactic_states = {
@@ -168,12 +163,29 @@ class BotUI(ctk.CTk):
         self._advisor_last_trigger_check = 0.0
         self._advisor_last_trigger_fire = {}
 
-        # [MODIFIED V6.9.4] Kết nối MT5 TRƯỚC để lấy ID -> Setup Workspace -> Mới Load Setting
-        self.connector = ExnessConnector()
-        self.connector.connect()
+        # [V6.9.5] Hiển thị cửa sổ ngay; kết nối DNSE ở luồng nền để không treo UI khi mở app.
+        self.connector = DNSEConnector()
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self._loading_label = ctk.CTkLabel(
+            self, text="⏳ Đang kết nối DNSE...", font=("Roboto", 22, "bold")
+        )
+        self._loading_label.place(relx=0.5, rely=0.5, anchor="center")
+        threading.Thread(target=self._bootstrap_connection, daemon=True).start()
+
+    def _bootstrap_connection(self):
+        """Luồng nền: kết nối DNSE và lấy thông tin tài khoản (I/O mạng, có thể chậm)."""
+        acc_info = None
+        try:
+            self.connector.connect()
+            acc_info = self.connector.get_account_info()
+        except Exception as exc:
+            self.log_message(f"⚠️ Lỗi kết nối DNSE: {exc}", error=True)
+        self.after(0, lambda: self._finish_init(acc_info))
+
+    def _finish_init(self, acc_info):
+        """UI thread: dựng workspace, panel và khởi động dịch vụ sau khi đã kết nối."""
         
         import core.storage_manager as storage_manager
-        acc_info = self.connector.get_account_info()
         if acc_info:
             storage_manager.set_active_account(acc_info['login'])
             
@@ -183,8 +195,6 @@ class BotUI(ctk.CTk):
             TSL_SETTINGS_FILE = os.path.join(acc_dir, "tsl_settings.json")
             PRESETS_FILE = os.path.join(acc_dir, "presets_config.json")
             BRAIN_SETTINGS_FILE = os.path.join(acc_dir, "brain_settings.json")
-            self.reset_grid_runtime_switch()
-            self.reset_hedge_runtime_switch()
             
             
             self.log_message(f"✅ Đã tải Workspace cho tài khoản: {acc_info['login']}")
@@ -201,18 +211,6 @@ class BotUI(ctk.CTk):
         self.checklist_mgr = ChecklistManager(self.connector)
         self.trade_mgr = TradeManager(
             self.connector, self.checklist_mgr, log_callback=self.log_message
-        )
-        self.grid_mgr = GridManager(
-            self.connector,
-            data_engine=data_engine,
-            signal_generator=signal_generator,
-            log_callback=self.log_message,
-        )
-        self.hedge_mgr = HedgeManager(
-            self.connector,
-            data_engine=data_engine,
-            signal_generator=signal_generator,
-            log_callback=self.log_message,
         )
 
         self.grid_columnconfigure(0, weight=0, minsize=420)
@@ -231,7 +229,10 @@ class BotUI(ctk.CTk):
         ui_panels.setup_left_panel(self, self.frm_left)
         ui_panels.setup_right_panel(self, self.frm_right)
 
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        try:
+            self._loading_label.destroy()
+        except Exception:
+            pass
 
         self.start_daemon_process()
         self.thread = threading.Thread(target=self.bg_update_loop, daemon=True)
@@ -240,7 +241,7 @@ class BotUI(ctk.CTk):
         self.signal_listener = SignalListener(
             trade_manager=self.trade_mgr,
             get_auto_trade_cb=lambda: self.var_auto_trade.get(),
-            get_preset_cb=lambda: self.cbo_preset.get(),
+            get_preset_cb=lambda: getattr(config, "DEFAULT_PRESET", "SCALPING"),
             get_tsl_mode_cb=self.get_current_tactic_string,
             ui_heartbeat_cb=self.update_brain_heartbeat,
             log_cb=lambda msg, error=False: self.log_message(
@@ -296,49 +297,8 @@ class BotUI(ctk.CTk):
         except Exception as e:
             self.log_message(f"❌ Lỗi kích hoạt Daemon: {e}", error=True, target="bot")
 
-    def reset_grid_runtime_switch(self):
-        try:
-            from grid.grid_storage import load_grid_settings, save_grid_settings
-
-            cfg = load_grid_settings()
-            if cfg.get("ENABLED", False):
-                cfg["ENABLED"] = False
-                save_grid_settings(cfg)
-                self.log_message("[GRID] Auto GRID reset to OFF on app startup.", target="grid")
-        except Exception as e:
-            self.log_message(f"[GRID] Cannot reset startup switch: {e}", error=True, target="grid")
-
-    def reset_hedge_runtime_switch(self):
-        try:
-            from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
-
-            cfg = load_hedge_settings()
-            if cfg.get("ENABLED", False):
-                cfg["ENABLED"] = False
-                save_hedge_settings(cfg)
-                self.log_message("[HEDGE] Auto HEDGE reset to OFF.", target="hedge")
-        except Exception as e:
-            self.log_message(f"[HEDGE] Cannot reset switch: {e}", error=True, target="hedge")
-
-    def refresh_hedge_runtime_light(self):
-        try:
-            from hedge.hedge_storage import load_hedge_settings
-
-            is_on = bool(load_hedge_settings().get("ENABLED", False))
-        except Exception:
-            is_on = False
-        color = COL_GREEN if is_on else COL_RED
-        for attr in ("ind_hedge_light", "ind_ad_hedge_light", "ind_hedge_ready_light"):
-            light = getattr(self, attr, None)
-            try:
-                if light and light.winfo_exists():
-                    light.configure(fg_color=color)
-            except Exception:
-                pass
-
     def on_closing(self):
         self.running = False
-        self.reset_hedge_runtime_switch()
         if hasattr(self, "signal_listener"):
             self.signal_listener.stop()
         if getattr(self, "telegram_control_service", None):
@@ -353,7 +313,7 @@ class BotUI(ctk.CTk):
             except Exception:
                 pass
         try:
-            mt5.shutdown()
+            pass
         except:
             pass
         self.destroy()
@@ -363,6 +323,22 @@ class BotUI(ctk.CTk):
         try:
             existing_data = load_brain_settings()
             existing_data["AUTO_TRADE_ENABLED"] = bool(getattr(config, "AUTO_TRADE_ENABLED", False))
+            for key in (
+                "MONEY_DISPLAY_UNIT",
+                "PAPER_INITIAL_BALANCE",
+                "PAPER_SPREAD_POINTS",
+                "DNSE_BROKER_FEE_PER_CONTRACT",
+                "DNSE_EXCHANGE_FEE_PER_CONTRACT",
+                "DNSE_CLEARING_FEE_PER_CONTRACT",
+                "DNSE_TAX_RATE",
+                "DNSE_CUSTODY_CODE",
+                "DNSE_STOCK_ACCOUNT_NO",
+                "DNSE_DERIVATIVE_ACCOUNT_NO",
+                "CKCS_WATCHLIST",
+                "CKPS_SYMBOLS",
+            ):
+                if hasattr(config, key):
+                    existing_data[key] = getattr(config, key)
             if hasattr(config, "UI_ACTIVE_SYMBOL"):
                 existing_data["UI_ACTIVE_SYMBOL"] = config.UI_ACTIVE_SYMBOL
             save_brain_settings(existing_data)
@@ -452,20 +428,36 @@ class BotUI(ctk.CTk):
 
     def on_auto_trade_toggle(self):
         if self.var_auto_trade.get():
-            self.set_grid_enabled(False, reason="BOT_ON")
-        # [FIX] Ép lưu cấu hình ngay lập tức để Daemon ngầm nhận được tín hiệu
+            import customtkinter
+            dialog = customtkinter.CTkInputDialog(text="Nhập mã OTP của DNSE (Trading Token có hiệu lực 8 tiếng):", title="Xác thực OTP")
+            otp_code = dialog.get_input()
+            
+            if otp_code:
+                from core.data_engine import dnse_api
+                import os
+                otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
+                success = dnse_api.verify_otp(otp_type, otp_code)
+                if not success:
+                    self.log_message("❌ Xác thực OTP DNSE thất bại. Không thể bật Bot.", target="bot", error=True)
+                    self.var_auto_trade.set(False)
+                    return
+            else:
+                self.log_message("⚠ Đã huỷ nhập OTP. Bot chưa được bật.", target="bot", error=True)
+                self.var_auto_trade.set(False)
+                return
+                
         config.AUTO_TRADE_ENABLED = self.var_auto_trade.get()
         self._save_brain_live_config()
 
         if self.var_auto_trade.get():
-            self.ind_auto_light.configure(fg_color=COL_GREEN)
+            self.ind_auto_light.configure(fg_color="#4CAF50")
             self.log_message(
-                "🟢 AUTO-TRADE DAEMON ĐÃ BẬT. Bot sẽ tự động bắn lệnh.", target="bot"
+                "🤖 AUTO-TRADE DAEMON ĐÃ BẬT. Bot sẽ tự động bắn lệnh.", target="bot"
             )
         else:
-            self.ind_auto_light.configure(fg_color=COL_RED)
+            self.ind_auto_light.configure(fg_color="#F44336")
             self.log_message(
-                "🔴 AUTO-TRADE DAEMON ĐÃ TẮT. Chuyển về chế độ bắn tay (Manual).",
+                "🛑 AUTO-TRADE DAEMON TẮT. Chuyển về chế độ bằng tay.",
                 target="bot",
             )
 
@@ -485,25 +477,6 @@ class BotUI(ctk.CTk):
             if reason:
                 msg = f"{msg} Reason={reason}"
             self.log_message(msg, target="bot")
-
-    def set_grid_enabled(self, enabled, reason=""):
-        enabled = bool(enabled)
-        try:
-            from grid.grid_storage import load_grid_settings, save_grid_settings
-
-            next_cfg = load_grid_settings()
-            next_cfg["ENABLED"] = enabled
-            save_grid_settings(next_cfg)
-            for attr in ("ind_grid_light", "ind_ad_grid_light"):
-                light = getattr(self, attr, None)
-                if light and light.winfo_exists():
-                    light.configure(fg_color=COL_GREEN if enabled else COL_RED)
-            msg = f"[GRID] GRID ENABLED = {'ON' if enabled else 'OFF'}"
-            if reason:
-                msg = f"{msg} Reason={reason}"
-            self.log_message(msg, target="grid")
-        except Exception as e:
-            self.log_message(f"[GRID] Cannot update GRID switch: {e}", error=True, target="grid")
 
     def get_current_tactic_string(self):
         active = [k for k, v in self.tactic_states.items() if v]
@@ -605,14 +578,20 @@ class BotUI(ctk.CTk):
 
     def on_symbol_change(self, new_symbol):
         config.UI_ACTIVE_SYMBOL = new_symbol
+        unit = self._quantity_unit(new_symbol)
+        label = self._quantity_label(new_symbol)
+        if hasattr(self, "lbl_manual_qty_title"):
+            self.lbl_manual_qty_title.configure(text=label)
+        if hasattr(self, "lbl_prev_lot"):
+            self.lbl_prev_lot.configure(text=f"{unit}: 0")
         if hasattr(self, "lbl_preview_symbol"):
             self.lbl_preview_symbol.configure(text=new_symbol)
         self._save_brain_live_config()
         self.lbl_dashboard_price.configure(text="Đang nạp...", text_color="gray")
         self.on_direction_change(self.var_direction.get())
-        self.update_grid_manual_preview()
+        # Grid preview removed
         self.refresh_manual_preview_tab()
-        threading.Thread(target=lambda: mt5.symbol_select(new_symbol, True)).start()
+        threading.Thread(target=lambda: True).start()
 
     def on_preset_change(self, value):
         try:
@@ -640,20 +619,6 @@ class BotUI(ctk.CTk):
                 hover_color="#B71C1C" if not buy_on else "#616161",
             )
         sym = self.cbo_symbol.get()
-        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "GRID":
-            self.btn_action.configure(
-                text=f"START GRID {self.var_grid_manual_mode.get()} {sym}",
-                fg_color="#00838F",
-                hover_color="#006064",
-            )
-            return
-        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "HEDGE":
-            self.btn_action.configure(
-                text=f"START HEDGE DUAL {sym}",
-                fg_color="#6A1B9A",
-                hover_color="#4A148C",
-            )
-            return
         if value == "BUY":
             self.btn_action.configure(
                 text=f"VÀO LỆNH MUA {sym}", fg_color=COL_GREEN, hover_color="#009624"
@@ -663,20 +628,27 @@ class BotUI(ctk.CTk):
                 text=f"VÀO LỆNH BÁN {sym}", fg_color=COL_RED, hover_color="#B71C1C"
             )
 
-    def on_grid_mode_change(self, value):
-        self.var_grid_manual_mode.set(value)
-        self.update_grid_manual_preview()
-        self.refresh_manual_preview_tab()
-        if self.var_manual_trade_mode.get() == "GRID":
-            sym = self.cbo_symbol.get()
-            self.btn_action.configure(
-                text=f"START GRID {value} {sym}",
-                fg_color="#00838F",
-                hover_color="#006064",
-            )
+    def on_paper_mode_change(self, value):
+        config.PAPER_TRADING = (value == "PAPER")
+        self.log_message(f"🔄 Chuyển sang chế độ: {value}", target="bot")
+        # Trigger reset connector / UI state if needed
+        self._save_brain_live_config()
+
+    def on_market_type_change(self, value):
+        if str(value or "").upper() in ("CK CƠ SỞ", "CK CO SO", "CKCS"):
+            symbols = list(getattr(config, "CKCS_WATCHLIST", []) or [])
+            if not symbols:
+                symbols = ["FPT"]
+            self.cbo_symbol.configure(values=symbols)
+            self.cbo_symbol.set(symbols[0])
+        else:
+            symbols = list(getattr(config, "CKPS_SYMBOLS", []) or ["VN30F1M"])
+            self.cbo_symbol.configure(values=symbols)
+            self.cbo_symbol.set(symbols[0])
+        self.on_symbol_change(self.cbo_symbol.get())
 
     def on_preview_group_change(self, value):
-        preset = self.cbo_preset.get()
+        preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
         group = self._preview_group_value()
         preset_cfg = config.PRESETS.setdefault(preset, {})
         preset_cfg["MANUAL_SL_GROUP"] = group
@@ -701,7 +673,7 @@ class BotUI(ctk.CTk):
         return default
 
     def on_preview_sl_group_change(self, value):
-        preset = self.cbo_preset.get()
+        preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
         group = self._preview_group_from_value(value)
         preset_cfg = config.PRESETS.setdefault(preset, {})
         preset_cfg["MANUAL_SL_GROUP"] = group
@@ -713,7 +685,7 @@ class BotUI(ctk.CTk):
         self.refresh_manual_preview_tab()
 
     def on_preview_tp_group_change(self, value):
-        preset = self.cbo_preset.get()
+        preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
         group = self._preview_group_from_value(value)
         preset_cfg = config.PRESETS.setdefault(preset, {})
         preset_cfg["MANUAL_TP_GROUP"] = group
@@ -725,7 +697,7 @@ class BotUI(ctk.CTk):
         self.refresh_manual_preview_tab()
 
     def on_preview_sl_mode_change(self, value):
-        preset_cfg = config.PRESETS.setdefault(self.cbo_preset.get(), {})
+        preset_cfg = config.PRESETS.setdefault(getattr(config, "DEFAULT_PRESET", "SCALPING"), {})
         mode = self._manual_mode_value(value, "PERCENT")
         preset_cfg["MANUAL_SL_MODE"] = mode
         preset_cfg["USE_SWING_SL"] = mode in ("SWING_REJECTION", "SWING_STRUCTURE")
@@ -736,7 +708,7 @@ class BotUI(ctk.CTk):
         self.refresh_manual_preview_tab()
 
     def on_preview_tp_mode_change(self, value):
-        preset_cfg = config.PRESETS.setdefault(self.cbo_preset.get(), {})
+        preset_cfg = config.PRESETS.setdefault(getattr(config, "DEFAULT_PRESET", "SCALPING"), {})
         mode = self._manual_mode_value(value, "RR")
         preset_cfg["MANUAL_TP_MODE"] = mode
         preset_cfg["USE_SWING_TP"] = mode in ("SWING_REJECTION", "SWING_STRUCTURE")
@@ -755,151 +727,8 @@ class BotUI(ctk.CTk):
                 state="normal" if value == "NORMAL" else "disabled"
             )
         self.refresh_manual_preview_tab()
-        if hasattr(self, "btn_mode_normal") and hasattr(self, "btn_mode_grid"):
-            normal_on = value == "NORMAL"
-            grid_on = value == "GRID"
-            hedge_on = value == "HEDGE"
-            self.btn_mode_normal.configure(
-                fg_color="#00838F" if normal_on else "#424242",
-                hover_color="#006064" if normal_on else "#616161",
-            )
-            self.btn_mode_grid.configure(
-                fg_color="#00838F" if grid_on else "#424242",
-                hover_color="#006064" if grid_on else "#616161",
-            )
-            if hasattr(self, "btn_mode_hedge"):
-                self.btn_mode_hedge.configure(
-                    fg_color="#6A1B9A" if hedge_on else "#424242",
-                    hover_color="#4A148C" if hedge_on else "#616161",
-                )
-        if value == "GRID":
-            if hasattr(self, "frame_direction"):
-                self.frame_direction.grid_remove()
-            if hasattr(self, "frame_hedge_options"):
-                self.frame_hedge_options.pack_forget()
-            if hasattr(self, "seg_grid_mode"):
-                self.seg_grid_mode.pack(fill="x", padx=10, pady=(5, 5), before=self.btn_action)
-            if hasattr(self, "frame_grid_options"):
-                self.frame_grid_options.pack(fill="x", padx=12, pady=(0, 6), before=self.btn_action)
-                self.update_grid_manual_preview()
-            self.on_grid_mode_change(self.var_grid_manual_mode.get())
-        elif value == "HEDGE":
-            if hasattr(self, "frame_direction"):
-                self.frame_direction.grid_remove()
-            if hasattr(self, "seg_grid_mode"):
-                self.seg_grid_mode.pack_forget()
-            if hasattr(self, "frame_grid_options"):
-                self.frame_grid_options.pack_forget()
-            if hasattr(self, "frame_hedge_options"):
-                self.frame_hedge_options.pack(fill="x", padx=12, pady=(0, 6), before=self.btn_action)
-                self.update_hedge_manual_preview()
-            sym = self.cbo_symbol.get()
-            self.btn_action.configure(
-                text=f"START HEDGE DUAL {sym}",
-                fg_color="#6A1B9A",
-                hover_color="#4A148C",
-            )
-        else:
-            if hasattr(self, "seg_grid_mode"):
-                self.seg_grid_mode.pack_forget()
-            if hasattr(self, "frame_grid_options"):
-                self.frame_grid_options.pack_forget()
-            if hasattr(self, "frame_hedge_options"):
-                self.frame_hedge_options.pack_forget()
-            if hasattr(self, "frame_direction"):
-                self.frame_direction.grid()
-            self.on_direction_change(self.var_direction.get())
 
-    def update_grid_manual_preview(self):
-        if not hasattr(self, "lbl_grid_manual_preview"):
-            return
-        try:
-            from grid.grid_storage import load_grid_settings
 
-            cfg = load_grid_settings()
-            sym = self.cbo_symbol.get()
-            ctx = getattr(self, "latest_market_context", {}).get(sym, {})
-            price = float(ctx.get("current_price", 0.0) or 0.0)
-            mode = self.var_grid_manual_mode.get()
-            grid_type = cfg.get("GRID_TYPE", "ATR_DYNAMIC")
-            group = cfg.get("GRID_TIMEFRAME_GROUP", "G2")
-            upper = float(cfg.get("MANUAL_UPPER_BOUNDARY", 0.0) or 0.0)
-            lower = float(cfg.get("MANUAL_LOWER_BOUNDARY", 0.0) or 0.0)
-            if upper <= lower:
-                upper = float(ctx.get(f"swing_high_{group}", ctx.get("swing_high")) or 0.0)
-                lower = float(ctx.get(f"swing_low_{group}", ctx.get("swing_low")) or 0.0)
-
-            spacing = 0.0
-            if grid_type == "ARITHMETIC" and upper > lower:
-                spacing = (upper - lower) / max(1, int(cfg.get("GRID_COUNT", 10) or 10))
-            elif grid_type == "GEOMETRIC" and price > 0:
-                spacing = price * (float(cfg.get("GEOMETRIC_STEP_PERCENT", 1.0) or 1.0) / 100.0)
-            else:
-                atr = float(ctx.get(f"atr_{group}", ctx.get("atr")) or 0.0)
-                spacing = atr * float(cfg.get("SPACING_ATR_MULTIPLIER", 1.0) or 1.0)
-
-            signal_source = cfg.get("GRID_SIGNAL_SOURCE", "OFF")
-            status = "BLOCK"
-            color = "#F44336"
-            reason = "Missing data"
-            if upper > lower and price > 0 and spacing > 0:
-                mid = (upper + lower) / 2.0
-                if not (lower < price < upper):
-                    next_action = "OUT_OF_RANGE"
-                    status = "BLOCK"
-                    color = "#F44336"
-                    reason = f"PRICE_OUT_OF_BOUNDARY/{cfg.get('OUT_OF_RANGE_POLICY', 'STOP')}"
-                elif mode == "LONG":
-                    next_action = "BUY" if price <= mid else "WAIT"
-                    status = "READY" if next_action == "BUY" else "WAIT"
-                    color = "#00C853" if status == "READY" else "#FFB300"
-                    reason = next_action
-                elif mode == "SHORT":
-                    next_action = "SELL" if price >= mid else "WAIT"
-                    status = "READY" if next_action == "SELL" else "WAIT"
-                    color = "#00C853" if status == "READY" else "#FFB300"
-                    reason = next_action
-                else:
-                    next_action = "BUY" if price < mid else ("SELL" if price > mid else "WAIT")
-                    status = "READY" if next_action in ("BUY", "SELL") else "WAIT"
-                    color = "#00C853" if status == "READY" else "#FFB300"
-                    reason = next_action
-            else:
-                reason = "Missing data"
-            text = f"GRID: {grid_type} | Signal: {signal_source} | {status}: {reason}"
-            if hasattr(self, "ind_grid_ready_light"):
-                self.ind_grid_ready_light.configure(fg_color=color)
-            self.lbl_grid_manual_preview.configure(text=text)
-        except Exception as e:
-            if hasattr(self, "ind_grid_ready_light"):
-                self.ind_grid_ready_light.configure(fg_color="#F44336")
-            self.lbl_grid_manual_preview.configure(text=f"GRID Preview error: {e}")
-
-    def update_hedge_manual_preview(self):
-        if not hasattr(self, "lbl_hedge_manual_preview"):
-            return
-        try:
-            from hedge.hedge_storage import load_hedge_settings
-
-            sym = self.cbo_symbol.get()
-            ctx = getattr(self, "latest_market_context", {}).get(sym, {})
-            gate = self.hedge_mgr.evaluate_entry_gate(sym, ctx, load_hedge_settings())
-            color = "#00C853" if gate["permission"] else "#FFB300"
-            if gate["reason"] not in ("OK", "") and gate["status"] != "READY":
-                color = "#F44336" if "NO_" in gate["reason"] else "#FFB300"
-            text = (
-                f"HEDGE: {gate.get('tactic', 'DUAL')} | "
-                f"Signal: {gate.get('signal_status', 'OFF')} | "
-                f"E/E: {gate.get('entry_status', 'OFF')} | "
-                f"{gate.get('status', 'WAIT')}: {gate.get('reason', '---')}"
-            )
-            if hasattr(self, "ind_hedge_ready_light"):
-                self.ind_hedge_ready_light.configure(fg_color=color)
-            self.lbl_hedge_manual_preview.configure(text=text)
-        except Exception as e:
-            if hasattr(self, "ind_hedge_ready_light"):
-                self.ind_hedge_ready_light.configure(fg_color="#F44336")
-            self.lbl_hedge_manual_preview.configure(text=f"HEDGE Preview error: {e}")
 
     def _preview_tf_group(self, symbol, context):
         raw = ""
@@ -1203,8 +1032,35 @@ class BotUI(ctk.CTk):
             next(iter(config.PRESETS.values()), {"SL_PERCENT": 0.5, "TP_RR_RATIO": 1.5, "RISK_PERCENT": 0.3}),
         )
         context = context or {}
-        tick = mt5.symbol_info_tick(symbol)
-        sym_info = mt5.symbol_info(symbol)
+        tick = None
+        sym_info = None
+        if tick is None and context and ("current_price" in context or "bid" in context):
+            bid_val = float(context.get("bid", context.get("current_price", 0)))
+            ask_val = float(context.get("ask", context.get("current_price", 0)))
+            class MockTick:
+                def __init__(self, b, a):
+                    self.bid = b
+                    self.ask = a
+            tick = MockTick(bid_val, ask_val)
+        if sym_info is None:
+            try:
+                sym_info = self.connector.get_symbol_info(symbol) if self.connector else None
+            except Exception:
+                sym_info = None
+        if sym_info is None:
+            class MockSymInfo:
+                def __init__(self, is_derivative):
+                    self.trade_contract_size = (
+                        float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0)
+                        if is_derivative
+                        else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
+                    )
+                    self.volume_min = 1.0
+                    self.volume_max = config.MAX_LOT_SIZE if is_derivative else 1000000.0
+                    self.volume_step = getattr(config, "LOT_STEP", 1.0)
+                    self.point = float(getattr(config, "DNSE_PRICE_POINT", 0.1) or 0.1)
+            sym_info = MockSymInfo(self._is_derivative_symbol(symbol))
+
         if not tick or not sym_info:
             return {"ready": False, "reason": "NO_TICK_OR_SYMBOL_INFO"}
 
@@ -1385,29 +1241,30 @@ class BotUI(ctk.CTk):
             tp_price = tp_targets[0]
             tp_source = f"{rr:g}R"
 
-        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        order_type = 0 if direction == "BUY" else 1
         account = self.connector.get_account_info() if self.connector else None
         equity = float((account or {}).get("equity", (account or {}).get("balance", 0.0)) or 0.0)
         risk_pct = float(params.get("RISK_PERCENT", 0.3) or 0.3)
         strict_fee = 0.0
         spread_cost_per_lot = float(tick.ask - tick.bid) * c_size
         if params.get("STRICT_RISK", False):
-            strict_fee = self.get_fee_config(symbol) + spread_cost_per_lot
+            strict_fee = self.calculate_trade_fee(symbol, price, 1) + spread_cost_per_lot
 
         if manual_lot > 0:
-            lot_size = manual_lot
+            lot_size = self._normalize_contracts(manual_lot, vol_min, vol_max)
             lot_source = "MANUAL_LOT"
         else:
             risk_usd = equity * (risk_pct / 100.0)
             calc_loss = None
             try:
-                calc_loss = mt5.order_calc_profit(order_type, symbol, 1.0, price, sl_price)
+                calc_loss = 0.0
             except Exception:
                 calc_loss = None
             loss_per_lot = abs(float(calc_loss)) if calc_loss is not None and calc_loss < 0 else sl_distance * c_size
             lot_size = risk_usd / (loss_per_lot + strict_fee) if loss_per_lot + strict_fee > 0 else 0.0
             if vol_step > 0:
                 lot_size = round(lot_size / vol_step) * vol_step
+            lot_size = self._normalize_contracts(lot_size, vol_min, vol_max)
             lot_source = f"AUTO_RISK:{risk_pct:g}%"
 
         brain = self.trade_mgr._get_brain_settings(symbol)
@@ -1418,9 +1275,9 @@ class BotUI(ctk.CTk):
         if max_lot_cap > 0 and lot_size > max_lot_cap:
             lot_size = max_lot_cap
             cap_note = f" | CAP={max_lot_cap:g}"
-        lot_size = max(vol_min, min(lot_size, vol_max)) if lot_size > 0 else 0.0
+        lot_size = self._normalize_contracts(lot_size, vol_min, vol_max) if lot_size > 0 else 0.0
 
-        commission = self.get_fee_config(symbol) * lot_size
+        commission = self.calculate_trade_fee(symbol, price, lot_size)
         spread_cost = spread_cost_per_lot * lot_size
         risk_usd = sl_distance * lot_size * c_size if lot_size > 0 else 0.0
         reward_usd = abs(tp_price - price) * lot_size * c_size if lot_size > 0 and tp_price > 0 else 0.0
@@ -1475,7 +1332,7 @@ class BotUI(ctk.CTk):
         return {
             "key": key,
             "title": title,
-            "symbol": (setup or {}).get("symbol", self.cbo_symbol.get()),
+            "symbol": (setup or {}).get("symbol", getattr(self, "cbo_symbol", None).get() if hasattr(self, "cbo_symbol") else "VN30F1M"),
             "timeframe": (setup or {}).get("timeframe", "--"),
             "source": source,
             "direction": direction,
@@ -1732,7 +1589,7 @@ class BotUI(ctk.CTk):
         symbol = self.cbo_symbol.get()
         context = getattr(self, "latest_market_context", {}).get(symbol, {}) or {}
         direction = self.var_direction.get()
-        preset = self.cbo_preset.get()
+        preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
         group = self._preview_tf_group(symbol, context)
         latest_signal = int(context.get("latest_signal", 0) or 0)
         trend = str(context.get(f"trend_{group}", context.get("trend", "NONE")) or "NONE").upper()
@@ -1801,7 +1658,7 @@ class BotUI(ctk.CTk):
             self._make_preview_chip("Entry Filter", setup.get("ee_gate", ee_txt.replace("E/E: ", "")), ee_kind),
         ]
         if pull_note:
-            setup["chips"][-1] = self._make_preview_chip("Entry Data", pull_note.replace("Pullback thiáº¿u data", "Missing pullback data").strip(" |"), "warn")
+            setup["chips"][-1] = self._make_preview_chip("Entry Data", pull_note.replace("Pullback thiếu data", "Missing pullback data").strip(" |"), "warn")
         fallback_notes = self._preview_rule_notes(setup)
         if fallback_notes:
             setup["chips"] = (fallback_notes + setup["chips"])[:4]
@@ -1825,7 +1682,7 @@ class BotUI(ctk.CTk):
         if not hasattr(self, "preview_cards"):
             return
         try:
-            preset_cfg = config.PRESETS.get(self.cbo_preset.get(), {})
+            preset_cfg = config.PRESETS.get(getattr(config, "DEFAULT_PRESET", "SCALPING"), {})
             tf_display = {
                 "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
                 "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
@@ -1900,8 +1757,9 @@ class BotUI(ctk.CTk):
                             reward_usd = float(setup.get("reward_usd", 0.0) or 0.0)
                             equity = float(setup.get("equity", 0.0) or 0.0)
                             pnl_pct = (reward_usd / equity * 100.0) if equity > 0 else 0.0
+                            pnl_pct_txt = f"{pnl_pct:.4f}%" if 0 < abs(pnl_pct) < 0.01 else f"{pnl_pct:.2f}%"
                             risk_pct = float(setup.get("risk_pct", 0.0) or 0.0)
-                            _set_preview_text(levels["stats"], f"Lot {lot:.2f} | Risk ${risk_usd:.2f} ({risk_pct:g}%) | Reward@TP1 ${reward_usd:.2f} | PnL {pnl_pct:.2f}%")
+                            _set_preview_text(levels["stats"], f"{self._quantity_unit(model.get('symbol'))} {lot:.0f} | Rủi ro {self._fmt_money(risk_usd)} ({risk_pct:g}%) | Kỳ vọng TP1 {self._fmt_money(reward_usd)} | PnL {pnl_pct_txt}")
                         tsl_txt = str(model.get("tsl_rule", "--") or "--").replace(" trigger ", " @").replace("WIN ", "")
                         _set_preview_text(levels["tsl"], tsl_txt)
                         ee_reason = str(model.get("setup", {}).get("ee_reason", "") or "")
@@ -1910,7 +1768,7 @@ class BotUI(ctk.CTk):
                             ee_reason = ""
                         if ee_reason and ee_reason not in ee_txt:
                             ee_txt = f"{ee_txt} | {ee_reason}"
-                        ee_txt = ee_txt.replace("Giá đã vào vùng ", "In ").replace("GiÃ¡ Ä‘Ã£ vÃ o vÃ¹ng ", "In ")
+                        ee_txt = ee_txt.replace("Giá đã vào vùng ", "In ")
                         _set_preview_text(levels["ee_detail"], ee_txt)
                     else:
                         if "entry_signal" in levels:
@@ -1931,11 +1789,11 @@ class BotUI(ctk.CTk):
                         if "rr" in levels:
                             _set_preview_text(levels["rr"], f"{model.get('setup', {}).get('rr', 0.0):.2f}")
                         if "lot" in levels:
-                            _set_preview_text(levels["lot"], f"{model.get('setup', {}).get('lot', 0.0):.2f}")
+                            _set_preview_text(levels["lot"], f"{model.get('setup', {}).get('lot', 0.0):.0f}")
                         if "risk" in levels:
-                            _set_preview_text(levels["risk"], f"${model.get('setup', {}).get('risk_usd', 0.0):.2f}")
+                            _set_preview_text(levels["risk"], self._fmt_money(model.get('setup', {}).get('risk_usd', 0.0)))
                         if "reward" in levels:
-                            _set_preview_text(levels["reward"], f"${model.get('setup', {}).get('reward_usd', 0.0):.2f}")
+                            _set_preview_text(levels["reward"], self._fmt_money(model.get('setup', {}).get('reward_usd', 0.0)))
                 targets = widgets.get("targets", {})
                 if isinstance(targets, dict):
                     for target_key in ("tp1", "tp2", "tp3"):
@@ -2099,15 +1957,8 @@ class BotUI(ctk.CTk):
         if not line: return
         msg = line.split("] - ")[-1] if "] - " in line else line
 
-        if "[HEDGE]" in msg or "HEDGE_" in msg:
-            self.log_message(f"[DAEMON] {msg}", target="hedge")
-            return
-        if "[GRID]" in msg or "GRID_" in msg:
-            self.log_message(f"[DAEMON] {msg}", target="grid")
-            return
-
         # Nhận diện các sự kiện quan trọng (Vào lệnh, Chốt lệnh, Watermark)
-        if "B�P C�" in line or "WATERMARK" in line or "ĐÓNG LỆNH" in line or "REVERSE TACTIC" in line:
+        if "Bóp cò" in line or "WATERMARK" in line or "ĐÓNG LỆNH" in line or "REVERSE TACTIC" in line:
             # Cắt bớt phần timestamp của daemon nếu có
             msg = line.split("] - ")[-1] if "] - " in line else line
             self.log_message(f"[DAEMON] {msg}", target="bot")
@@ -2175,7 +2026,6 @@ class BotUI(ctk.CTk):
                         self.entry_exit_tactic_states[key] = key in active_entry_tactics
                     if hasattr(self, "btn_entry_swing"):
                         self.update_entry_exit_buttons_ui()
-                    self.refresh_hedge_runtime_light()
             except:
                 pass
 
@@ -2198,23 +2048,104 @@ class BotUI(ctk.CTk):
             pass
 
     def get_fee_config(self, symbol):
-        acc_type = self.cbo_account_type.get()
-        if acc_type in ["PRO", "STANDARD"]:
-            return 0.0
+        broker_fee = getattr(config, "DNSE_BROKER_FEE_PER_CONTRACT", None)
+        if broker_fee is not None:
+            return float(broker_fee or 0.0)
         specific_rate = config.COMMISSION_RATES.get(symbol, -1)
         if specific_rate != -1:
-            return specific_rate
+            return float(specific_rate or 0.0)
+        acc_type = "STANDARD"
         acc_cfg = config.ACCOUNT_TYPES_CONFIG.get(
             acc_type, config.ACCOUNT_TYPES_CONFIG["STANDARD"]
         )
-        return acc_cfg.get("COMMISSION_PER_LOT", 0.0)
+        return float(acc_cfg.get("COMMISSION_PER_LOT", 0.0) or 0.0)
+
+    def get_derivative_fee_profile(self, symbol=None):
+        connector = getattr(self, "connector", None)
+        if connector and hasattr(connector, "get_fee_profile"):
+            try:
+                profile = connector.get_fee_profile(symbol or getattr(config, "DEFAULT_SYMBOL", "VN30F1M"))
+                if hasattr(profile, "as_dict"):
+                    return profile.as_dict()
+                if isinstance(profile, dict):
+                    return dict(profile)
+            except Exception:
+                pass
+        return {
+            "broker_fee_per_contract": self.get_fee_config(symbol or getattr(config, "DEFAULT_SYMBOL", "VN30F1M")),
+            "exchange_fee_per_contract": float(getattr(config, "DNSE_EXCHANGE_FEE_PER_CONTRACT", 2700.0) or 0.0),
+            "clearing_fee_per_contract": float(getattr(config, "DNSE_CLEARING_FEE_PER_CONTRACT", 2550.0) or 0.0),
+            "tax_rate": float(getattr(config, "DNSE_TAX_RATE", 0.0) or 0.0),
+            "point_value": float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0),
+            "market_type": "DERIVATIVE",
+            "quantity_unit": "HĐ",
+            "fee_available": True,
+        }
+
+    def calculate_trade_fee(self, symbol, price, contracts):
+        connector = getattr(self, "connector", None)
+        if connector and hasattr(connector, "calculate_trade_fee"):
+            try:
+                return float(connector.calculate_trade_fee(symbol, price, contracts))
+            except Exception:
+                pass
+        qty = max(0.0, float(contracts or 0.0))
+        profile = self.get_derivative_fee_profile(symbol)
+        fixed = qty * (
+            profile["broker_fee_per_contract"]
+            + profile["exchange_fee_per_contract"]
+            + profile["clearing_fee_per_contract"]
+        )
+        tax = max(0.0, float(price or 0.0)) * qty * profile["point_value"] * profile["tax_rate"]
+        return fixed + tax
+
+    def _fmt_money(self, value, signed=False, suffix=False):
+        return format_vnd(value, signed=signed, suffix=suffix)
+
+    def _is_derivative_symbol(self, symbol):
+        connector = getattr(self, "connector", None)
+        if connector and hasattr(connector, "market_type_for_symbol"):
+            try:
+                return connector.market_type_for_symbol(symbol) == "DERIVATIVE"
+            except Exception:
+                pass
+        sym = str(symbol or "").upper()
+        return sym.startswith("VN30F") or sym in {str(s).upper() for s in getattr(config, "CKPS_SYMBOLS", []) or []}
+
+    def _quantity_unit(self, symbol):
+        return "HĐ" if self._is_derivative_symbol(symbol) else "CP"
+
+    def _quantity_label(self, symbol):
+        return "Hợp đồng" if self._is_derivative_symbol(symbol) else "Cổ phiếu"
+
+    def _symbol_contract_size(self, symbol):
+        connector = getattr(self, "connector", None)
+        if connector and hasattr(connector, "get_symbol_info"):
+            try:
+                return float(connector.get_symbol_info(symbol).trade_contract_size or 1.0)
+            except Exception:
+                pass
+        return float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0) if self._is_derivative_symbol(symbol) else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
+
+    def _normalize_contracts(self, value, min_contracts=None, max_contracts=None):
+        try:
+            qty = float(value or 0.0)
+        except Exception:
+            qty = 0.0
+        if qty <= 0:
+            return 0.0
+        min_c = int(max(1, round(float(min_contracts or getattr(config, "MIN_LOT_SIZE", 1.0) or 1.0))))
+        max_c = int(max(min_c, round(float(max_contracts or getattr(config, "MAX_LOT_SIZE", 200.0) or 200.0))))
+        qty = int(round(qty))
+        qty = max(min_c, min(qty, max_c))
+        return float(qty)
 
     def bg_update_loop(self):
         while self.running:
             try:
                 sym = self.cbo_symbol.get()
                 new_map = self.trade_mgr.update_running_trades(
-                    self.cbo_account_type.get(), self.latest_market_context
+                    "STANDARD", self.latest_market_context
                 )
                 self.tsl_states_map.update(new_map)
 
@@ -2222,7 +2153,7 @@ class BotUI(ctk.CTk):
                 
                 import core.storage_manager as storage_manager
                 
-                # [FIX V6.9.5] Nếu mất kết nối hoặc đang Swap tài khoản trên MT5 -> Ép reconnect
+                # [FIX V6.9.5] Nếu mất kết nối hoặc đang Swap tài khoản trên DNSE -> Ép reconnect
                 if acc is None:
                     self.connector._is_connected = False
                     self.connector.connect()
@@ -2232,7 +2163,7 @@ class BotUI(ctk.CTk):
                     current_acc_id = str(acc['login'])
                     if current_acc_id != storage_manager._active_account_id:
                         storage_manager.set_active_account(current_acc_id)
-                        self.log_message(f"🔄 MT5 ĐỔI TÀI KHOẢN SANG {current_acc_id}. ĐANG TỰ ĐỘNG CHUYỂN SINH WORKSPACE...", target="bot")
+                        self.log_message(f"🔄 DNSE ĐỔI TÀI KHOẢN SANG {current_acc_id}. ĐANG TỰ ĐỘNG CHUYỂN SINH WORKSPACE...", target="bot")
                         
                         # Cập nhật biến global
                         global TSL_SETTINGS_FILE, PRESETS_FILE, BRAIN_SETTINGS_FILE
@@ -2247,7 +2178,32 @@ class BotUI(ctk.CTk):
                         # Reload config trên UI thread
                         self.after(100, self.load_settings)
 
-                tick = mt5.symbol_info_tick(sym)
+                tick = None
+                try:
+                    tick_data = data_engine.fetch_realtime_tick(sym)
+                    if tick_data:
+                        bid_val = float(tick_data.get("bid", tick_data.get("last", 0.0)) or 0.0)
+                        ask_val = float(tick_data.get("ask", tick_data.get("last", bid_val)) or bid_val)
+                        last_val = float(tick_data.get("last", ask_val or bid_val) or 0.0)
+                        ctx = self.latest_market_context.setdefault(sym, {})
+                        ctx.update(
+                            {
+                                "bid": bid_val,
+                                "ask": ask_val,
+                                "current_price": last_val or ask_val or bid_val,
+                                "spread": float(tick_data.get("spread", max(0.0, ask_val - bid_val)) or 0.0),
+                                "tick_timestamp": tick_data.get("timestamp", time.time()),
+                            }
+                        )
+
+                        class LiveTick:
+                            def __init__(self, bid, ask):
+                                self.bid = bid
+                                self.ask = ask
+
+                        tick = LiveTick(bid_val, ask_val)
+                except Exception:
+                    tick = None
                 magics = storage_manager.get_magic_numbers()
                 
                 pos = [
@@ -2256,8 +2212,6 @@ class BotUI(ctk.CTk):
                     if (
                         is_bot_position(p, magics)
                         or is_manual_position(p, magics)
-                        or is_grid_position(p, magics)
-                        or is_hedge_position(p, magics)
                     )
                 ]
                 self.after(
@@ -2269,7 +2223,7 @@ class BotUI(ctk.CTk):
                         acc, self.trade_mgr.state, sym, self.var_strict_mode.get()
                     ),
                     tick,
-                    self.cbo_preset.get(),
+                    getattr(config, "DEFAULT_PRESET", "SCALPING"),
                     sym,
                     pos,
                 )
@@ -2286,20 +2240,20 @@ class BotUI(ctk.CTk):
             rem = int(self.brain_wakeup_time - time.time())
             if rem > 0:
                 self.lbl_brain_status.configure(
-                    text=f"🧠 BRAIN: SLEEP ({rem}s) [{sym_count} Sym]",
+                    text=f"BRAIN: SLEEP ({rem}s) [{sym_count} Sym]",
                     text_color="#2196F3",
                 )
             else:
                 self.lbl_brain_status.configure(
-                    text=f"🧠 BRAIN: SYNC... [{sym_count} Sym]", text_color=COL_WARN
+                    text=f"BRAIN: SYNC... [{sym_count} Sym]", text_color=COL_WARN
                 )
         elif self.brain_status in ["HEALTHY", "MONITORING"]:
             self.lbl_brain_status.configure(
-                text=f"🧠 BRAIN: ONLINE [{sym_count} Sym]", text_color=COL_GREEN
+                text=f"BRAIN: ONLINE [{sym_count} Sym]", text_color=COL_GREEN
             )
         else:
             self.lbl_brain_status.configure(
-                text=f"🧠 BRAIN: {self.brain_status}", text_color=COL_RED
+                text=f"BRAIN: {self.brain_status}", text_color=COL_RED
             )
 
         sym_ctx = self.latest_market_context.get(sym, {})
@@ -2353,10 +2307,10 @@ class BotUI(ctk.CTk):
         else:
             # [FIX CORE UI]: Làm sạch nhãn nếu không có dữ liệu (Ví dụ đổi sang đồng Coin không có trong Watchlist)
             self.lbl_market_mode.configure(
-                text=f"Mode: -- | Trend: --", text_color="gray"
+                text=f"Mode: -- | Trend: --", text_color="white"
             )
             self.lbl_market_context.configure(
-                text="H: -- | L: -- | ATR: --", text_color="gray"
+                text="H: -- | L: -- | ATR: --", text_color="white"
             )
 
         d = self.var_direction.get()
@@ -2367,34 +2321,57 @@ class BotUI(ctk.CTk):
             balance = 1.0
 
         if acc:
-            self.lbl_equity.configure(text=f"${acc['equity']:,.2f}")
+            self.lbl_equity.configure(text=self._fmt_money(acc["equity"]))
+            if hasattr(self, "lbl_money_unit_note"):
+                self.lbl_money_unit_note.configure(text=money_unit_note())
             self.lbl_acc_info.configure(
-                text=f"ID: {acc['login']}\nServer: {acc['server']}"
+                text=f"ID: {acc['login']}  ·  {acc['server']}"
             )
         base_pnl = float(state.get("pnl_today", 0.0) or 0.0)
-        grid_pnl = 0.0
-        hedge_pnl = 0.0
-        try:
-            from grid.grid_storage import load_grid_state
-
-            grid_pnl = float(load_grid_state().get("grid_pnl_today", 0.0) or 0.0)
-        except Exception:
-            grid_pnl = 0.0
-        try:
-            from hedge.hedge_storage import load_hedge_state
-
-            hedge_pnl = float(load_hedge_state().get("hedge_pnl_today", 0.0) or 0.0)
-        except Exception:
-            hedge_pnl = 0.0
-        pnl = base_pnl + grid_pnl + hedge_pnl
+        pnl = base_pnl
         self.lbl_stats.configure(
-            text=f"PNL: ${pnl:.2f}",
+            text=f"PNL: {self._fmt_money(pnl, signed=True)}",
             text_color=COL_GREEN if pnl >= 0 else COL_RED,
         )
+
+        # Indicator phiên giao dịch theo symbol đang chọn (ATO/MỞ/NGHỈ TRƯA/ATC/ĐÓNG).
+        if hasattr(self, "lbl_session"):
+            try:
+                from core.market_hours import market_session_phase
+                phase, label = market_session_phase(sym)
+                color = {
+                    "OPEN": COL_GREEN,
+                    "ATO": "#26C6DA",
+                    "ATC": "#FFB300",
+                    "LUNCH": "#FFB300",
+                    "WEEKEND": COL_RED,
+                    "CLOSED": COL_RED,
+                }.get(phase, "#90A4AE")
+                self.lbl_session.configure(text=f"PHIÊN: {label}", text_color=color)
+            except Exception:
+                pass
         # FEE label sẽ được cập nhật sau vòng lặp positions (cần data lệnh đang mở)
 
-        cur_price, c_size, point = 0.0, 1.0, 0.00001
-        vol_min, vol_max, vol_step = config.MIN_LOT_SIZE, config.MAX_LOT_SIZE, getattr(config, "LOT_STEP", 0.01)
+        is_derivative = self._is_derivative_symbol(sym)
+        qty_unit = self._quantity_unit(sym)
+        qty_label = self._quantity_label(sym)
+        if hasattr(self, "lbl_manual_qty_title"):
+            self.lbl_manual_qty_title.configure(text=qty_label)
+        cur_price = 0.0
+        c_size = float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0) if is_derivative else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
+        point = float(getattr(config, "DNSE_PRICE_POINT", 0.1) or 0.1)
+        vol_min, vol_max, vol_step = 1.0, (config.MAX_LOT_SIZE if is_derivative else 1000000.0), getattr(config, "LOT_STEP", 1.0)
+        
+        # [DNSE TICK FALLBACK] Lấy giá real-time từ market context (bid/ask/last từ DNSE)
+        if tick is None and sym_ctx and ("current_price" in sym_ctx or "bid" in sym_ctx):
+            bid_val = float(sym_ctx.get("bid", sym_ctx.get("current_price", 0)))
+            ask_val = float(sym_ctx.get("ask", sym_ctx.get("current_price", 0)))
+            class MockTick:
+                def __init__(self, b, a):
+                    self.bid = b
+                    self.ask = a
+            tick = MockTick(bid_val, ask_val)
+
         if tick:
             cur_price = tick.ask if d == "BUY" else tick.bid
             self.lbl_dashboard_price.configure(
@@ -2402,10 +2379,21 @@ class BotUI(ctk.CTk):
                 text_color=COL_GREEN if cur_price >= self.last_price_val else COL_RED,
             )
             self.last_price_val = cur_price
-            s_info = mt5.symbol_info(sym)
+            try:
+                s_info = self.connector.get_symbol_info(sym) if self.connector else None
+            except Exception:
+                s_info = None
             if s_info:
                 c_size, point = s_info.trade_contract_size, s_info.point
                 vol_min, vol_max, vol_step = s_info.volume_min, s_info.volume_max, s_info.volume_step
+        else:
+            # Không có tick: ngoài giờ / chưa có dữ liệu / mã phái sinh chưa có giá khớp.
+            ctx_px = float(sym_ctx.get("current_price", 0) or 0) if sym_ctx else 0.0
+            if ctx_px > 0:
+                cur_price = ctx_px
+                self.lbl_dashboard_price.configure(text=f"{cur_price:.2f}", text_color="#9E9E9E")
+            else:
+                self.lbl_dashboard_price.configure(text="— chưa có giá", text_color="#757575")
 
         for item in check_res["checks"]:
             name, stt, msg = item["name"], item["status"], item["msg"]
@@ -2504,21 +2492,22 @@ class BotUI(ctk.CTk):
                     )
 
             # 4. TÍNH TOÁN LOT PREVIEW DỰA TRÊN active_sl_dist
-            f_lot = mlot if mlot > 0 else 0
+            f_lot = self._normalize_contracts(mlot, vol_min, vol_max) if mlot > 0 else 0
             if f_lot == 0 and active_sl_dist > 0:
                 risk_usd = acc["equity"] * (current_risk_pct / 100)
                 strict_fee = 0.0
                 if params.get("STRICT_RISK", False):
-                    comm_rate = self.get_fee_config(sym)
+                    comm_rate = self.calculate_trade_fee(sym, cur_price, 1)
                     spread_cost_per_lot = (tick.ask - tick.bid) * c_size
                     strict_fee = comm_rate + spread_cost_per_lot
 
-                order_type = mt5.ORDER_TYPE_BUY if d == "BUY" else mt5.ORDER_TYPE_SELL
-                calc_loss = mt5.order_calc_profit(order_type, sym, 1.0, cur_price, p_sl)
+                order_type = 0 if d == "BUY" else 1
+                calc_loss = 0.0
                 loss_per_lot = abs(float(calc_loss)) if calc_loss is not None and calc_loss < 0 else active_sl_dist * c_size
                 if (loss_per_lot + strict_fee) > 0:
                     raw_calc = risk_usd / (loss_per_lot + strict_fee)
                     f_lot = round(raw_calc / vol_step) * vol_step
+                    f_lot = self._normalize_contracts(f_lot, vol_min, vol_max)
 
             auto_lot_cap = 0.0
             try:
@@ -2529,31 +2518,41 @@ class BotUI(ctk.CTk):
             if auto_lot_cap <= 0:
                 auto_lot_cap = float(getattr(config, "MAX_LOT_CAP", 0.0) or 0.0)
             if mlot <= 0 and auto_lot_cap > 0 and f_lot > auto_lot_cap:
-                self.lbl_prev_lot.configure(text=f"CHẶN AUTO LOT: {f_lot:.2f} > {auto_lot_cap:.2f}", text_color=COL_RED)
+                self.lbl_prev_lot.configure(text=f"CHẶN AUTO {qty_unit}: {f_lot:.0f} > {auto_lot_cap:.0f}", text_color=COL_RED)
                 if hasattr(self, "btn_action"):
                     self.btn_action.configure(state="normal")
             elif hasattr(self, "btn_action"):
                 self.btn_action.configure(state="normal")
 
             if f_lot < vol_min:
-                self.lbl_prev_lot.configure(text=f"LOT: KHÔNG HỢP LỆ (Min {vol_min})", text_color=COL_RED)
-                f_lot = vol_min
-            else:
-                f_lot = min(f_lot, vol_max)
+                f_lot = self._normalize_contracts(vol_min, vol_min, vol_max)
                 self.lbl_prev_lot.configure(
-                    text=f"{'(TAY)' if mlot > 0 else '(TỰ ĐỘNG)'} VOL: {f_lot:.2f}",
+                    text=f"{'(TAY)' if mlot > 0 else '(TỰ ĐỘNG)'} {qty_unit}: {f_lot:.0f}",
+                    text_color="white" if mlot == 0 else "#FFD700",
+                )
+            else:
+                f_lot = self._normalize_contracts(f_lot, vol_min, vol_max)
+                self.lbl_prev_lot.configure(
+                    text=f"{'(TAY)' if mlot > 0 else '(TỰ ĐỘNG)'} {qty_unit}: {f_lot:.0f}",
                     text_color="white" if mlot == 0 else "#FFD700",
                 )
 
-            # Hiển thị phí (Giữ nguyên)
-            comm_rate = self.get_fee_config(sym)
-            comm_total = comm_rate * f_lot
-            spread_cost = (tick.ask - tick.bid) * f_lot * c_size
-            acc_type = self.cbo_account_type.get()
-            if acc_type in ["PRO", "STANDARD"]:
-                self.lbl_fee_info.configure(text=f"Chi phí (Spread): -${spread_cost:.2f}")
+            # Hiển thị spread + phí giao dịch (đơn vị thống nhất = nghìn VND, ÷1000).
+            from core.money import format_money_k
+            comm_total = self.calculate_trade_fee(sym, cur_price, f_lot)
+
+            # Spread chỉ hợp lệ khi có cả bid/ask dương và không bị cross (thị trường đang mở).
+            bid_v = float(getattr(tick, "bid", 0.0) or 0.0)
+            ask_v = float(getattr(tick, "ask", 0.0) or 0.0)
+            if bid_v <= 0 or ask_v <= 0 or ask_v < bid_v:
+                spread_part = "Spread: chờ giá"
             else:
-                self.lbl_fee_info.configure(text=f"Chi phí (Comm): -${comm_total:.2f}")
+                spread_cost = (ask_v - bid_v) * f_lot * c_size
+                spread_part = f"Spread: {format_money_k(spread_cost)}"
+
+            # Phí: luôn lấy giá trị tính được gần nhất (fallback profile), không treo "chờ DNSE".
+            fee_part = f"Phí GD: {format_money_k(abs(comm_total))}"
+            self.lbl_fee_info.configure(text=f"{spread_part} | {fee_part}")
 
             # 5. HIỂN THỊ RỦI RO LÊN GIAO DIỆN
             is_valid_sl = True
@@ -2565,12 +2564,13 @@ class BotUI(ctk.CTk):
                 loss_dist = abs(cur_price - p_sl)
                 loss_val = loss_dist * f_lot * c_size
                 loss_pct = (loss_val / balance) * 100
+                loss_pct_txt = f"{loss_pct:.4f}%" if 0 < abs(loss_pct) < 0.01 else f"{loss_pct:.2f}%"
                 self.lbl_prev_risk.configure(
-                    text=f"-${loss_val:.2f} ({loss_pct:.2f}%)", text_color=COL_RED
+                    text=f"-{self._fmt_money(loss_val)} ({loss_pct_txt})", text_color=COL_RED
                 )
             else:
                 self.lbl_prev_sl.configure(text="LỖI", text_color=COL_WARN)
-                self.lbl_prev_risk.configure(text="$ ---", text_color=COL_WARN)
+                self.lbl_prev_risk.configure(text="---", text_color=COL_WARN)
 
             is_valid_tp = not swing_tp_missing
             if is_valid_tp and d == "BUY" and p_tp <= cur_price:
@@ -2583,12 +2583,13 @@ class BotUI(ctk.CTk):
                 prof_dist = abs(p_tp - cur_price)
                 prof_val = prof_dist * f_lot * c_size
                 prof_pct = (prof_val / balance) * 100
+                prof_pct_txt = f"{prof_pct:.4f}%" if 0 < abs(prof_pct) < 0.01 else f"{prof_pct:.2f}%"
                 self.lbl_prev_rew.configure(
-                    text=f"+${prof_val:.2f} ({prof_pct:.2f}%)", text_color=COL_GREEN
+                    text=f"+{self._fmt_money(prof_val)} ({prof_pct_txt})", text_color=COL_GREEN
                 )
             else:
                 self.lbl_prev_tp.configure(text="LỖI", text_color=COL_WARN)
-                self.lbl_prev_rew.configure(text="$ ---", text_color=COL_WARN)
+                self.lbl_prev_rew.configure(text="---", text_color=COL_WARN)
 
             if cur_tactic_str == "OFF":
                 self.lbl_tsl_preview.configure(text="TSL: OFF")
@@ -2714,46 +2715,30 @@ class BotUI(ctk.CTk):
         current_tickets_on_chart = []
         child_to_parent = self.trade_mgr.state.get("child_to_parent", {})
         open_fee_total = 0.0  # [NEW] Tổng fee từ lệnh đang mở
-        hedge_ticket_map = {}
-        try:
-            from hedge.hedge_storage import load_hedge_state
-
-            hedge_state = load_hedge_state()
-            for _sym, _session in (hedge_state.get("active_sessions") or {}).items():
-                if not isinstance(_session, dict):
-                    continue
-                for _role, _key in (("BUY", "buy_ticket"), ("SELL", "sell_ticket")):
-                    _ticket = _session.get(_key)
-                    if _ticket:
-                        hedge_ticket_map[str(_ticket)] = {"role": _role, "session": _session}
-        except Exception:
-            hedge_ticket_map = {}
-
         for p in positions:
             ticket_str = str(p.ticket)
             current_tickets_on_chart.append(ticket_str)
 
-            p_tick = mt5.symbol_info_tick(p.symbol)
-            p_sym_info = mt5.symbol_info(p.symbol)
-            p_c_size = p_sym_info.trade_contract_size if p_sym_info else 1.0
+            p_tick = None
+            try:
+                p_sym_info = self.connector.get_symbol_info(p.symbol) if self.connector else None
+            except Exception:
+                p_sym_info = None
+            p_c_size = p_sym_info.trade_contract_size if p_sym_info else self._symbol_contract_size(p.symbol)
+            p_unit = self._quantity_unit(p.symbol)
             swap_val = getattr(p, "swap", 0.0)
 
             current_spread = (p_tick.ask - p_tick.bid) if p_tick else 0.0
             spread_cost_usd = current_spread * p.volume * p_c_size
-            comm_rate = self.get_fee_config(p.symbol)
-            comm_total_usd = comm_rate * p.volume
+            comm_total_usd = self.calculate_trade_fee(p.symbol, p.price_current or p.price_open, p.volume)
 
             # [NEW] Cộng fee lệnh đang mở vào tổng (spread + commission + |swap|)
             open_fee_total += spread_cost_usd + comm_total_usd + abs(swap_val)
 
-            acc_type = self.cbo_account_type.get()
-            if acc_type in ["PRO", "STANDARD"]:
-                fee_str = f"Spr: -${spread_cost_usd:.2f} | Sw: ${swap_val:.2f}"
-            else:
-                fee_str = f"Com: -${comm_total_usd:.2f} | Sw: ${swap_val:.2f}"
+            fee_str = f"Spread -{abs(spread_cost_usd):,.0f} VND | Phí -{abs(comm_total_usd):,.0f} VND"
 
             time_str = datetime.fromtimestamp(p.time).strftime("%d/%m %H:%M")
-            is_buy = p.type == mt5.ORDER_TYPE_BUY
+            is_buy = p.type == 0
             icon = "🟢" if is_buy else "🔴"
             side_txt = "BUY" if is_buy else "SELL"
 
@@ -2763,33 +2748,18 @@ class BotUI(ctk.CTk):
             if is_child:
                 display_ticket = f" ┗━ #{ticket_str}"
 
-            origin_tag = "[UI]"
-            try:
-                import core.storage_manager as storage_manager
-                magics = storage_manager.get_magic_numbers()
-                is_grid = is_grid_position(p, magics)
-                is_hedge = is_hedge_position(p, magics)
-            except Exception:
-                is_grid = "[GRID]" in str(p.comment) or str(p.comment).startswith("GRID_")
-                is_hedge = "[HEDGE]" in str(p.comment) or str(p.comment).startswith("HEDGE_")
-
-            if is_grid:
-                origin_tag = "[GRID]"
-            elif is_hedge:
-                hedge_info = hedge_ticket_map.get(ticket_str, {})
-                hedge_session = hedge_info.get("session", {}) if isinstance(hedge_info, dict) else {}
-                hedge_source = str(hedge_session.get("source", "") or "").upper()
-                origin_tag = f"[HEDGE-{hedge_source}]" if hedge_source else "[HEDGE]"
-            elif "[BOT]_AUTO_DCA" in p.comment:
+            broker_tag = "[PAPER]" if str(ticket_str).upper().startswith("PAPER") or getattr(config, "PAPER_TRADING", True) else "[REAL]"
+            origin_tag = "[MANUAL]"
+            if "[BOT]_AUTO_DCA" in p.comment:
                 origin_tag = "[BOT-DCA]"
             elif "[BOT]_AUTO_PCA" in p.comment:
                 origin_tag = "[BOT-PCA]"
             elif "[BOT]" in p.comment:
                 origin_tag = "[BOT]"
             elif "_Child" in p.comment:
-                origin_tag = "[UI+BOT]"
+                origin_tag = "[MANUAL+BOT]"
 
-            order_str = f"{origin_tag} {icon} {side_txt} {p.volume:.2f} {p.symbol} @ {p.price_open:.2f}"
+            order_str = f"{broker_tag}{origin_tag} {icon} {side_txt} {p.volume:.0f} {p_unit} {p.symbol} @ {p.price_open:.2f}"
 
             sl_txt = f"{p.sl:.2f}" if p.sl > 0 else "---"
             tp_txt = f"{p.tp:.2f}" if p.tp > 0 else "---"
@@ -2809,39 +2779,17 @@ class BotUI(ctk.CTk):
             if p.sl == 0:
                 risk_str = "No SL"
             elif is_sl_in_profit:
-                risk_str = f"+${risk_usd:.1f} ({risk_pct:.1f}%)"
+                risk_str = f"+{self._fmt_money(risk_usd)} ({risk_pct:.1f}%)"
             else:
-                risk_str = f"-${risk_usd:.1f} ({risk_pct:.1f}%)"
+                risk_str = f"-{self._fmt_money(risk_usd)} ({risk_pct:.1f}%)"
 
-            rew_str = f"+${rew_usd:.1f} ({rew_pct:.1f}%)" if p.tp > 0 else "No TP"
+            rew_str = f"+{self._fmt_money(rew_usd)} ({rew_pct:.1f}%)" if p.tp > 0 else "No TP"
             rr_str = f"{risk_str}  |  {rew_str}"
 
             stt_txt = self.tsl_states_map.get(p.ticket, "Running")
 
             # [KAISER FIX] Hiển thị rõ loại lệnh con trên Status nếu là lệnh DCA/PCA
-            if is_grid:
-                risk_str = "GRID Basket"
-                rew_str = f"TP ${rew_usd:.1f} ({rew_pct:.1f}%)" if p.tp > 0 else "GRID No TP"
-                rr_str = f"{risk_str}  |  {rew_str}"
-                if "[GRID]_CHILD" in str(p.comment) or str(p.comment).startswith("GRID_"):
-                    stt_txt = "GRID Child"
-                else:
-                    stt_txt = "GRID Running"
-            elif is_hedge:
-                hedge_info = hedge_ticket_map.get(ticket_str, {})
-                hedge_session = hedge_info.get("session", {}) if isinstance(hedge_info, dict) else {}
-                hedge_role = hedge_info.get("role", "---") if isinstance(hedge_info, dict) else "---"
-                hedge_tactic = str(hedge_session.get("tactic", "HEDGE") or "HEDGE").upper()
-                hedge_status = str(hedge_session.get("status", "RUNNING") or "RUNNING").upper()
-                hedge_source = str(hedge_session.get("source", "---") or "---").upper()
-                hedge_tsl = str(hedge_session.get("hedge_tsl_mode", "") or "").upper()
-                hedge_tsl_txt = f" | TSL:{hedge_tsl}" if hedge_tsl and hedge_tsl != "OFF" else ""
-                survivor = ""
-                if str(p.ticket) in (hedge_session.get("survivor_protected") or {}):
-                    survivor = " | SURVIVOR"
-                rr_str = f"HEDGE Dual | {hedge_tactic}"
-                stt_txt = f"HEDGE {hedge_source} | {hedge_tactic} | {hedge_status}:{hedge_role}{hedge_tsl_txt}{survivor}"
-            elif "[BOT]_AUTO_DCA" in p.comment:
+            if "[BOT]_AUTO_DCA" in p.comment:
                 stt_txt = "DCA Child"
             elif "[BOT]_AUTO_PCA" in p.comment:
                 stt_txt = "PCA Child"
@@ -2886,16 +2834,28 @@ class BotUI(ctk.CTk):
                         stt_txt += f" | E/E:{'+'.join(ee_badges)}"
 
             net_pnl = p.profit + getattr(p, "swap", 0.0)
-            if acc_type not in ["PRO", "STANDARD"]:
-                net_pnl -= comm_total_usd
             excursion = self.trade_mgr.state.get("trade_excursions", {}).get(
                 ticket_str, {}
             )
             mae_usd = float(excursion.get("mae_usd", min(net_pnl, 0.0)))
             mfe_usd = float(excursion.get("mfe_usd", max(net_pnl, 0.0)))
             pnl_excursion_str = (
-                f"P:{net_pnl:+.2f} | A:{mae_usd:+.2f} | F:{mfe_usd:+.2f}"
+                f"P:{self._fmt_money(net_pnl, signed=True)} | A:{self._fmt_money(mae_usd, signed=True)} | F:{self._fmt_money(mfe_usd, signed=True)}"
             )
+
+            # CKCS đã khớp -> nền CAM; cột STT ghi thêm CHỜ VỀ/ĐÃ VỀ (T+2). CKPS giữ xanh/đỏ.
+            tag_to_apply = "buy_row" if is_buy else "sell_row"
+            try:
+                from core import settlement
+                if settlement.is_cash_stock(p.symbol):
+                    tag_to_apply = "matched_stock"
+                    _settle = (getattr(p, "raw", {}) or {}).get("settle_date")
+                    if _settle and not settlement.is_settled(_settle):
+                        stt_txt = f"⏳ CHỜ VỀ {str(_settle)[5:10]} | {stt_txt}" if stt_txt else f"⏳ CHỜ VỀ {str(_settle)[5:10]}"
+                    else:
+                        stt_txt = f"✓ ĐÃ VỀ | {stt_txt}" if stt_txt else "✓ ĐÃ VỀ"
+            except Exception:
+                pass
 
             values_data = (
                 display_ticket,
@@ -2908,7 +2868,6 @@ class BotUI(ctk.CTk):
                 stt_txt,
                 "❌",
             )
-            tag_to_apply = "hedge_row" if is_hedge else ("grid_row" if is_grid else ("buy_row" if is_buy else "sell_row"))
 
             if ticket_str in existing_items:
                 self.tree.item(ticket_str, values=values_data, tags=(tag_to_apply,))
@@ -2923,58 +2882,17 @@ class BotUI(ctk.CTk):
 
         # [NEW] Cập nhật FEE label = fee đã đóng (state) + fee lệnh đang mở (real-time)
         total_fee = state.get("fee_today", 0.0) + open_fee_total
+        fee_disp = self._fmt_money(total_fee)
         self.lbl_fee_today.configure(
-            text=f"FEE: -${total_fee:.2f}",
-            text_color="#FFD700" if total_fee > 0 else "gray",
+            text=(f"Phí: -{fee_disp}" if total_fee > 0 else f"Phí: {fee_disp}"),
+            text_color="#FFD700" if total_fee > 0 else "white",
         )
 
     def on_click_trade(self):
-        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "HEDGE":
-            symbol = self.cbo_symbol.get()
-            context = self.latest_market_context.get(symbol, {})
-
-            def run_hedge_thread():
-                result = self.hedge_mgr.start_manual_session(symbol, context=context)
-                scan_result = self.hedge_mgr.scan([symbol], {symbol: context})
-                if "SUCCESS" in result:
-                    self.log_message(
-                        f"[HEDGE] Manual dual session started for {symbol}. Manage actions: {scan_result.get('actions', [])}",
-                        target="hedge",
-                    )
-                else:
-                    self.log_message(f"[HEDGE] START failed: {result}", error=True, target="hedge")
-
-            threading.Thread(target=run_hedge_thread, daemon=True).start()
-            return
-
-        if getattr(self, "var_manual_trade_mode", None) and self.var_manual_trade_mode.get() == "GRID":
-            symbol = self.cbo_symbol.get()
-            mode = self.var_grid_manual_mode.get()
-            context = self.latest_market_context.get(symbol, {})
-
-            def run_grid_thread():
-                result = self.grid_mgr.start_manual_session(
-                    symbol,
-                    mode=mode,
-                    bypass_signal=self.var_grid_bypass_signal.get(),
-                    context=context,
-                )
-                if "SUCCESS" in result:
-                    scan_result = self.grid_mgr.scan([symbol], {symbol: context})
-                    self.log_message(
-                        f"[GRID] Manual {mode} session started for {symbol}. Scan actions: {scan_result.get('actions', [])}",
-                        target="grid",
-                    )
-                else:
-                    self.log_message(f"[GRID] START failed: {result}", error=True, target="grid")
-
-            threading.Thread(target=run_grid_thread, daemon=True).start()
-            return
-
         d, s, p, t = (
             self.var_direction.get(),
             self.cbo_symbol.get(),
-            self.cbo_preset.get(),
+            getattr(config, "DEFAULT_PRESET", "SCALPING"),
             self.get_current_tactic_string(),
         )
         try:
@@ -3446,15 +3364,17 @@ class BotUI(ctk.CTk):
             self.log_message(f"[AI ADVISOR] Trigger check error: {exc}", error=True, target="manual")
 
     def log_message(self, msg, error=False, target="manual"):
+        if target in ("grid", "grid-log", "hedge", "hedge-log"):
+            target = "bot-log"
         if "Retcode: 10025" in msg:
             return
 
         ts = time.strftime("%H:%M:%S")
         txt = f"[{ts}] {msg}\n"
 
-        if "PnL: +$" in msg or "SUCCESS" in msg or "H�p" in msg:
+        if "PnL: +" in msg or "SUCCESS" in msg or "Hợp" in msg:
             tag = "SUCCESS"
-        elif "PnL: $-" in msg or error or "ERR" in msg or "FAIL" in msg:
+        elif "PnL: -" in msg or error or "ERR" in msg or "FAIL" in msg:
             tag = "ERROR"
         elif "Đóng lệnh" in msg:
             tag = "INFO"
@@ -3465,14 +3385,8 @@ class BotUI(ctk.CTk):
         else:
             tag = "INFO"
 
-        # [NEW V4.4 FINAL] Tự động định tuyến log của bot vào 2 Tab (BOT và BOT-LOG)
-        grid_markers = ("[GRID]", "[GRID]_", "GRID SAFEGUARD")
-        hedge_markers = ("[HEDGE]", "[HEDGE]_", "HEDGE_")
+        # Tự động định tuyến log của bot vào 2 Tab (BOT và BOT-LOG).
         bot_markers = ("[BOT]", "[BOT]_", "[BOT-DCA]", "[BOT-PCA]", "AUTO_DCA", "AUTO_PCA", "BOT SAFEGUARD")
-        if target == "manual" and any(k in msg for k in grid_markers):
-            target = "grid"
-        if target == "manual" and any(k in msg for k in hedge_markers):
-            target = "hedge"
         if target == "manual" and any(k in msg for k in bot_markers):
             target = "bot"
         if target == "manual" and "[USER EXEC]" in msg:
@@ -3483,24 +3397,11 @@ class BotUI(ctk.CTk):
                 target = "bot"
             elif any(
                 k in msg
-                for k in ["🚀", "Đóng lệnh", "B�p c�", "PnL", "SUCCESS", "FAIL"]
+                for k in ["🚀", "Đóng lệnh", "Bóp cò", "PnL", "SUCCESS", "FAIL"]
             ):
                 target = "bot"  # Lệnh thực thi -> Sang Tab BOT
             else:
                 target = "bot-log"  # Log logic/check -> Sang Tab BOT-LOG
-        elif target == "grid" and "ORDER " in msg:
-            target = "grid"
-        elif target == "grid" and "DECISION" in msg:
-            target = "grid"
-        elif target == "grid":
-            if any(k in msg for k in ["ENTRY", "CHILD", "Đóng lệnh", "PnL", "SUCCESS", "FAIL"]):
-                target = "grid"
-            else:
-                target = "grid-log"
-        elif target == "hedge" and any(k in msg for k in ["OPEN", "CLOSE", "Closed", "SUCCESS", "FAIL", "PAIR_OPENED", "SURVIVOR_ARMED"]):
-            target = "hedge"
-        elif target == "hedge":
-            target = "hedge-log"
 
         self.after(0, lambda: self._write_log(txt, tag, target))
 
@@ -3508,19 +3409,128 @@ class BotUI(ctk.CTk):
         tab_name = str(tab_name or "").replace(" *", "")
         if "Preview" in tab_name:
             return "preview"
+        if "API Health" in tab_name:
+            return "api-health"
         if "Bot-Log" in tab_name:
             return "bot-log"
-        if "GRID-Log" in tab_name:
-            return "grid-log"
-        if "HEDGE-Log" in tab_name:
-            return "hedge-log"
         if "Bot" in tab_name:
             return "bot"
-        if "GRID" in tab_name:
-            return "grid"
-        if "HEDGE" in tab_name:
-            return "hedge"
         return "manual"
+
+    def refresh_api_health_panel(self):
+        try:
+            connector_health = {}
+            if hasattr(self.connector, "get_api_health_snapshot"):
+                connector_health = self.connector.get_api_health_snapshot()
+            engine_health = {}
+            try:
+                engine_health = data_engine.get_api_health_snapshot()
+            except Exception:
+                engine_health = {}
+
+            cache = engine_health.get("cache", {}) if isinstance(engine_health, dict) else {}
+            sizes = engine_health.get("cache_sizes", {}) if isinstance(engine_health, dict) else {}
+            total = int(connector_health.get("total_requests", 0) or 0)
+            started = float(connector_health.get("started_at", time.time()) or time.time())
+            elapsed_min = max(1.0 / 60.0, (time.time() - started) / 60.0)
+            rpm = total / elapsed_min
+            last_endpoint = connector_health.get("last_endpoint", "-")
+            last_status = connector_health.get("last_status", "-")
+
+            if hasattr(self, "lbl_api_health_summary"):
+                self.lbl_api_health_summary.configure(
+                    text=f"API Health | req {total} | {rpm:.1f}/min | last {last_status} {last_endpoint}"
+                )
+
+            def _pct_bar(value, limit, width=24):
+                try:
+                    ratio = 0.0 if float(limit or 0.0) <= 0 else min(1.0, max(0.0, float(value or 0.0) / float(limit)))
+                except Exception:
+                    ratio = 0.0
+                filled = int(round(ratio * width))
+                return ("█" * filled) + ("░" * (width - filled)), ratio * 100.0
+
+            def _hit_rate(hit, miss):
+                hit = int(hit or 0)
+                miss = int(miss or 0)
+                total_calls = hit + miss
+                return 0.0 if total_calls <= 0 else (hit / total_calls) * 100.0
+
+            tick_hit_rate = _hit_rate(cache.get("tick_hits", 0), cache.get("tick_misses", 0))
+            ohlc_hit_rate = _hit_rate(cache.get("ohlc_hits", 0), cache.get("ohlc_misses", 0))
+            tick_bar, tick_pct = _pct_bar(tick_hit_rate, 100.0, 18)
+            ohlc_bar, ohlc_pct = _pct_bar(ohlc_hit_rate, 100.0, 18)
+            latency = float(connector_health.get("last_latency_ms", 0.0) or 0.0)
+            rpm_bar, rpm_pct = _pct_bar(rpm, 120.0, 18)
+            latency_bar, latency_pct = _pct_bar(latency, 1000.0, 18)
+
+            lines = [
+                "LIVE",
+                f"  Requests     {total:>8}",
+                f"  Req/min      {rpm:>8.2f}  {rpm_bar} {rpm_pct:>5.1f}%",
+                f"  Latency      {latency:>8.1f} ms {latency_bar} {latency_pct:>5.1f}%",
+                f"  Last         {last_status} {last_endpoint}",
+                "",
+                "CACHE HIT",
+                f"  Tick         {tick_bar} {tick_pct:>5.1f}%  {cache.get('tick_hits', 0)}/{cache.get('tick_misses', 0)}",
+                f"  OHLC         {ohlc_bar} {ohlc_pct:>5.1f}%  {cache.get('ohlc_hits', 0)}/{cache.get('ohlc_misses', 0)}",
+                "",
+                "CACHE TTL",
+                f"  Tick/OHLC    {getattr(config, 'DNSE_TICK_CACHE_TTL_SECONDS', 2.0)}s / {getattr(config, 'DNSE_OHLC_CACHE_TTL_SECONDS', 30.0)}s",
+                f"  Acc/Pos      {getattr(config, 'DNSE_ACCOUNT_CACHE_TTL_SECONDS', 5.0)}s / {getattr(config, 'DNSE_POSITIONS_CACHE_TTL_SECONDS', 2.0)}s",
+                f"  Size         tick={sizes.get('ticks', 0)} ohlc={sizes.get('ohlc', 0)}",
+            ]
+            if connector_health.get("last_error"):
+                lines.extend(["", f"ERROR {connector_health.get('last_error')}"])
+            lines.extend(["", "ENDPOINTS"])
+            by_endpoint = connector_health.get("by_endpoint", {}) or {}
+            if by_endpoint:
+                for endpoint, count in sorted(by_endpoint.items(), key=lambda item: str(item[0])):
+                    lines.append(f"  {count:5d}  {endpoint}")
+            else:
+                lines.append("  --")
+
+            widget = getattr(self, "txt_api_health", None)
+            if widget and widget.winfo_exists():
+                widget.configure(state="normal")
+                widget.delete("1.0", "end")
+                widget.insert("end", "\n".join(lines))
+                widget.configure(state="disabled")
+
+            endpoint_rows = sorted(by_endpoint.items(), key=lambda item: int(item[1] or 0), reverse=True)
+            max_endpoint_count = max([int(count or 0) for _, count in endpoint_rows] or [1])
+            detail_lines = ["ENDPOINT CHART"]
+            if endpoint_rows:
+                for endpoint, count in endpoint_rows[:12]:
+                    bar, pct = _pct_bar(int(count or 0), max_endpoint_count, 26)
+                    name = str(endpoint).replace("https://services.entrade.com.vn", "")
+                    detail_lines.append(f"{count:5d} {bar} {name[:46]}")
+            else:
+                detail_lines.append("No API request yet")
+            detail_lines.extend([
+                "",
+                "LIMIT LOAD",
+            ])
+            for label, used, limit in (
+                ("Current rpm", rpm, 120.0),
+                ("Latest data", rpm * 60.0, 10000.0),
+                ("OHLC", rpm * 60.0, 50000.0),
+            ):
+                bar, pct = _pct_bar(used, limit, 26)
+                detail_lines.append(f"{label:<12} {bar} {pct:>5.1f}%")
+            detail_widget = getattr(self, "txt_api_health_detail", None)
+            if detail_widget and detail_widget.winfo_exists():
+                detail_widget.configure(state="normal")
+                detail_widget.delete("1.0", "end")
+                detail_widget.insert("end", "\n".join(detail_lines))
+                detail_widget.configure(state="disabled")
+        except Exception as exc:
+            widget = getattr(self, "txt_api_health", None)
+            if widget and widget.winfo_exists():
+                widget.configure(state="normal")
+                widget.delete("1.0", "end")
+                widget.insert("end", f"API Health error: {exc}")
+                widget.configure(state="disabled")
 
     def _set_log_tab_unread(self, target, unread):
         tabview = getattr(self, "log_tabview", None)
@@ -3556,24 +3566,14 @@ class BotUI(ctk.CTk):
         self.after(50, self.clear_active_log_unread)
 
     def _write_log(self, txt, tag, target="manual"):
+        if target in ("grid", "grid-log", "hedge", "hedge-log"):
+            target = "bot-log"
         if target == "bot":
             widget = getattr(self, "txt_log_bot", None)
         elif target == "bot-log":
             # Fallback về txt_log_bot nếu Ngài chưa tạo Text widget cho bot_log
             widget = getattr(
                 self, "txt_log_bot_log", getattr(self, "txt_log_bot", None)
-            )
-        elif target == "grid":
-            widget = getattr(self, "txt_log_grid", None)
-        elif target == "grid-log":
-            widget = getattr(
-                self, "txt_log_grid_log", getattr(self, "txt_log_grid", None)
-            )
-        elif target == "hedge":
-            widget = getattr(self, "txt_log_hedge", None)
-        elif target == "hedge-log":
-            widget = getattr(
-                self, "txt_log_hedge_log", getattr(self, "txt_log_hedge", None)
             )
         else:
             widget = getattr(self, "txt_log_manual", None)
@@ -3620,34 +3620,6 @@ class BotUI(ctk.CTk):
                 }
             )
             save_state(self.trade_mgr.state)
-            try:
-                from grid.grid_storage import load_grid_state, save_grid_state
-
-                grid_state = load_grid_state()
-                grid_state.update(
-                    {
-                        "grid_pnl_today": 0.0,
-                        "grid_trades_today": 0,
-                        "grid_daily_loss_count": 0,
-                    }
-                )
-                save_grid_state(grid_state)
-            except Exception:
-                pass
-            try:
-                from hedge.hedge_storage import load_hedge_state, save_hedge_state
-
-                hedge_state = load_hedge_state()
-                hedge_state.update(
-                    {
-                        "hedge_pnl_today": 0.0,
-                        "hedge_sessions_today": 0,
-                        "hedge_daily_loss_count": 0,
-                    }
-                )
-                save_hedge_state(hedge_state)
-            except Exception:
-                pass
             try:
                 import core.storage_manager as storage_manager
 
@@ -3764,74 +3736,7 @@ class BotUI(ctk.CTk):
         else:
             if row_id:
                 self.tree.selection_set(row_id)
-                ticket = int(row_id)
-                hedge_session = None
-                hedge_symbol = None
-                hedge_role = None
-
-                def close_hedge_session():
-                    if not hedge_session:
-                        return
-                    tickets = [
-                        int(t)
-                        for t in (hedge_session.get("buy_ticket"), hedge_session.get("sell_ticket"))
-                        if t
-                    ]
-                    positions = [
-                        p
-                        for p in self.connector.get_all_open_positions()
-                        if int(getattr(p, "ticket", 0) or 0) in tickets
-                    ]
-                    if not positions:
-                        return
-                    if self.var_confirm_close.get() and not messagebox.askyesno(
-                        "Confirm",
-                        f"Close HEDGE pair {hedge_symbol or ''} ({len(positions)} open legs)?",
-                        parent=self,
-                    ):
-                        return
-                    for pos in positions:
-                        self.trade_mgr.set_exit_reason(pos.ticket, "Manual_Close_HEDGE_Pair")
-                        threading.Thread(target=lambda p=pos: self.connector.close_position(p)).start()
-
-                try:
-                    import core.storage_manager as storage_manager
-                    from hedge.hedge_storage import load_hedge_state
-
-                    magics = storage_manager.get_magic_numbers()
-                    pos = next((p for p in self.connector.get_all_open_positions() if p.ticket == ticket), None)
-                    if pos and is_hedge_position(pos, magics):
-                        hedge_state = load_hedge_state()
-                        hedge_label = "HEDGE"
-                        for _sym, _session in (hedge_state.get("active_sessions") or {}).items():
-                            if not isinstance(_session, dict):
-                                continue
-                            ticket_roles = {
-                                str(_session.get("buy_ticket")): "BUY",
-                                str(_session.get("sell_ticket")): "SELL",
-                            }
-                            role = ticket_roles.get(str(ticket))
-                            if role:
-                                hedge_session = _session
-                                hedge_symbol = _sym
-                                hedge_role = role
-                                hedge_label = (
-                                    f"HEDGE {_session.get('source', '-')}"
-                                    f" | {_session.get('tactic', '-')}"
-                                    f" | {_session.get('status', '-')}"
-                                    f" | {role}"
-                                )
-                                break
-                        menu.add_command(label=hedge_label, state="disabled")
-                        menu.add_separator()
-                        if hedge_session:
-                            menu.add_command(
-                                label=f"Close HEDGE Pair {hedge_symbol or ''}",
-                                command=close_hedge_session,
-                            )
-                            menu.add_separator()
-                except Exception:
-                    pass
+                ticket = row_id
 
                 menu.add_command(
                     label=f"📝 Sửa lệnh #{ticket}",
@@ -3855,9 +3760,10 @@ if __name__ == "__main__":
         app = BotUI()
         app.mainloop()
     except Exception as e:
-        logger = logging.getLogger("ExnessBot")
+        logger = logging.getLogger("RAT_CKVN")
         logger.critical(f"💥 Lỗi nghiêm trọng tại Main Loop: {e}")
         traceback.print_exc()
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(0)
+

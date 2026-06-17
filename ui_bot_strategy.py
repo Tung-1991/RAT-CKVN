@@ -1,10 +1,11 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # FILE: ui_bot_strategy.py
 # V4.3: UNIFIED BOT STRATEGY UI - DYNAMIC MACRO, SCALPING & STRICT RISK (KAISER EDITION)
 
 import customtkinter as ctk
 import json
 import os
+import threading
 import time
 import config
 from tkinter import messagebox, filedialog
@@ -32,6 +33,18 @@ def _get_template_dir():
         return os.path.join(sm._active_account_dir, "templates")
     except:
         return "data/templates"
+
+def _build_trade_symbol_list():
+    symbols = []
+    for raw in list(getattr(config, "CKPS_SYMBOLS", []) or []) + list(getattr(config, "CKCS_WATCHLIST", []) or []):
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in symbols:
+            symbols.append(sym)
+    if not symbols:
+        default_symbol = str(getattr(config, "DEFAULT_SYMBOL", "VN30F1M") or "VN30F1M").strip().upper()
+        if default_symbol:
+            symbols.append(default_symbol)
+    return symbols
 
 EE_EXIT_LABELS = {
     "AUTO": "TP theo Entry thắng",
@@ -162,6 +175,9 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.group_label_widgets = []
         self.preview_status_cache = {}
         self.preview_last_symbol = None
+        self.preview_fetch_lock = threading.Lock()
+        self.preview_fetch_inflight = set()
+        self.preview_fetch_last = {}
 
         self._build_ui()
 
@@ -524,11 +540,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             picker_f = ctk.CTkFrame(f, fg_color="transparent")
             picker_f.pack(fill="x", pady=(0, 8))
 
-            symbols = list(getattr(config, "COIN_LIST", []))
-            if not symbols:
-                symbols = list(getattr(config, "BOT_ACTIVE_SYMBOLS", []))
-            if not symbols:
-                symbols = [getattr(config, "DEFAULT_SYMBOL", "ETHUSD")]
+            symbols = _build_trade_symbol_list()
 
             active_symbol = getattr(config, "UI_ACTIVE_SYMBOL", None)
             if not active_symbol:
@@ -536,6 +548,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                     active_symbol = self.master.cbo_symbol.get()
                 except Exception:
                     active_symbol = symbols[0]
+            active_symbol = str(active_symbol or symbols[0]).strip().upper()
             if active_symbol not in symbols:
                 symbols.insert(0, active_symbol)
 
@@ -648,8 +661,8 @@ class BotStrategyUI(ctk.CTkToplevel):
 
             if self.override_symbol:
                 # UI con: lấy context của đúng symbol override
-                active_symbol = self.override_symbol
-                context = all_ctx.get(self.override_symbol, {})
+                active_symbol = str(self.override_symbol or "").strip().upper()
+                context = self._context_for_symbol(all_ctx, active_symbol)
             else:
                 # UI mẹ: lấy symbol đang chn trên combobox chính
                 active_symbol = self.preview_symbol_var.get() if self.preview_symbol_var else None
@@ -658,7 +671,11 @@ class BotStrategyUI(ctk.CTkToplevel):
                         active_symbol = self.master.cbo_symbol.get()
                     except Exception:
                         active_symbol = None
-                context = all_ctx.get(active_symbol, {}) if active_symbol else {}
+                active_symbol = str(active_symbol or "").strip().upper()
+                context = self._context_for_symbol(all_ctx, active_symbol) if active_symbol else {}
+
+            if active_symbol and not self._context_ready_for_preview(context):
+                self._schedule_preview_context_fetch(active_symbol)
 
             if active_symbol != self.preview_last_symbol:
                 self.preview_status_cache.clear()
@@ -812,7 +829,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             from core.storage_manager import load_symbol_overrides, save_symbol_overrides
 
             overrides = load_symbol_overrides()
-            symbols = list(getattr(config, "COIN_LIST", []) or [getattr(config, "DEFAULT_SYMBOL", "ETHUSD")])
+            symbols = _build_trade_symbol_list()
             for row, sym in enumerate(symbols):
                 has_override = bool(overrides.get(sym, {}).get("sandbox"))
                 row_frame = ctk.CTkFrame(rows, fg_color="#2F2A12" if has_override else "#242424", corner_radius=6)
@@ -851,6 +868,86 @@ class BotStrategyUI(ctk.CTkToplevel):
                 ).grid(row=0, column=3, sticky="e", padx=(0, 6), pady=5)
 
         refresh()
+
+    def _context_for_symbol(self, contexts, symbol):
+        if not isinstance(contexts, dict) or not symbol:
+            return {}
+        symbol = str(symbol or "").strip()
+        if symbol in contexts:
+            return contexts.get(symbol) or {}
+        upper_symbol = symbol.upper()
+        if upper_symbol in contexts:
+            return contexts.get(upper_symbol) or {}
+        for key, val in contexts.items():
+            if str(key or "").strip().upper() == upper_symbol:
+                return val or {}
+        return {}
+
+    def _context_ready_for_preview(self, context):
+        if not isinstance(context, dict) or not context:
+            return False
+        group_details = context.get("group_details")
+        if not isinstance(group_details, dict) or not group_details:
+            return False
+        return any(context.get(f"trend_G{i}") for i in range(4))
+
+    def _schedule_preview_context_fetch(self, symbol):
+        symbol = str(symbol or "").strip().upper()
+        if not symbol:
+            return
+        now = time.time()
+        with self.preview_fetch_lock:
+            if symbol in self.preview_fetch_inflight:
+                return
+            if now - self.preview_fetch_last.get(symbol, 0) < 15:
+                return
+            self.preview_fetch_last[symbol] = now
+            self.preview_fetch_inflight.add(symbol)
+        worker = threading.Thread(
+            target=self._fetch_preview_context_worker,
+            args=(symbol,),
+            daemon=True,
+        )
+        worker.start()
+
+    def _fetch_preview_context_worker(self, symbol):
+        try:
+            from core.data_engine import data_engine
+            from signals.signal_generator import signal_generator
+
+            dfs, context = data_engine.fetch_data_v4(symbol)
+            if dfs is None or context is None:
+                return
+            signal = signal_generator.generate_signal_v4(dfs, context, symbol=symbol)
+            context["latest_signal"] = signal
+            context["timestamp"] = time.time()
+            context["preview_fallback"] = True
+            try:
+                self.after(0, lambda s=symbol, c=context: self._store_preview_context(s, c))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            with self.preview_fetch_lock:
+                self.preview_fetch_inflight.discard(symbol)
+
+    def _store_preview_context(self, symbol, context):
+        try:
+            if not self.winfo_exists():
+                return
+            contexts = getattr(self.master, "latest_market_context", None)
+            if not isinstance(contexts, dict):
+                contexts = {}
+                setattr(self.master, "latest_market_context", contexts)
+            existing = self._context_for_symbol(contexts, symbol)
+            merged = {}
+            if isinstance(existing, dict):
+                merged.update(existing)
+            merged.update(context or {})
+            contexts[str(symbol).strip().upper()] = merged
+        except Exception:
+            pass
 
     def _open_symbol_override_ui(self, symbol):
         override_ui = BotStrategyUI(self, symbol=symbol)
@@ -2093,6 +2190,3 @@ class BotStrategyUI(ctk.CTkToplevel):
                 messagebox.showinfo("Th�nh c�ng", f"ã lưu Template tại:\n{file_path}", parent=self)
         except Exception as e:
             messagebox.showerror("Lỗi", f"Lỗi lưu Template:\n{e}", parent=self)
-
-
-

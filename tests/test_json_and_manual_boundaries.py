@@ -2,21 +2,11 @@
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-
-sys.modules.setdefault(
-    "MetaTrader5",
-    SimpleNamespace(
-        terminal_info=lambda: SimpleNamespace(ping_last=0),
-        symbol_info_tick=lambda symbol: SimpleNamespace(ask=100.1, bid=100.0),
-        symbol_info=lambda symbol: SimpleNamespace(point=0.01),
-    ),
-)
 
 import core.storage_manager as storage_manager
 from core.checklist_manager import ChecklistManager

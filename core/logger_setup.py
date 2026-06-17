@@ -35,7 +35,7 @@ def setup_logging(debug_mode=False, process_name="ui", json_mode=True):
     LOG_DIR = os.path.join(PROJECT_ROOT, "data", "logs")
     os.makedirs(LOG_DIR, exist_ok=True)
     
-    logger = logging.getLogger("ExnessBot")
+    logger = logging.getLogger("RAT_CKVN")
     
     # Master switch
     if debug_mode:
@@ -48,7 +48,7 @@ def setup_logging(debug_mode=False, process_name="ui", json_mode=True):
         
     file_formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     
-    # --- LỚP 1: CRITICAL LOG (Giao dịch, Lỗi MT5) ---
+    # --- LỚP 1: CRITICAL LOG (Giao dịch, Lỗi API) ---
     critical_handler = TimedRotatingFileHandler(os.path.join(LOG_DIR, f"{process_name}_trade_critical.log"), when='D', interval=1, backupCount=30, encoding='utf-8')
     critical_handler.setLevel(logging.CRITICAL)
     critical_handler.setFormatter(file_formatter)

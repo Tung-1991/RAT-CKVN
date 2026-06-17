@@ -4,7 +4,7 @@
 
 import config
 import time
-import MetaTrader5 as mt5
+from core.data_engine import data_engine
 from core.market_hours import is_symbol_trade_window_open
 from core.position_classifier import is_bot_position, is_manual_position
 from core.storage_manager import (
@@ -30,11 +30,7 @@ class ChecklistManager:
         # 1. Connection & Ping & Spread Check
         if self.connector._is_connected:
             # --- A. CHECK PING ---
-            try:
-                ping_ms = mt5.terminal_info().ping_last / 1000
-            except:
-                ping_ms = 0
-
+            ping_ms = 0
             ping_status = "OK"
 
             try:
@@ -49,12 +45,10 @@ class ChecklistManager:
                     ping_status = "FAIL"
 
             # --- B. CHECK SPREAD ---
-            tick = mt5.symbol_info_tick(symbol)
+            tick = data_engine._last_tick.get(symbol)
             spread_points = 0
-            if tick:
-                point = mt5.symbol_info(symbol).point
-                if point > 0:
-                    spread_points = (tick.ask - tick.bid) / point
+            if tick and "spread" in tick:
+                spread_points = tick["spread"]
 
             try:
                 max_spread = config.MAX_SPREAD_POINTS
@@ -85,7 +79,7 @@ class ChecklistManager:
 
         else:
             checks.append(
-                {"name": "Kết nối MT5", "status": "FAIL", "msg": "Mất kết nối Server"}
+                {"name": "Kết nối DNSE", "status": "FAIL", "msg": "Mất kết nối Server"}
             )
             all_passed = False
 
@@ -231,7 +225,7 @@ class ChecklistManager:
             return {
                 "passed": False,
                 "checks": [
-                    {"name": "Kết nối", "status": "FAIL", "msg": "Mất kết nối MT5"}
+                    {"name": "Kết nối", "status": "FAIL", "msg": "Mất kết nối DNSE"}
                 ],
             }
 
@@ -299,10 +293,7 @@ class ChecklistManager:
             }
 
         if check_ping:
-            try:
-                ping_ms = mt5.terminal_info().ping_last / 1000
-            except:
-                ping_ms = 0
+            ping_ms = float(getattr(self.connector, "last_latency_ms", 0.0) or 0.0)
             if ping_ms > max_ping:
                 checks.append(
                     {
@@ -314,12 +305,12 @@ class ChecklistManager:
                 all_passed = False
 
         if check_spread:
-            tick = mt5.symbol_info_tick(symbol)
+            tick = data_engine._last_tick.get(symbol)
             spread_points = 0
-            if tick:
-                point = mt5.symbol_info(symbol).point
-                if point > 0:
-                    spread_points = (tick.ask - tick.bid) / point
+            if isinstance(tick, dict):
+                spread_points = float(tick.get("spread", 0.0) or 0.0)
+            elif tick:
+                spread_points = float(getattr(tick, "spread", 0.0) or 0.0)
             if spread_points > max_spread:
                 checks.append(
                     {
@@ -478,7 +469,7 @@ class ChecklistManager:
             # This lets a symbol allow multiple entries while avoiding one-side overstacking.
             if direction:
                 direction = str(direction).upper()
-                dir_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+                dir_type = 0 if direction == "BUY" else 1
                 if max_same_direction > 0:
                     same_dir_pos = [p for p in symbol_parent_pos if p.type == dir_type]
                     if len(same_dir_pos) >= max_same_direction:

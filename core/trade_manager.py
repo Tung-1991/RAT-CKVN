@@ -1,15 +1,12 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # FILE: core/trade_manager.py
 # V4.4 (FINAL): UNIFIED TRADE MANAGER - DYNAMIC MACRO, REVERSE CLOSE & CASH TSL (KAISER EDITION)
 
 import logging
-import json
-import os
 import time
 import math
 import threading
-from datetime import datetime, timedelta
-import MetaTrader5 as mt5
+from types import SimpleNamespace
 import config
 from core.data_engine import data_engine
 from core.storage_manager import (
@@ -24,7 +21,7 @@ from core.storage_manager import (
     mark_safeguard_brake,
 )
 from core.market_hours import is_symbol_trade_window_open
-from core.position_classifier import is_bot_position, is_grid_position, is_hedge_position, is_manual_position
+from core.position_classifier import is_bot_position, is_manual_position
 from core.entry_exit_engine import evaluate_entry_exit, format_decision
 
 
@@ -33,9 +30,6 @@ class TradeManager:
         self.connector = connector
         self.checklist = checklist_manager
         self.log_callback = log_callback
-        self.brain_path = "data/brain_settings.json"
-        self.last_brain_read = 0
-        self.brain_settings = {}
         self.state = load_state()
 
         if "active_trades" not in self.state:
@@ -68,6 +62,76 @@ class TradeManager:
             self.state["exit_reasons"] = {}
         if "last_close_times" not in self.state:
             self.state["last_close_times"] = {}
+
+    def _get_tick(self, symbol):
+        if hasattr(self.connector, "get_tick"):
+            tick = self.connector.get_tick(symbol)
+            if tick:
+                return tick
+        tick_data = getattr(data_engine, "_last_tick", {}).get(symbol)
+        if tick_data:
+            last = float(tick_data.get("last") or tick_data.get("bid") or tick_data.get("ask") or 0.0)
+            bid = float(tick_data.get("bid") or last)
+            ask = float(tick_data.get("ask") or last)
+            return SimpleNamespace(
+                symbol=symbol,
+                bid=bid,
+                ask=ask,
+                last=last,
+                spread=float(tick_data.get("spread") or max(0.0, ask - bid)),
+            )
+        tick_data = data_engine.fetch_realtime_tick(symbol)
+        if tick_data:
+            last = float(tick_data.get("last") or tick_data.get("bid") or tick_data.get("ask") or 0.0)
+            bid = float(tick_data.get("bid") or last)
+            ask = float(tick_data.get("ask") or last)
+            return SimpleNamespace(
+                symbol=symbol,
+                bid=bid,
+                ask=ask,
+                last=last,
+                spread=float(tick_data.get("spread") or max(0.0, ask - bid)),
+            )
+        return None
+
+    def _get_symbol_info(self, symbol):
+        if hasattr(self.connector, "get_symbol_info"):
+            return self.connector.get_symbol_info(symbol)
+        return SimpleNamespace(
+            symbol=symbol,
+            point=float(getattr(config, "DNSE_PRICE_POINT", 0.1)),
+            trade_contract_size=float(getattr(config, "DNSE_POINT_VALUE", 100000.0)),
+            volume_min=float(getattr(config, "MIN_LOT_SIZE", 1.0) or 1.0),
+            volume_max=float(getattr(config, "MAX_LOT_SIZE", 200.0) or 200.0),
+            volume_step=float(getattr(config, "LOT_STEP", 1.0) or 1.0),
+            trade_stops_level=0.0,
+            spread=0.0,
+        )
+
+    def _order_ok(self, result):
+        return bool(result and getattr(result, "ok", False))
+
+    def _order_ticket(self, result):
+        return str(
+            getattr(result, "order_id", None)
+            or getattr(result, "position_id", None)
+            or getattr(result, "order", None)
+            or getattr(result, "ticket", "")
+        )
+
+    def _record_open_trade(self, ticket, symbol, direction, volume, entry_price, sl=0.0, tp=0.0, result=None):
+        if not ticket:
+            return
+        s_ticket = str(ticket)
+        self.state.setdefault("trade_symbols", {})[s_ticket] = symbol
+        self.state.setdefault("trade_directions", {})[s_ticket] = direction
+        self.state.setdefault("trade_volumes", {})[s_ticket] = float(volume or 0.0)
+        self.state.setdefault("trade_prices", {})[s_ticket] = float(entry_price or 0.0)
+        self.state.setdefault("trade_sl", {})[s_ticket] = float(sl or 0.0)
+        self.state.setdefault("trade_tp", {})[s_ticket] = float(tp or 0.0)
+        if result:
+            self.state.setdefault("trade_order_ids", {})[s_ticket] = str(getattr(result, "order_id", "") or "")
+            self.state.setdefault("trade_position_ids", {})[s_ticket] = str(getattr(result, "position_id", "") or "")
 
     def _should_log_entry_exit_decision(self, symbol, direction, decision, safeguard_cfg):
         status = decision.get("status")
@@ -107,24 +171,24 @@ class TradeManager:
     def _calc_risk_usd(self, symbol, order_type, volume, entry_price, sl_price):
         if not sl_price or sl_price <= 0:
             return 0.0
-        side = "LONG" if order_type == mt5.ORDER_TYPE_BUY else "SHORT"
+        side = "LONG" if order_type == 0 else "SHORT"
         risk = self.connector.calculate_profit(symbol, side, volume, entry_price, sl_price)
-        mt5_risk = abs(float(risk or 0.0))
+        broker_risk = abs(float(risk or 0.0))
         formula_risk = 0.0
         try:
-            sym_info = mt5.symbol_info(symbol)
+            sym_info = self._get_symbol_info(symbol)
             contract_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
             formula_risk = abs(float(entry_price) - float(sl_price)) * float(volume) * contract_size
         except Exception:
             formula_risk = 0.0
-        return max(mt5_risk, formula_risk)
+        return max(broker_risk, formula_risk)
 
     def _get_ticket_risk_usd(self, pos):
         s_ticket = str(pos.ticket)
         risk_usd = float(self.state.get("initial_r_usd", {}).get(s_ticket, 0.0) or 0.0)
         current_sl_risk = 0.0
         if getattr(pos, "sl", 0.0) and pos.sl > 0:
-            is_buy = pos.type == mt5.ORDER_TYPE_BUY
+            is_buy = pos.type == 0
             sl_is_loss_side = (is_buy and pos.sl < pos.price_open) or (
                 not is_buy and pos.sl > pos.price_open
             )
@@ -143,7 +207,7 @@ class TradeManager:
             if current_sl_risk > 0:
                 self.state.setdefault("initial_r_usd", {})[s_ticket] = current_sl_risk
             return current_sl_risk
-        is_buy = pos.type == mt5.ORDER_TYPE_BUY
+        is_buy = pos.type == 0
         initial_sl = pos.price_open - one_r_dist if is_buy else pos.price_open + one_r_dist
         risk_usd = self._calc_risk_usd(pos.symbol, pos.type, pos.volume, pos.price_open, initial_sl)
         if risk_usd > 0:
@@ -155,7 +219,7 @@ class TradeManager:
         one_r_dist = float(self.state.get("initial_r_dist", {}).get(s_ticket, 0.0) or 0.0)
         current_sl_dist = 0.0
         if getattr(pos, "sl", 0.0) and pos.sl > 0:
-            is_buy = pos.type == mt5.ORDER_TYPE_BUY
+            is_buy = pos.type == 0
             sl_is_loss_side = (is_buy and pos.sl < pos.price_open) or (
                 not is_buy and pos.sl > pos.price_open
             )
@@ -205,7 +269,7 @@ class TradeManager:
     def _set_anti_cash_lock(self, pos, ttl_sec):
         if ttl_sec <= 0:
             return
-        direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+        direction = "BUY" if pos.type == 0 else "SELL"
         key = self._anti_cash_lock_key(pos.symbol, direction)
         self.state.setdefault("anti_cash_locks", {})[key] = time.time() + ttl_sec
 
@@ -374,7 +438,7 @@ class TradeManager:
             if p.symbol == symbol and is_bot_position(p, magics)
         ]
         opposite_type = (
-            mt5.ORDER_TYPE_SELL if new_direction == "BUY" else mt5.ORDER_TYPE_BUY
+            1 if new_direction == "BUY" else 0
         )
 
         closed_count = 0
@@ -424,8 +488,15 @@ class TradeManager:
                     )
 
                     # Chạy luồng ẩn để cắt lệnh không làm kẹt
+                    def _safe_close(pos, ticket_str=str(p.ticket)):
+                        try:
+                            result = self.connector.close_position(pos)
+                            if result and not getattr(result, 'success', True):
+                                self.log(f"⚠️ [REVERSE] Đóng lệnh #{ticket_str} THẤT BẠI: {getattr(result, 'comment', 'Unknown')}", target="bot")
+                        except Exception as e:
+                            self.log(f"⚠️ [REVERSE] Lỗi đóng lệnh #{ticket_str}: {e}", target="bot")
                     threading.Thread(
-                        target=self.connector.close_position,
+                        target=_safe_close,
                         args=(p,),
                         daemon=True,
                     ).start()
@@ -491,14 +562,14 @@ class TradeManager:
             )
             return f"SAFEGUARD_FAIL|{name_str}|{reason_str}"
 
-        tick = mt5.symbol_info_tick(symbol)
-        sym_info = mt5.symbol_info(symbol)
+        tick = self._get_tick(symbol)
+        sym_info = self._get_symbol_info(symbol)
         if not tick or not sym_info:
             return "ERR_NO_TICK"
 
         current_price = tick.ask if direction == "BUY" else tick.bid
         risk_tsl = brain.get("risk_tsl", {})
-        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        order_type = 0 if direction == "BUY" else 1
         ee_decision = None
         ee_sl_override = None
         ee_tp_override = None
@@ -726,8 +797,9 @@ class TradeManager:
             symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment
         )
 
-        if result and result.retcode == 10009:
-            ticket_id = result.order
+        if self._order_ok(result):
+            ticket_id = self._order_ticket(result)
+            self._record_open_trade(ticket_id, symbol, direction, lot_size, current_price, sl_price, tp_price, result)
             bot_tactic = tactic_override or risk_tsl.get(
                 "bot_tsl", getattr(config, "BOT_DEFAULT_TSL", "BE+STEP_R+SWING")
             )
@@ -830,7 +902,7 @@ class TradeManager:
 
             return "SUCCESS"
 
-        return "MT5_ERROR"
+        return "API_ERROR"
 
     def _adjust_basket_tp(self, parent_ticket):
         time.sleep(2)
@@ -839,9 +911,9 @@ class TradeManager:
         if not children:
             return
 
-        tickets = [parent_ticket] + [int(t) for t in children]
+        tickets = {str(parent_ticket), *[str(t) for t in children]}
         positions = [
-            p for p in self.connector.get_all_open_positions() if p.ticket in tickets
+            p for p in self.connector.get_all_open_positions() if str(p.ticket) in tickets
         ]
         if not positions:
             return
@@ -850,8 +922,8 @@ class TradeManager:
         total_value = sum(p.volume * p.price_open for p in positions)
         avg_price = total_value / total_lot
 
-        sym_info = mt5.symbol_info(positions[0].symbol)
-        is_buy = positions[0].type == mt5.ORDER_TYPE_BUY
+        sym_info = self._get_symbol_info(positions[0].symbol)
+        is_buy = positions[0].type == 0
 
         tp_offset = 50 * sym_info.point
         new_tp = avg_price + tp_offset if is_buy else avg_price - tp_offset
@@ -859,7 +931,7 @@ class TradeManager:
 
         for p in positions:
             if abs(p.tp - new_tp) > sym_info.point * 2:
-                self.connector.modify_position(p.ticket, p.sl, new_tp)
+                self.connector.modify_position(p, p.sl, new_tp)
 
         self.log(
             f"🔄 [BASKET RESCUE] Kéo TP Rổ #{parent_ticket} về: {new_tp:.5f}",
@@ -896,14 +968,14 @@ class TradeManager:
         )
         sl_mode = str(params.get("MANUAL_SL_MODE") or ("SWING_REJECTION" if params.get("USE_SWING_SL", False) else "PERCENT")).upper()
 
-        tick = mt5.symbol_info_tick(symbol)
-        sym_info = mt5.symbol_info(symbol)
+        tick = self._get_tick(symbol)
+        sym_info = self._get_symbol_info(symbol)
         if not tick or not sym_info:
             return "ERR_NO_TICK"
 
         price = tick.ask if direction == "BUY" else tick.bid
         equity = acc_info["equity"]
-        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        order_type = 0 if direction == "BUY" else 1
 
         def resolve_manual_group(key):
             group = str(params.get(key, "G2") or "G2")
@@ -1050,10 +1122,12 @@ class TradeManager:
             f"[USER]_{preset_name}",
         )
 
-        if result and result.retcode == 10009:
-            self.update_trade_tactic(result.order, tactic_str)
-            self.state["initial_r_dist"][str(result.order)] = abs(price - sl_price)
-            self.state.setdefault("initial_r_usd", {})[str(result.order)] = self._calc_risk_usd(
+        if self._order_ok(result):
+            ticket_id = self._order_ticket(result)
+            self._record_open_trade(ticket_id, symbol, direction, lot_size, price, sl_price, tp_price, result)
+            self.update_trade_tactic(ticket_id, tactic_str)
+            self.state["initial_r_dist"][str(ticket_id)] = abs(price - sl_price)
+            self.state.setdefault("initial_r_usd", {})[str(ticket_id)] = self._calc_risk_usd(
                 symbol, order_type, lot_size, price, sl_price
             )
 
@@ -1069,7 +1143,7 @@ class TradeManager:
                 from ai_advisor.history import record_trade_opened_data
 
                 record_trade_opened_data(
-                    result.order,
+                    ticket_id,
                     symbol=symbol,
                     open_time=time.time(),
                     source="manual_order_success",
@@ -1087,11 +1161,11 @@ class TradeManager:
             except Exception:
                 pass
             self.log(
-                f"🚀 [USER EXEC] {direction} {symbol} #{result.order} | Vol: {lot_size:.2f} | Entry: {price:.5f} | SL: {sl_price:.5f} | TP: {tp_price:.5f} | TSL: {tactic_str}"
+                f"🚀 [USER EXEC] {direction} {symbol} #{ticket_id} | Vol: {lot_size:.2f} | Entry: {price:.5f} | SL: {sl_price:.5f} | TP: {tp_price:.5f} | TSL: {tactic_str}"
             )
-            return f"SUCCESS|{result.order}"
+            return f"SUCCESS|{ticket_id}"
 
-        return "MT5_ERROR"
+        return "API_ERROR"
 
     def execute_telegram_sandbox_order(self, symbol, side, lot, sl, tp, bypass_checklist=False):
         symbol = str(symbol or "").strip().upper()
@@ -1112,18 +1186,18 @@ class TradeManager:
         self._sync_state_lifecycle()
         acc_info = self.connector.get_account_info()
         if not acc_info:
-            return "TELEGRAM_FAIL|NO_ACCOUNT|Không lấy được tài khoản MT5"
+            return "TELEGRAM_FAIL|NO_ACCOUNT|Không lấy được tài khoản DNSE"
 
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
             return f"TELEGRAM_FAIL|Market Hours|{closed_reason}"
 
-        tick = mt5.symbol_info_tick(symbol)
-        sym_info = mt5.symbol_info(symbol)
+        tick = self._get_tick(symbol)
+        sym_info = self._get_symbol_info(symbol)
         if not tick or not sym_info:
             return "TELEGRAM_FAIL|NO_TICK|Không lấy được tick/symbol info"
 
-        order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
+        order_type = 0 if side == "BUY" else 1
         price = tick.ask if side == "BUY" else tick.bid
         if side == "BUY":
             if sl >= price:
@@ -1165,10 +1239,11 @@ class TradeManager:
             manual_magic,
             "[USER]_TELEGRAM",
         )
-        if not (result and result.retcode == 10009):
-            return "TELEGRAM_FAIL|MT5_ERROR|Đặt lệnh thất bại"
+        if not self._order_ok(result):
+            return "TELEGRAM_FAIL|API_ERROR|Đặt lệnh thất bại"
 
-        ticket_id = result.order
+        ticket_id = self._order_ticket(result)
+        self._record_open_trade(ticket_id, symbol, side, lot, price, sl, tp, result)
         brain = self._get_brain_settings(symbol)
         risk_tsl = brain.get("risk_tsl", {}) or {}
         safeguard_cfg = brain.get("bot_safeguard", {}) or {}
@@ -1244,8 +1319,8 @@ class TradeManager:
         if not is_open:
             return {"ok": False, "error": f"MARKET_CLOSED|{closed_reason}"}
 
-        tick = mt5.symbol_info_tick(symbol)
-        sym_info = mt5.symbol_info(symbol)
+        tick = self._get_tick(symbol)
+        sym_info = self._get_symbol_info(symbol)
         if not tick or not sym_info:
             return {"ok": False, "error": "NO_TICK"}
 
@@ -1254,7 +1329,7 @@ class TradeManager:
         safeguard_cfg = brain.get("bot_safeguard", {}) or {}
         entry_exit_cfg = brain.get("entry_exit", {}) or {}
         price = tick.ask if side == "BUY" else tick.bid
-        order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
+        order_type = 0 if side == "BUY" else 1
 
         ee_sl_override = None
         ee_tp_override = None
@@ -1388,249 +1463,72 @@ class TradeManager:
         try:
             self._sync_state_lifecycle()
             current_positions = self.connector.get_all_open_positions()
-            current_tickets = [p.ticket for p in current_positions]
+            current_tickets = [str(p.ticket) for p in current_positions]
             tracked_tickets = list(self.state.get("active_trades", []))
 
             # XỬ LÝ ĐÓNG LỆNH & CHỐT RỔ BẢO VỆ MẸ-CON
-            closed_tickets = [t for t in tracked_tickets if t not in current_tickets]
+            closed_tickets = [t for t in tracked_tickets if str(t) not in current_tickets]
             if closed_tickets:
                 for ticket in closed_tickets:
                     s_ticket = str(ticket)
 
-                    deals = mt5.history_deals_get(position=ticket)
-                    if deals:
-                        deal_out = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
-                        if deal_out:
-                            d_out = deal_out[0]
-                            real_pnl = d_out.profit + d_out.commission + d_out.swap
+                    sym = self.state.get("trade_symbols", {}).get(s_ticket, "VN30F1M")
+                    dir_str = self.state.get("trade_directions", {}).get(s_ticket, "BUY")
+                    vol = float(self.state.get("trade_volumes", {}).get(s_ticket, 1.0))
+                    open_p = float(self.state.get("trade_prices", {}).get(s_ticket, 0.0))
+                    
+                    close_p = open_p
+                    if isinstance(all_market_contexts, dict) and sym in all_market_contexts:
+                        close_p = float(all_market_contexts[sym].get("current_price", open_p))
+                    
+                    # Mô phỏng tính PnL cho VN30 (1 giá = 100,000 VND)
+                    diff = (close_p - open_p) if dir_str == "BUY" else (open_p - close_p)
+                    real_pnl = diff * getattr(config, "DNSE_POINT_VALUE", 100000.0) * vol
+                    
+                    # [FIX] Phân loại lệnh dựa trên magic number thay vì gán cứng
+                    _magic = int(self.state.get("trade_magics", {}).get(s_ticket, 0))
+                    is_bot = is_bot_position(type("P", (), {"magic": _magic, "comment": "", "ticket": ticket})())
+                    
+                    self.state["pnl_today"] += real_pnl
+                    
+                    if real_pnl < 0:
+                        self.state["daily_loss_count"] += 1
 
-                            import core.storage_manager as storage_manager
+                    if is_bot:
+                        self.state["bot_pnl_today"] = self.state.get("bot_pnl_today", 0) + real_pnl
+                        symbol_streaks = self.state.setdefault("bot_symbol_losing_streak", {})
+                        if real_pnl < 0:
+                            self.state["bot_daily_loss_count"] = self.state.get("bot_daily_loss_count", 0) + 1
+                            self.state["bot_losing_streak"] = self.state.get("bot_losing_streak", 0) + 1
+                            symbol_streaks[sym] = symbol_streaks.get(sym, 0) + 1
+                        else:
+                            self.state["bot_losing_streak"] = 0
+                            symbol_streaks[sym] = 0
+                            
+                    exit_reason = self.state.get("exit_reasons", {}).get(s_ticket, "Closed")
+                    self.state.setdefault("last_close_times", {})[sym] = time.time()
+                    
+                    pnl_sign = "+" if real_pnl >= 0 else ""
+                    self.log(
+                        f"[DNSE] Đóng lệnh {dir_str} {sym} #{ticket} ({exit_reason}) | PnL tạm tính: {pnl_sign}{real_pnl:,.0f} VND",
+                        target="bot",
+                    )
 
-                            magics = storage_manager.get_magic_numbers()
-                            is_grid = is_grid_position(d_out, magics) or any(
-                                is_grid_position(d, magics) for d in deals
-                            )
-                            is_hedge = is_hedge_position(d_out, magics) or any(
-                                is_hedge_position(d, magics) for d in deals
-                            )
-                            is_manual = is_manual_position(d_out, magics) and not is_grid and not is_hedge
-                            is_bot = is_bot_position(d_out, magics) and not is_grid and not is_hedge
-                            if not is_bot:
-                                is_bot = any(
-                                    marker in str(getattr(d, "comment", ""))
-                                    for d in deals
-                                    for marker in ("[BOT]", "AUTO_DCA", "AUTO_PCA")
-                                ) and not is_grid and not is_hedge
+                    # Cập nhật last_dca_pca_close_time nếu lệnh này là con (DCA/PCA)
+                    from core.storage_manager import update_last_dca_pca_close_time
 
-                            self.state["pnl_today"] += real_pnl
+                    bot_tactic = self.get_trade_tactic(ticket)
+                    if "AUTO_DCA" in bot_tactic or "AUTO_PCA" in bot_tactic:
+                        update_last_dca_pca_close_time(
+                            sym, time.time()
+                        )
 
-                            # [NEW] Cộng dồn fee phiên: Spread (ước tính) + |Commission| + |Swap|
-                            close_tick = mt5.symbol_info_tick(d_out.symbol)
-                            close_sym = mt5.symbol_info(d_out.symbol)
-                            spread_cost = 0.0
-                            if close_tick and close_sym:
-                                spread_cost = (
-                                    (close_tick.ask - close_tick.bid)
-                                    * d_out.volume
-                                    * close_sym.trade_contract_size
-                                )
+                    if is_bot:
+                        self.check_and_trigger_cooldown(sym)
 
-                            deal_in = [d for d in deals if d.entry == mt5.DEAL_ENTRY_IN]
-                            entry_price = deal_in[0].price if deal_in else 0.0
-                            in_comm = abs(deal_in[0].commission) if deal_in else 0.0
-
-                            from datetime import datetime
-
-                            open_time_s = deal_in[0].time if deal_in else 0
-                            open_time_str = (
-                                datetime.fromtimestamp(open_time_s).strftime(
-                                    "%Y-%m-%d %H:%M:%S"
-                                )
-                                if open_time_s > 0
-                                else ""
-                            )
-
-                            actual_comm = abs(d_out.commission) + in_comm
-
-                            if actual_comm == 0.0 and account_type not in [
-                                "PRO",
-                                "STANDARD",
-                            ]:
-                                comm_rate = getattr(config, "COMMISSION_RATES", {}).get(
-                                    d_out.symbol,
-                                    getattr(config, "ACCOUNT_TYPES_CONFIG", {})
-                                    .get(account_type, {})
-                                    .get("COMMISSION_PER_LOT", 7.0),
-                                )
-                                actual_comm = comm_rate * d_out.volume
-
-                            total_fee_cost = spread_cost + actual_comm + abs(d_out.swap)
-                            self.state["fee_today"] = (
-                                self.state.get("fee_today", 0.0) + total_fee_cost
-                            )
-
-                            if real_pnl < 0:
-                                self.state["daily_loss_count"] += 1
-
-                            if is_bot:
-                                self.state["bot_pnl_today"] = (
-                                    self.state.get("bot_pnl_today", 0) + real_pnl
-                                )
-                                symbol_streaks = self.state.setdefault(
-                                    "bot_symbol_losing_streak", {}
-                                )
-                                if real_pnl < 0:
-                                    self.state["bot_daily_loss_count"] = (
-                                        self.state.get("bot_daily_loss_count", 0) + 1
-                                    )
-                                    self.state["bot_losing_streak"] = (
-                                        self.state.get("bot_losing_streak", 0) + 1
-                                    )
-                                    symbol_streaks[d_out.symbol] = (
-                                        symbol_streaks.get(d_out.symbol, 0) + 1
-                                    )
-                                else:
-                                    self.state["bot_losing_streak"] = 0
-                                    symbol_streaks[d_out.symbol] = 0
-                            elif is_manual:
-                                self.state["manual_pnl_today"] = (
-                                    self.state.get("manual_pnl_today", 0) + real_pnl
-                                )
-                                if real_pnl < 0:
-                                    self.state["manual_daily_loss_count"] = (
-                                        self.state.get("manual_daily_loss_count", 0) + 1
-                                    )
-
-                            pos_type_str = (
-                                "BUY" if d_out.type == mt5.DEAL_TYPE_SELL else "SELL"
-                            )
-                            pnl_sign = "+" if real_pnl >= 0 else ""
-
-                            # [NEW V4.4] Lấy lý do thoát lệnh từ Tracker và lưu Cooldown
-                            exit_reason = self.state.get("exit_reasons", {}).get(
-                                s_ticket
-                            )
-                            if not exit_reason:
-                                deal_reason = getattr(d_out, "reason", -1)
-                                if deal_reason == mt5.DEAL_REASON_SL:
-                                    last_rule = self.state.get(
-                                        "last_tsl_rules", {}
-                                    ).get(s_ticket)
-                                    exit_reason = (
-                                        f"SL_{last_rule}" if last_rule else "Hit_SL"
-                                    )
-                                elif deal_reason == mt5.DEAL_REASON_TP:
-                                    # [NEW] Kiểm tra nếu là lệnh thuộc rổ DCA/PCA
-                                    is_basket = s_ticket in self.state.get(
-                                        "child_to_parent", {}
-                                    ) or s_ticket in self.state.get(
-                                        "parent_baskets", {}
-                                    )
-                                    if is_basket:
-                                        exit_reason = (
-                                            "Basket_TP"
-                                            if real_pnl >= 0
-                                            else "Basket_TP_Order_Loss"
-                                        )
-                                    else:
-                                        exit_reason = "Hit_TP"
-                                elif deal_reason == mt5.DEAL_REASON_SO:
-                                    exit_reason = "Stop_Out"
-                                elif deal_reason == mt5.DEAL_REASON_CLIENT:
-                                    exit_reason = "Manual_MT5"
-                                elif deal_reason == mt5.DEAL_REASON_EXPERT:
-                                    exit_reason = "Bot_Close"
-                                else:
-                                    exit_reason = "Closed"
-
-                            self.state["last_close_times"][d_out.symbol] = time.time()
-                            be_sl_lock_s = int(
-                                self._get_brain_settings(d_out.symbol)
-                                .get("TSL_CONFIG", getattr(config, "TSL_CONFIG", {}))
-                                .get("BE_SL_REENTRY_LOCK_SEC", 0)
-                            )
-                            if is_bot and "BE_SL" in str(exit_reason):
-                                self._set_be_sl_lock(
-                                    d_out.symbol, pos_type_str, be_sl_lock_s
-                                )
-
-                            current_session = self.state.get(
-                                "current_session_id", "LEGACY"
-                            )
-
-                            last_sl, last_tp = 0.0, 0.0
-                            orders = mt5.history_orders_get(position=ticket)
-                            if orders:
-                                for ord in reversed(orders):
-                                    if ord.sl > 0:
-                                        last_sl = ord.sl
-                                    if ord.tp > 0:
-                                        last_tp = ord.tp
-                                    if last_sl > 0 and last_tp > 0:
-                                        break
-
-                            fee = -total_fee_cost
-
-                            # [NEW V5] Trích xuất Tag/Comment từ MT5 để phân biệt Mẹ/Con
-                            trigger_signal = deal_in[0].comment if deal_in else "UNK"
-                            parent_ticket = self.state.get("child_to_parent", {}).get(
-                                s_ticket
-                            )
-                            if parent_ticket and "Parent:" not in trigger_signal:
-                                trigger_signal = f"{trigger_signal}|Parent:{parent_ticket}"
-                            excursion = self.state.get("trade_excursions", {}).get(
-                                s_ticket, {}
-                            )
-                            mae_usd = float(excursion.get("mae_usd", min(real_pnl, 0.0)))
-                            mfe_usd = float(excursion.get("mfe_usd", max(real_pnl, 0.0)))
-                            close_context = (
-                                all_market_contexts.get(d_out.symbol, {})
-                                if isinstance(all_market_contexts, dict)
-                                else {}
-                            )
-                            market_mode = close_context.get("market_mode", "ANY")
-
-                            append_trade_log(
-                                ticket,
-                                d_out.symbol,
-                                pos_type_str,
-                                d_out.volume,
-                                entry_price,
-                                last_sl,
-                                last_tp,
-                                fee,
-                                real_pnl,
-                                exit_reason,
-                                market_mode=market_mode,
-                                trigger_signal=trigger_signal,
-                                session_id=current_session,
-                                open_time_str=open_time_str,
-                                mae_usd=mae_usd,
-                                mfe_usd=mfe_usd,
-                            )
-                            log_target = "grid" if is_grid else ("bot" if is_bot else "manual")
-                            src_txt = f" | Src: {trigger_signal}" if trigger_signal else ""
-                            self.log(
-                                f"[DỌN DẸP] Đóng lệnh {pos_type_str} {d_out.symbol} #{ticket} ({exit_reason}) | PnL: {pnl_sign}${real_pnl:.2f}{src_txt}",
-                                target=log_target,
-                            )
-
-                            # Cập nhật last_dca_pca_close_time nếu lệnh này là con (DCA/PCA)
-                            from core.storage_manager import (
-                                update_last_dca_pca_close_time,
-                            )
-
-                            bot_tactic = self.get_trade_tactic(ticket)
-                            if "AUTO_DCA" in bot_tactic or "AUTO_PCA" in bot_tactic:
-                                update_last_dca_pca_close_time(
-                                    d_out.symbol, time.time()
-                                )
-
-                            if is_bot:
-                                self.check_and_trigger_cooldown(d_out.symbol)
-
-                    if ticket in self.state["active_trades"]:
-                        self.state["active_trades"].remove(ticket)
+                    self.state["active_trades"] = [
+                        t for t in self.state.get("active_trades", []) if str(t) != s_ticket
+                    ]
                     for key in [
                         "trade_tactics",
                         "initial_r_dist",
@@ -1695,9 +1593,20 @@ class TradeManager:
 
             needs_save = False
             for pos in tracked_positions:
-                is_newly_tracked = pos.ticket not in self.state["active_trades"]
-                if pos.ticket not in self.state["active_trades"]:
-                    self.state["active_trades"].append(pos.ticket)
+                s_ticket = str(pos.ticket)
+                is_newly_tracked = s_ticket not in [str(t) for t in self.state.get("active_trades", [])]
+                if is_newly_tracked:
+                    self.state["active_trades"].append(s_ticket)
+                    direction = "BUY" if getattr(pos, "type", 0) == 0 else "SELL"
+                    self._record_open_trade(
+                        s_ticket,
+                        pos.symbol,
+                        direction,
+                        pos.volume,
+                        pos.price_open,
+                        getattr(pos, "sl", 0.0),
+                        getattr(pos, "tp", 0.0),
+                    )
                     needs_save = True
 
                 if pos.magic == bot_magic and self.get_trade_tactic(pos.ticket) == "OFF":
@@ -2129,7 +2038,7 @@ class TradeManager:
         # 1. Lấy signal hiện tại từ context (đã được Daemon ghi vào latest_signal)
         current_signal = context.get("latest_signal", 0)
 
-        is_buy = pos.type == mt5.ORDER_TYPE_BUY
+        is_buy = pos.type == 0
         is_reversed = False
         reverse_signal = 0
         safe_cfg = self._get_brain_settings(pos.symbol).get("bot_safeguard", {})
@@ -2257,11 +2166,11 @@ class TradeManager:
             return "TSL OFF"
 
         active_modes = tactic_str.split("+")
-        is_buy = pos.type == mt5.ORDER_TYPE_BUY
+        is_buy = pos.type == 0
         current_price = pos.price_current
         current_sl = pos.sl
 
-        sym_info = mt5.symbol_info(pos.symbol)
+        sym_info = self._get_symbol_info(pos.symbol)
         point = sym_info.point if sym_info else 0.00001
 
         one_r_dist = self._get_ticket_r_dist(pos)
@@ -2921,7 +2830,7 @@ class TradeManager:
                 else min(valid_moves, key=lambda x: x[0])
             )
             if abs(target_sl - current_sl) > (point / 2):
-                self.connector.modify_position(pos.ticket, target_sl, pos.tp)
+                self.connector.modify_position(pos, target_sl, pos.tp)
                 # [NEW] Lưu quy tắc dời SL để tracking lý do đóng lệnh sau này
                 if "last_tsl_rules" not in self.state:
                     self.state["last_tsl_rules"] = {}

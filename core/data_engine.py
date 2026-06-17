@@ -2,30 +2,65 @@
 # FILE: core/data_engine.py
 # V4.2.1: DYNAMIC TA OPTIMIZATION & MULTI-TIMEFRAME (KAISER EDITION)
 
-import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
 import json
 import os
 import logging
+import time
 import config
 import pandas_ta as ta 
 from core.storage_manager import get_brain_settings_for_symbol
 from core.market_structure import analyze_market_structure, write_structure_context
+from core.dnse_connector import DNSEConnector
+from core.dnse_ws import market_ws
 
 logger = logging.getLogger("DataEngine")
+
+# Khởi tạo DNSE API trực tiếp từ .env
+dnse_api = DNSEConnector(
+    api_key=os.getenv("DNSE_API_KEY", ""),
+    api_secret=os.getenv("DNSE_API_SECRET", ""),
+    account_no=os.getenv("DNSE_ACCOUNT_NO", "")
+)
 
 class DataEngine:
     def __init__(self):
         self.tf_map = {
-            "1m": mt5.TIMEFRAME_M1, "5m": mt5.TIMEFRAME_M5, "15m": mt5.TIMEFRAME_M15,
-            "30m": mt5.TIMEFRAME_M30, "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4,
-            "1d": mt5.TIMEFRAME_D1
+            "1m": "1", "5m": "5", "15m": "15",
+            "30m": "30", "1h": "1H", "4h": "1H",
+            "1d": "1D"
         }
-        self.brain_path = "data/brain_settings.json"
+        self._last_tick = {}  # Cache tick real-time: {symbol: {bid, ask, last, ...}}
+        self._bars_cache = {}
+        self._ws_started = False
+        self.cache_stats = {
+            "tick_hits": 0,
+            "tick_misses": 0,
+            "ohlc_hits": 0,
+            "ohlc_misses": 0,
+            "ws_hits": 0,
+        }
+
 
     def _get_brain_settings(self, symbol=None):
         return get_brain_settings_for_symbol(symbol)
+
+    def _ensure_ws_symbol(self, symbol):
+        """Khởi động WS (1 lần) và subscribe symbol khi streaming được bật."""
+        if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
+            return
+        if not self._ws_started:
+            self._ws_started = market_ws.start()
+        market_ws.subscribe([symbol])
+
+    def set_stream_symbols(self, symbols):
+        """Đồng bộ danh sách mã đang stream với watchlist hiện tại (gọi từ UI/daemon)."""
+        if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
+            return
+        if not self._ws_started:
+            self._ws_started = market_ws.start()
+        market_ws.set_symbols(symbols)
 
     # =========================================================================
     # [TỐI ƯU CPU] CHỈ TÍNH TOÁN CÁC INDICATOR ĐƯỢC BẬT (ON)
@@ -135,27 +170,80 @@ class DataEngine:
         return df
 
     def _fetch_bars(self, symbol, timeframe_val, num_bars, inds_config, tsl_config=None):
-        if isinstance(timeframe_val, int):
-            tf = timeframe_val
-        else:
-            tf = self.tf_map.get(str(timeframe_val).lower(), mt5.TIMEFRAME_M15)
-            
-        rates = mt5.copy_rates_from_pos(symbol, tf, 0, num_bars)
+        res = self.tf_map.get(str(timeframe_val).lower(), "15")
         
-        if rates is None or len(rates) == 0:
+        # Tính toán thời gian (from, to)
+        # Giả sử lấy nến quá khứ, 1 cây nến 15 phút = 900 giây
+        multiplier_map = {"1": 60, "5": 300, "15": 900, "30": 1800, "1h": 3600, "1d": 86400}
+        seconds_per_bar = multiplier_map.get(str(res).lower(), 900)
+        
+        to_ts = int(time.time())
+        from_ts = to_ts - (num_bars * seconds_per_bar)
+
+        cache_ttl = float(getattr(config, "DNSE_OHLC_CACHE_TTL_SECONDS", 30.0) or 0.0)
+        effective_cache_ttl = max(cache_ttl, float(seconds_per_bar))
+        inds_key = tuple(sorted(
+            (
+                str(k),
+                bool((v or {}).get("active")),
+                bool((v or {}).get("is_trend")),
+                json.dumps((v or {}).get("params", {}), sort_keys=True, default=str),
+            )
+            for k, v in (inds_config or {}).items()
+            if isinstance(v, dict)
+        ))
+        cache_bucket = int(to_ts / max(1, seconds_per_bar))
+        try:
+            market_type = dnse_api.market_type_for_symbol(symbol)
+        except Exception:
+            market_type = "DERIVATIVE"
+        cache_key = (str(symbol).upper(), market_type, res, int(num_bars), cache_bucket, inds_key)
+        if effective_cache_ttl > 0:
+            cached = self._bars_cache.get(cache_key)
+            if cached and (time.time() - cached["ts"]) < effective_cache_ttl:
+                self.cache_stats["ohlc_hits"] += 1
+                return cached["df"].copy()
+        self.cache_stats["ohlc_misses"] += 1
+        
+        data = dnse_api.get_ohlc(symbol, res, from_ts, to_ts)
+
+        required_keys = ("t", "o", "h", "l", "c", "v")
+        if not isinstance(data, dict):
+            logger.warning("OHLC invalid for %s tf=%s res=%s: empty response", symbol, timeframe_val, res)
+            return pd.DataFrame()
+        missing_keys = [key for key in required_keys if key not in data]
+        if missing_keys:
+            logger.warning("OHLC invalid for %s tf=%s res=%s: missing %s", symbol, timeframe_val, res, missing_keys)
+            return pd.DataFrame()
+        invalid_keys = [key for key in required_keys if not hasattr(data.get(key), "__len__") or data.get(key) is None]
+        if invalid_keys:
+            logger.warning("OHLC invalid for %s tf=%s res=%s: null/non-list %s", symbol, timeframe_val, res, invalid_keys)
+            return pd.DataFrame()
+        lengths = {key: len(data.get(key)) for key in required_keys}
+        if not lengths["t"]:
+            return pd.DataFrame()
+        if len(set(lengths.values())) != 1:
+            logger.warning("OHLC invalid for %s tf=%s res=%s: length mismatch %s", symbol, timeframe_val, res, lengths)
             return pd.DataFrame()
             
-        df = pd.DataFrame(rates)
+        df = pd.DataFrame({
+            'time': data['t'],
+            'open': data['o'],
+            'high': data['h'],
+            'low': data['l'],
+            'close': data['c'],
+            'volume': data['v']
+        })
         df['time'] = pd.to_datetime(df['time'], unit='s')
-        
-        # [FIX]: Đồng bộ hóa cột Volume cho các chỉ báo (MetaTrader 5 dùng tick_volume)
-        if 'tick_volume' in df.columns:
-            df['volume'] = df['tick_volume'].astype(float)
-        elif 'real_volume' in df.columns:
-            df['volume'] = df['real_volume'].astype(float)
         
         # Chỉ tính những Indicator đang bật
         df = self._apply_ta(df, inds_config, tsl_config)
+        if effective_cache_ttl > 0:
+            self._bars_cache[cache_key] = {"ts": time.time(), "df": df.copy()}
+            if len(self._bars_cache) > 128:
+                oldest = sorted(self._bars_cache.items(), key=lambda item: item[1]["ts"])[:32]
+                for old_key, _ in oldest:
+                    self._bars_cache.pop(old_key, None)
         
         return df
 
@@ -336,5 +424,91 @@ class DataEngine:
 
         return df_entry, df_trend, context
 
-data_engine = DataEngine()
+    def fetch_realtime_tick(self, symbol):
+        """Lấy giá real-time từ DNSE: trades/latest (giá khớp) + quotes/latest (bid/ask).
+        Trả về dict {bid, ask, last, high, low, spread, timestamp} hoặc None.
+        Cache kết quả vào self._last_tick[symbol].
+        """
+        # 0. Ưu tiên dữ liệu WebSocket streaming nếu được bật và còn tươi.
+        if getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available:
+            self._ensure_ws_symbol(symbol)
+            ws_tick = market_ws.latest_tick(symbol)
+            if ws_tick:
+                stale = float(getattr(config, "DNSE_WS_STALE_SECONDS", 5.0) or 0.0)
+                age = time.time() - float(ws_tick.get("timestamp", 0.0) or 0.0)
+                if stale <= 0 or age < stale:
+                    self._last_tick[symbol] = ws_tick
+                    self.cache_stats["ws_hits"] += 1
+                    return ws_tick
 
+        cache_ttl = float(getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0) or 0.0)
+        cached = self._last_tick.get(symbol)
+        if cached and cache_ttl > 0 and (time.time() - float(cached.get("timestamp", 0.0) or 0.0)) < cache_ttl:
+            self.cache_stats["tick_hits"] += 1
+            return cached
+        self.cache_stats["tick_misses"] += 1
+        tick_data = {"symbol": symbol}
+        try:
+            # 1. Giá khớp lệnh gần nhất
+            trade = dnse_api.get_latest_trade(symbol)
+            if trade:
+                tick_data["last"] = float(trade.get("matchPrice", 0))
+                tick_data["high"] = float(trade.get("highestPrice", 0))
+                tick_data["low"] = float(trade.get("lowestPrice", 0))
+                tick_data["open"] = float(trade.get("openPrice", 0))
+                tick_data["trade_time"] = trade.get("time", "")
+            
+            # 2. Bid/Ask sổ lệnh gần nhất
+            quote = dnse_api.get_latest_quote(symbol)
+            if quote:
+                bids = quote.get("bid", [])
+                offers = quote.get("offer", [])
+                if bids:
+                    tick_data["bid"] = float(bids[0].get("price", 0))
+                if offers:
+                    tick_data["ask"] = float(offers[0].get("price", 0))
+                tick_data["quote_time"] = quote.get("time", "")
+            
+            # 3. Fallback: nếu thiếu bid/ask thì dùng last price
+            if "last" in tick_data:
+                if "bid" not in tick_data:
+                    tick_data["bid"] = tick_data["last"]
+                if "ask" not in tick_data:
+                    tick_data["ask"] = tick_data["last"]
+            
+            # 4. Tính spread
+            if "bid" in tick_data and "ask" in tick_data:
+                tick_data["spread"] = round(tick_data["ask"] - tick_data["bid"], 2)
+            
+            tick_data["timestamp"] = time.time()
+            
+            if "last" in tick_data or "bid" in tick_data:
+                self._last_tick[symbol] = tick_data
+                return tick_data
+                
+        except Exception as e:
+            logger.error(f"fetch_realtime_tick({symbol}) error: {e}")
+        
+        return self._last_tick.get(symbol)
+
+    def get_api_health_snapshot(self):
+        stats = {}
+        try:
+            stats = dnse_api.get_api_health_snapshot()
+        except Exception:
+            stats = {}
+        try:
+            ws_info = market_ws.snapshot()
+        except Exception:
+            ws_info = {}
+        return {
+            "connector": stats,
+            "cache": dict(self.cache_stats),
+            "cache_sizes": {
+                "ticks": len(self._last_tick),
+                "ohlc": len(self._bars_cache),
+            },
+            "ws": ws_info,
+        }
+
+data_engine = DataEngine()

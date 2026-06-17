@@ -8,7 +8,7 @@ echo.
 
 :loop
 echo [%date% %time%] Khoi chay Toan bo He thong (Venv)...
-.\ratvenv\Scripts\python.exe main.py
+.\ckvnvenv\Scripts\python.exe main.py
 
 echo.
 echo [CRITICAL] Toan bo He thong vua bi tat hoac bi Crash!

@@ -551,8 +551,9 @@ def release_expired_safeguard_brakes(state: Dict[str, Any], now=None) -> bool:
     return changed
 
 def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee, pnl, close_reason, market_mode="ANY", trigger_signal="UNK", session_id="LEGACY", open_time_str="", mae_usd=0.0, mfe_usd=0.0):
-    file_exists = os.path.isfile(MASTER_LOG_FILE)
+    _state_lock.acquire()
     try:
+        file_exists = os.path.isfile(MASTER_LOG_FILE)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
         time_display = f"{open_time_str[11:]} -> {now_str[11:]}" if open_time_str else now_str
         open_time_full, close_time_full = _derive_trade_times(
@@ -625,10 +626,12 @@ def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee,
         if not replaced:
             rows.append([str(v) for v in new_row])
 
-        with open(MASTER_LOG_FILE, mode='w', newline='', encoding='utf-8') as f:
+        tmp_log_file = f"{MASTER_LOG_FILE}.tmp"
+        with open(tmp_log_file, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(header)
             writer.writerows(rows)
+        os.replace(tmp_log_file, MASTER_LOG_FILE)
 
         try:
             from ai_advisor.history import record_closed_trade
@@ -656,6 +659,8 @@ def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee,
             pass
     except:
         pass
+    finally:
+        _state_lock.release()
 
 def delete_session_log(session_id: str):
     """Xóa tất cả các lệnh thuộc một Session cụ thể khỏi CSV"""
@@ -746,80 +751,6 @@ def load_state() -> Dict[str, Any]:
             if changed:
                 save_state(state)
             return state
-            
-            if "daily_history" not in state: state["daily_history"] = []
-            if "tsl_disabled_tickets" not in state: state["tsl_disabled_tickets"] = []
-            if "trade_tactics" not in state: state["trade_tactics"] = {}
-            if "entry_exit_tactics" not in state: state["entry_exit_tactics"] = {}
-            if "pending_entry_exit" not in state: state["pending_entry_exit"] = {}
-            if "initial_r_dist" not in state: state["initial_r_dist"] = {}       
-            if "initial_r_usd" not in state: state["initial_r_usd"] = {}
-            if "parent_baskets" not in state: state["parent_baskets"] = {} 
-            if "child_to_parent" not in state: state["child_to_parent"] = {}
-            if "last_child_bar_time" not in state: state["last_child_bar_time"] = {} 
-            if "bot_last_entry_times" not in state: state["bot_last_entry_times"] = {}
-            if "exit_reasons" not in state: state["exit_reasons"] = {}
-            if "last_close_times" not in state: state["last_close_times"] = {}
-            if "last_dca_pca_close_time" not in state: state["last_dca_pca_close_time"] = {}
-            if "bot_pnl_today" not in state: state["bot_pnl_today"] = 0.0
-            if "bot_trades_today" not in state: state["bot_trades_today"] = 0
-            if "bot_daily_loss_count" not in state: state["bot_daily_loss_count"] = 0
-            if "bot_losing_streak" not in state: state["bot_losing_streak"] = 0
-            if "bot_symbol_losing_streak" not in state: state["bot_symbol_losing_streak"] = {}
-            if "daily_loss_count" not in state: state["daily_loss_count"] = 0    
-            if "fee_today" not in state: state["fee_today"] = 0.0
-            if "highest_pnl_recorded" not in state: state["highest_pnl_recorded"] = {}
-            if "highest_pnl_tickets" not in state: state["highest_pnl_tickets"] = {}
-            if "trade_excursions" not in state: state["trade_excursions"] = {}
-            if "anti_cash_locks" not in state: state["anti_cash_locks"] = {}
-            if "be_sl_locks" not in state: state["be_sl_locks"] = {}
-
-            current_date = get_today_str()
-            saved_date = state.get("date")
-
-            if saved_date != current_date:
-                save_daily_history_to_csv(
-                    saved_date, 
-                    state.get("pnl_today", 0), 
-                    state.get("trades_today_count", 0),
-                    0, 
-                    state.get("losing_streak", 0)
-                )
-
-                state["date"] = current_date
-                state["pnl_today"] = 0.0
-                state["trades_today_count"] = 0
-                state["losing_streak"] = 0 
-                state["daily_loss_count"] = 0  
-                state["daily_history"] = [] 
-                state["starting_balance"] = 0.0 
-                
-                # [FIX] Reset các biến phân tách rạch ròi
-                state["bot_pnl_today"] = 0.0
-                state["bot_trades_today"] = 0
-                state["bot_daily_loss_count"] = 0
-                state["bot_losing_streak"] = 0
-                state["bot_symbol_losing_streak"] = {}
-                state["manual_pnl_today"] = 0.0
-                state["manual_trades_today"] = 0
-                state["manual_daily_loss_count"] = 0
-                state["fee_today"] = 0.0
-                state["highest_pnl_recorded"] = {}
-                state["highest_pnl_tickets"] = {}
-                state["trade_excursions"] = {}
-                state["anti_cash_locks"] = {}
-                state["be_sl_locks"] = {}
-                
-                # Khởi tạo session mới cho ngày mới
-                state["current_session_id"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-                state["cooldown_until"] = 0.0
-
-            if "current_session_id" not in state:
-                state["current_session_id"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-            if "cooldown_until" not in state:
-                state["cooldown_until"] = 0.0
-                
-        return state
     except:
         return apply_state_defaults(default_state)
 

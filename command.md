@@ -11,7 +11,7 @@ Tài liệu này lưu trữ các câu lệnh PowerShell và mã nguồn Batch sc
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
 # Kích hoạt môi trường ảo Python
-.\ratvenv\Scripts\Activate.ps1
+.\ckvnvenv\Scripts\Activate.ps1
 ```
 
 ## 2. Script Tự Động Reset Session & Cập Nhật Hệ Thống (Draft)

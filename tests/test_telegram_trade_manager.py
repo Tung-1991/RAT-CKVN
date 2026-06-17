@@ -7,6 +7,7 @@ import types
 sys.modules.setdefault("core.data_engine", types.SimpleNamespace(data_engine=SimpleNamespace()))
 
 import core.trade_manager as trade_manager_mod
+from core.dnse_connector import BrokerOrderResult
 from core.trade_manager import TradeManager
 
 
@@ -26,11 +27,24 @@ class FakeConnector:
         return -10.0
 
     def calculate_lot_size(self, symbol, risk_usd, sl_price, order_type, strict_fee_per_lot=0.0):
-        return 0.03, sl_price
+        return 1.0, sl_price
 
     def place_order(self, symbol, order_type, lot, sl, tp, magic, comment):
         self.orders.append((symbol, order_type, lot, sl, tp, magic, comment))
-        return SimpleNamespace(retcode=10009, order=12345)
+        return BrokerOrderResult(ok=True, order_id="12345")
+
+    def get_tick(self, symbol):
+        return SimpleNamespace(ask=2000.0, bid=1999.0, last=2000.0, spread=1.0)
+
+    def get_symbol_info(self, symbol):
+        return SimpleNamespace(
+            volume_min=1.0,
+            volume_max=200.0,
+            volume_step=1.0,
+            point=0.1,
+            trade_contract_size=100000.0,
+            spread=1.0,
+        )
 
 
 class FakeChecklist:
@@ -44,13 +58,6 @@ class FakeChecklist:
 
 
 def _manager(monkeypatch):
-    fake_mt5 = SimpleNamespace(
-        ORDER_TYPE_BUY=0,
-        ORDER_TYPE_SELL=1,
-        symbol_info_tick=lambda symbol: SimpleNamespace(ask=2000.0, bid=1999.0),
-        symbol_info=lambda symbol: SimpleNamespace(volume_min=0.01, volume_max=10.0, volume_step=0.01),
-    )
-    monkeypatch.setattr(trade_manager_mod, "mt5", fake_mt5)
     monkeypatch.setattr(trade_manager_mod, "is_symbol_trade_window_open", lambda symbol: (True, ""))
     monkeypatch.setattr(trade_manager_mod, "save_state", lambda state: None)
 
@@ -84,10 +91,10 @@ def _manager(monkeypatch):
 def test_execute_telegram_sandbox_order_success_uses_sandbox_tactic(monkeypatch):
     mgr = _manager(monkeypatch)
 
-    result = mgr.execute_telegram_sandbox_order("ETHUSD", "BUY", 0.03, 1980.0, 2050.0)
+    result = mgr.execute_telegram_sandbox_order("VN30F1M", "BUY", 1.0, 1980.0, 2050.0)
 
     assert result == "SUCCESS|12345"
-    assert mgr.connector.orders == [("ETHUSD", 0, 0.03, 1980.0, 2050.0, 8888, "[USER]_TELEGRAM")]
+    assert mgr.connector.orders == [("VN30F1M", 0, 1.0, 1980.0, 2050.0, 8888, "[USER]_TELEGRAM")]
     assert mgr.state["trade_tactics"]["12345"] == "BE+STEP_R+SWING+AUTO_DCA+REV_C"
     assert mgr.state["entry_exit_tactics"]["12345"] == "FALLBACK_R->AUTO"
     assert mgr.state["manual_trades_today"] == 1
@@ -96,7 +103,7 @@ def test_execute_telegram_sandbox_order_success_uses_sandbox_tactic(monkeypatch)
 def test_execute_telegram_sandbox_order_rejects_bad_buy_sl(monkeypatch):
     mgr = _manager(monkeypatch)
 
-    result = mgr.execute_telegram_sandbox_order("ETHUSD", "BUY", 0.03, 2010.0, 2050.0)
+    result = mgr.execute_telegram_sandbox_order("VN30F1M", "BUY", 1.0, 2010.0, 2050.0)
 
     assert "BAD_SL" in result
     assert mgr.connector.orders == []
@@ -106,8 +113,8 @@ def test_execute_telegram_sandbox_order_can_bypass_checklist(monkeypatch):
     mgr = _manager(monkeypatch)
     mgr.checklist.passed = False
 
-    blocked = mgr.execute_telegram_sandbox_order("ETHUSD", "BUY", 0.03, 1980.0, 2050.0)
-    bypassed = mgr.execute_telegram_sandbox_order("ETHUSD", "BUY", 0.03, 1980.0, 2050.0, bypass_checklist=True)
+    blocked = mgr.execute_telegram_sandbox_order("VN30F1M", "BUY", 1.0, 1980.0, 2050.0)
+    bypassed = mgr.execute_telegram_sandbox_order("VN30F1M", "BUY", 1.0, 1980.0, 2050.0, bypass_checklist=True)
 
     assert "CHECKLIST" in blocked
     assert bypassed == "SUCCESS|12345"
@@ -121,11 +128,11 @@ def test_build_telegram_signal_order_uses_sandbox_defaults(monkeypatch):
         "swing_high_G2": 2020.0,
     }
 
-    result = mgr.build_telegram_signal_order("ETHUSD", "BUY", context=context, market_mode="TREND")
+    result = mgr.build_telegram_signal_order("VN30F1M", "BUY", context=context, market_mode="TREND")
 
     assert result["ok"] is True
-    assert result["symbol"] == "ETHUSD"
+    assert result["symbol"] == "VN30F1M"
     assert result["side"] == "BUY"
-    assert result["lot"] == 0.03
+    assert result["lot"] == 1.0
     assert result["sl"] == 1978.0
     assert result["tp"] > 2000.0

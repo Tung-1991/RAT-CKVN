@@ -17,6 +17,19 @@ import os
 import json
 
 
+def _build_watch_symbols():
+    symbols = []
+    for raw in list(getattr(config, "CKPS_SYMBOLS", []) or []) + list(getattr(config, "CKCS_WATCHLIST", []) or []):
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in symbols:
+            symbols.append(sym)
+    if not symbols:
+        default_symbol = str(getattr(config, "DEFAULT_SYMBOL", "VN30F1M") or "VN30F1M").strip().upper()
+        if default_symbol:
+            symbols.append(default_symbol)
+    return symbols
+
+
 def _bring_popup_to_front(window, delay_ms=150):
     try:
         window.attributes("-topmost", True)
@@ -833,6 +846,7 @@ def _add_popup_hint(parent, text, padx=15, pady=(5, 10), wraplength=900):
 def open_symbol_config_popup(app, symbol, on_change=None):
     import json
     import core.storage_manager as storage_manager
+    symbol = str(symbol or "").strip().upper()
     cfg_path = storage_manager.BRAIN_FILE
     existing_data = {}
     if os.path.exists(cfg_path):
@@ -1082,42 +1096,6 @@ def open_bot_setting_popup(app):
         command=app.on_auto_trade_toggle,
     )
     sw_auto.pack(pady=5)
-    try:
-        from grid.grid_storage import load_grid_settings
-        _grid_cfg = load_grid_settings()
-    except Exception:
-        _grid_cfg = {"ENABLED": False}
-    f_adv_lights = ctk.CTkFrame(f_auto, fg_color="transparent")
-    f_adv_lights.pack(pady=(6, 0))
-    grid_on = bool(_grid_cfg.get("ENABLED", False))
-    app.ind_grid_light = ctk.CTkFrame(
-        f_adv_lights,
-        width=12,
-        height=12,
-        corner_radius=6,
-        fg_color=COL_GREEN if grid_on else COL_RED,
-    )
-    app.ind_grid_light.pack(side="left", padx=(0, 5))
-    ctk.CTkLabel(
-        f_adv_lights,
-        text="GRID",
-        font=("Roboto", 11, "bold"),
-        text_color="#00B8D4" if grid_on else "gray",
-    ).pack(side="left", padx=(0, 18))
-    app.ind_hedge_light = ctk.CTkFrame(
-        f_adv_lights,
-        width=12,
-        height=12,
-        corner_radius=6,
-        fg_color=COL_RED,
-    )
-    app.ind_hedge_light.pack(side="left", padx=(0, 5))
-    ctk.CTkLabel(
-        f_adv_lights,
-        text="HEDGE",
-        font=("Roboto", 11, "bold"),
-        text_color="gray",
-    ).pack(side="left")
     ctk.CTkFrame(tab_core, height=2, fg_color="#333").pack(fill="x", padx=30, pady=5)
     # Watchlist (Đã chuyển lên đầu)
     ctk.CTkLabel(
@@ -1137,7 +1115,7 @@ def open_bot_setting_popup(app):
     f_coins = ctk.CTkFrame(tab_core, fg_color="transparent")
     f_coins.pack(fill="x", padx=30, pady=(0, 10))
     app.bot_coin_vars = {}
-    allowed_list = getattr(config, "BOT_ACTIVE_SYMBOLS", config.COIN_LIST)
+    allowed_list = [str(s or "").strip().upper() for s in getattr(config, "BOT_ACTIVE_SYMBOLS", []) or []]
     symbol_cfg_buttons = {}
 
     def _symbol_has_override(symbol_name):
@@ -1162,10 +1140,14 @@ def open_bot_setting_popup(app):
                 hover_color="#FFB300" if has_override else "#666",
                 text_color="#212121" if has_override else "#FFFFFF",
             )
-    # Tạo layout lưới cho các cặp tiền
+    # Danh sách mã bot có thể quét: CKPS (VN30F) + CKCS (cổ phiếu cơ sở nhập tay).
+    # Bot chỉ trade mã được tick; chưa tick thì không đụng tới.
+    watch_symbols = _build_watch_symbols()
+
+    # Tạo layout lưới cho các mã
     row_idx = 0
     col_idx = 0
-    for coin in config.COIN_LIST:
+    for coin in watch_symbols:
         var = tk.BooleanVar(value=(coin in allowed_list))
         app.bot_coin_vars[coin] = var
         f_single_coin = ctk.CTkFrame(f_coins, fg_color="transparent")
@@ -1193,6 +1175,27 @@ def open_bot_setting_popup(app):
         if col_idx > 1:
             col_idx = 0
             row_idx += 1
+
+    def refresh_watch_symbol_controls():
+        try:
+            if top.winfo_exists():
+                top.destroy()
+        except Exception:
+            pass
+        open_bot_setting_popup(app)
+
+    app._refresh_bot_settings_symbols = refresh_watch_symbol_controls
+
+    def _clear_symbol_refresh_hook(event=None):
+        if event is not None and getattr(event, "widget", None) is not top:
+            return
+        if getattr(app, "_refresh_bot_settings_symbols", None) is refresh_watch_symbol_controls:
+            try:
+                delattr(app, "_refresh_bot_settings_symbols")
+            except Exception:
+                pass
+
+    top.bind("<Destroy>", _clear_symbol_refresh_hook, add="+")
     ctk.CTkFrame(tab_core, height=2, fg_color="#333").pack(fill="x", padx=30, pady=5)
     # Safety Guard (Bot ONLY - Độc lập hoàn toàn với Manual)
     ctk.CTkLabel(
@@ -1627,6 +1630,8 @@ def open_bot_setting_popup(app):
                 coin for coin, var in app.bot_coin_vars.items() if var.get()
             ]
             config.BOT_ACTIVE_SYMBOLS = existing_data["BOT_ACTIVE_SYMBOLS"]
+            # (Cache/WebSocket + watchlist CKCS đã chuyển sang ⚙ ADVANCED → tab "Cache & Mã".)
+
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(existing_data, f, indent=4)
             from core.storage_manager import invalidate_settings_cache
@@ -1649,998 +1654,559 @@ def open_bot_setting_popup(app):
 
 # ==============================================================================
 
+# DNSE ACCOUNT PICKER (dùng chung cho popup PRESET)
+
+# ==============================================================================
+
+
+def build_dnse_account_picker(app, parent):
+    """Section cho phép tải danh sách tiểu khoản DNSE và lưu lựa chọn vào .env."""
+    import threading
+    from core import env_utils
+    from get_accounts import fetch_accounts
+
+    frame = ctk.CTkFrame(parent, fg_color="#1f2a33", corner_radius=8)
+    frame.pack(fill="x", padx=8, pady=(0, 12))
+    ctk.CTkLabel(
+        frame, text="TÀI KHOẢN DNSE", font=FONT_BOLD, text_color="#4FC3F7"
+    ).pack(anchor="w", padx=12, pady=(10, 2))
+    ctk.CTkLabel(
+        frame,
+        text="Nhập API key/secret rồi bấm 'Tải tài khoản' để chọn tiểu khoản. Lựa chọn được ghi vào .env.",
+        font=("Arial", 11, "italic"),
+        text_color="#90A4AE",
+        wraplength=470,
+        justify="left",
+    ).pack(anchor="w", padx=12, pady=(0, 8))
+
+    f_key = ctk.CTkFrame(frame, fg_color="transparent")
+    f_key.pack(fill="x", padx=12)
+    ctk.CTkLabel(f_key, text="API Key", width=70, anchor="w").grid(row=0, column=0, sticky="w", pady=3)
+    e_api_key = ctk.CTkEntry(f_key, width=320)
+    e_api_key.insert(0, env_utils.get_env_value("DNSE_API_KEY", "") or "")
+    e_api_key.grid(row=0, column=1, sticky="ew", pady=3, padx=(6, 0))
+    ctk.CTkLabel(f_key, text="API Secret", width=70, anchor="w").grid(row=1, column=0, sticky="w", pady=3)
+    e_api_secret = ctk.CTkEntry(f_key, width=320, show="*")
+    e_api_secret.insert(0, env_utils.get_env_value("DNSE_API_SECRET", "") or "")
+    e_api_secret.grid(row=1, column=1, sticky="ew", pady=3, padx=(6, 0))
+    f_key.grid_columnconfigure(1, weight=1)
+
+    lbl_status = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=470, justify="left")
+    lbl_status.pack(anchor="w", padx=12, pady=(6, 2))
+
+    cbo_account = ctk.CTkOptionMenu(frame, values=["(chưa tải)"], width=440)
+    cbo_account.pack(fill="x", padx=12, pady=(2, 6))
+
+    # accounts_map: hiển thị -> dict tiểu khoản
+    accounts_map = {}
+
+    def _set_status(text, color="#B0BEC5"):
+        lbl_status.configure(text=text, text_color=color)
+
+    def _populate(data):
+        accounts_map.clear()
+        options = []
+        for acc in data.get("accounts", []) or []:
+            # `id` là SỐ tiểu khoản thật; dealAccount/derivativeAccount là CỜ boolean
+            # báo tiểu khoản này trade được cơ sở / phái sinh.
+            acc_id = str(acc.get("id", "") or "")
+            can_deal = bool(acc.get("dealAccount"))
+            can_deriv = bool(acc.get("derivativeAccount"))
+            status = (acc.get("derivative", {}) or {}).get("status", "?")
+            caps = []
+            if can_deal:
+                caps.append("Cơ sở")
+            if can_deriv:
+                caps.append("Phái sinh")
+            label = f"{acc_id} [{'+'.join(caps) or '—'}] {status}"
+            accounts_map[label] = {
+                "id": acc_id,
+                "stock": acc_id if can_deal else "",
+                "derivative": acc_id if can_deriv else "",
+                "status": status,
+                "custody": data.get("custodyCode", ""),
+            }
+            options.append(label)
+        if options:
+            cbo_account.configure(values=options)
+            cbo_account.set(options[0])
+            _set_status(
+                f"Tải thành công: {data.get('name', '')} (Custody {data.get('custodyCode', '')}). "
+                f"Có {len(options)} tiểu khoản.",
+                "#81C784",
+            )
+        else:
+            cbo_account.configure(values=["(không có tiểu khoản)"])
+            cbo_account.set("(không có tiểu khoản)")
+            _set_status("Không tìm thấy tiểu khoản nào.", "#FFB74D")
+
+    def _on_load():
+        api_key = e_api_key.get().strip()
+        api_secret = e_api_secret.get().strip()
+        if not api_key or not api_secret:
+            _set_status("Thiếu API key hoặc secret.", "#E57373")
+            return
+        _set_status("Đang tải tài khoản...", "#B0BEC5")
+
+        def _worker():
+            try:
+                status_code, data = fetch_accounts(api_key, api_secret)
+            except Exception as exc:  # noqa: BLE001
+                app.after(0, lambda: _set_status(f"Lỗi tải tài khoản: {exc}", "#E57373"))
+                return
+            if status_code == 200 and isinstance(data, dict):
+                app.after(0, lambda: _populate(data))
+            else:
+                app.after(0, lambda: _set_status(f"HTTP {status_code}: {data}", "#E57373"))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_save():
+        label = cbo_account.get()
+        info = accounts_map.get(label)
+        if not info:
+            _set_status("Hãy tải và chọn một tiểu khoản trước.", "#E57373")
+            return
+        updates = {
+            "DNSE_API_KEY": e_api_key.get().strip(),
+            "DNSE_API_SECRET": e_api_secret.get().strip(),
+            "DNSE_ACCOUNT_NO": info["id"],
+            "DNSE_STOCK_ACCOUNT_NO": info["stock"],
+            "DNSE_DERIVATIVE_ACCOUNT_NO": info["derivative"],
+            "DNSE_CUSTODY_CODE": info["custody"],
+        }
+        try:
+            env_utils.update_env(updates)
+        except Exception as exc:  # noqa: BLE001
+            _set_status(f"Không ghi được .env: {exc}", "#E57373")
+            return
+        warn = ""
+        if str(info["status"]).upper() != "ACTIVE":
+            warn = f" | CẢNH BÁO: phái sinh (CKPS) trạng thái '{info['status']}', chưa sẵn sàng."
+        _set_status(
+            f"Đã lưu .env: TK {info['id']} (cơ sở={info['stock'] or '—'}, phái sinh={info['derivative'] or '—'}). "
+            f"Khởi động lại để áp dụng đầy đủ.{warn}",
+            "#81C784" if not warn else "#FFB74D",
+        )
+
+    f_btn = ctk.CTkFrame(frame, fg_color="transparent")
+    f_btn.pack(fill="x", padx=12, pady=(0, 10))
+    ctk.CTkButton(f_btn, text="Tải tài khoản", width=140, fg_color="#0277BD", command=_on_load).pack(side="left")
+    ctk.CTkButton(f_btn, text="Lưu lựa chọn vào .env", width=180, fg_color="#2E7D32", command=_on_save).pack(side="left", padx=(8, 0))
+
+
+# ==============================================================================
+
+# ADVANCED — TRUNG TÂM CÀI ĐẶT (TÀI KHOẢN/.ENV + OTP)
+
+# ==============================================================================
+
+
+def build_cache_and_symbols_tab(app, parent):
+    """Tab gom: watchlist CKCS (mã cơ sở) + Cache/WebSocket. Có nút lưu riêng."""
+    from core import env_utils
+    frame = _speed_up_scroll(ctk.CTkScrollableFrame(parent, fg_color="transparent"))
+    frame.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # --- Watchlist CKCS (mã cơ sở nhập tay) ---
+    ctk.CTkLabel(frame, text="WATCHLIST CKCS (MÃ CƠ SỞ) — NHẬP TAY, CÁCH NHAU DẤU PHẨY",
+                 font=FONT_BOLD, text_color="#26C6DA").pack(pady=(6, 2))
+    _add_popup_hint(
+        frame,
+        "- CKPS (phái sinh) chỉ trade VN30F, watchlist khoá sẵn.\n"
+        "- CKCS (cơ sở) nhập mã tại đây, vd: FPT,SSI,VCB. Lưu vào .env (DNSE_CKCS_WATCHLIST).",
+        padx=18, pady=(0, 6),
+    )
+    e_ckcs = ctk.CTkEntry(frame, justify="center")
+    e_ckcs.insert(0, env_utils.get_env_value("DNSE_CKCS_WATCHLIST", "") or "")
+    e_ckcs.pack(fill="x", padx=18, pady=(0, 10))
+
+    # --- Cache & Market Data ---
+    ctk.CTkLabel(frame, text="CACHE & MARKET DATA", font=FONT_BOLD, text_color="#FFD54F").pack(pady=(4, 2))
+    _add_popup_hint(
+        frame,
+        "- Bật WebSocket để stream giá real-time → giảm REST, add nhiều mã không bị BAN.\n"
+        "- TTL cache REST (giây): tăng = gọi API ít hơn, giảm = cập nhật nhanh hơn.\n"
+        "- WebSocket lỗi sẽ tự fallback REST.",
+        padx=18, pady=(0, 6),
+    )
+    f_cache = ctk.CTkFrame(frame, fg_color="#2b2b2b", corner_radius=8)
+    f_cache.pack(fill="x", padx=12, pady=(0, 8))
+    var_ws_enabled = ctk.BooleanVar(value=bool(getattr(config, "DNSE_WS_ENABLED", False)))
+    ctk.CTkSwitch(
+        f_cache, text="WEBSOCKET STREAMING", variable=var_ws_enabled,
+        progress_color=COL_GREEN, fg_color=COL_RED, font=("Roboto", 12, "bold"),
+    ).grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=8)
+
+    def _cache_entry(label, value, row, col):
+        ctk.CTkLabel(f_cache, text=label).grid(row=row, column=col, sticky="w", padx=10, pady=4)
+        e = ctk.CTkEntry(f_cache, width=70, justify="center")
+        e.insert(0, str(value))
+        e.grid(row=row, column=col + 1, sticky="w", padx=10, pady=4)
+        return e
+
+    e_ttl_tick = _cache_entry("Tick TTL (s)", getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0), 1, 0)
+    e_ttl_ohlc = _cache_entry("OHLC TTL (s)", getattr(config, "DNSE_OHLC_CACHE_TTL_SECONDS", 30.0), 1, 2)
+    e_ttl_acc = _cache_entry("Account TTL (s)", getattr(config, "DNSE_ACCOUNT_CACHE_TTL_SECONDS", 5.0), 2, 0)
+    e_ttl_pos = _cache_entry("Positions TTL (s)", getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 2.0), 2, 2)
+
+    lbl_ws_status = ctk.CTkLabel(f_cache, text="WS: ...", font=("Consolas", 11), text_color="#90A4AE", justify="left")
+    lbl_ws_status.grid(row=3, column=0, columnspan=4, sticky="w", padx=10, pady=(4, 8))
+
+    def _refresh_ws_status():
+        if not lbl_ws_status.winfo_exists():
+            return
+        try:
+            from core.data_engine import data_engine
+            snap = data_engine.get_api_health_snapshot().get("ws", {}) or {}
+            if not snap.get("available"):
+                txt = "WS: chưa cài websocket-client (đang dùng REST)"
+            elif not snap.get("enabled"):
+                txt = "WS: đang TẮT (dùng REST + cache)"
+            else:
+                state = "CONNECTED" if snap.get("connected") else "reconnecting..."
+                txt = (
+                    f"WS: {state} | subscribed {len(snap.get('subscribed', []))} | "
+                    f"msg {snap.get('messages', 0)} | reconnects {snap.get('reconnects', 0)}"
+                )
+            lbl_ws_status.configure(text=txt)
+        except Exception:
+            pass
+        try:
+            parent.winfo_toplevel().after(2000, _refresh_ws_status)
+        except Exception:
+            pass
+
+    _refresh_ws_status()
+
+    lbl_msg = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=520, justify="left")
+    lbl_msg.pack(anchor="w", padx=14, pady=(2, 2))
+
+    def _save():
+        try:
+            ckcs_list = [s.strip().upper() for s in e_ckcs.get().split(",") if s.strip()]
+            ttl_tick = float(e_ttl_tick.get() or 2.0)
+            ttl_ohlc = float(e_ttl_ohlc.get() or 30.0)
+            ttl_acc = float(e_ttl_acc.get() or 5.0)
+            ttl_pos = float(e_ttl_pos.get() or 2.0)
+            env_utils.update_env({
+                "DNSE_WS_ENABLED": "true" if var_ws_enabled.get() else "false",
+                "DNSE_TICK_CACHE_TTL_SECONDS": str(ttl_tick),
+                "DNSE_OHLC_CACHE_TTL_SECONDS": str(ttl_ohlc),
+                "DNSE_ACCOUNT_CACHE_TTL_SECONDS": str(ttl_acc),
+                "DNSE_POSITIONS_CACHE_TTL_SECONDS": str(ttl_pos),
+                "DNSE_CKCS_WATCHLIST": ",".join(ckcs_list),
+            })
+            config.DNSE_WS_ENABLED = bool(var_ws_enabled.get())
+            config.DNSE_TICK_CACHE_TTL_SECONDS = ttl_tick
+            config.DNSE_OHLC_CACHE_TTL_SECONDS = ttl_ohlc
+            config.DNSE_ACCOUNT_CACHE_TTL_SECONDS = ttl_acc
+            config.DNSE_POSITIONS_CACHE_TTL_SECONDS = ttl_pos
+            config.CKCS_WATCHLIST = ckcs_list
+            try:
+                if hasattr(app, "on_market_type_change") and hasattr(app, "cbo_market_type"):
+                    app.on_market_type_change(app.cbo_market_type.get())
+            except Exception:
+                pass
+            try:
+                refresh_symbols = getattr(app, "_refresh_bot_settings_symbols", None)
+                if callable(refresh_symbols):
+                    refresh_symbols()
+            except Exception:
+                pass
+            try:
+                from core.data_engine import data_engine
+                if config.DNSE_WS_ENABLED:
+                    data_engine.set_stream_symbols(list(getattr(config, "BOT_ACTIVE_SYMBOLS", [])) + ckcs_list)
+            except Exception:
+                pass
+            lbl_msg.configure(text=f"Đã lưu. CKCS = {','.join(ckcs_list) or '—'}. Dropdown Mã CK đã cập nhật.", text_color="#81C784")
+        except Exception as exc:  # noqa: BLE001
+            lbl_msg.configure(text=f"Lỗi lưu: {exc}", text_color="#E57373")
+
+    ctk.CTkButton(frame, text="Lưu Cache & Mã", width=180, fg_color="#2E7D32", command=_save).pack(anchor="w", padx=14, pady=(2, 10))
+
+
+def open_advanced_tools_popup(app):
+    """Trung tâm cài đặt hệ thống: tài khoản DNSE/.env + xác thực OTP (trading-token)."""
+    import os
+    import threading
+    from core.data_engine import dnse_api
+
+    top = ctk.CTkToplevel(app)
+    top.title("Advanced — Cài đặt hệ thống")
+    top.geometry("680x760")
+    top.minsize(580, 560)
+    _bring_popup_to_front(top)
+
+    tabs = ctk.CTkTabview(top)
+    tabs.pack(fill="both", expand=True, padx=8, pady=8)
+    tab_sys = tabs.add("Hệ thống")
+    tab_cache = tabs.add("Cache & Mã")
+
+    # Tab 2: gom cache + watchlist CKCS
+    build_cache_and_symbols_tab(app, tab_cache)
+
+    # Tab 1: tài khoản / cấu hình / OTP
+    body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_sys, fg_color="transparent"))
+    body.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # --- 1) Tài khoản DNSE / .env ---
+    build_dnse_account_picker(app, body)
+
+    # --- 2) Cấu hình chung (.env) ---
+    from core import env_utils
+    f_cfg = ctk.CTkFrame(body, fg_color="#1f2a33", corner_radius=8)
+    f_cfg.pack(fill="x", padx=8, pady=(4, 12))
+    ctk.CTkLabel(f_cfg, text="CẤU HÌNH CHUNG (.env)", font=FONT_BOLD, text_color="#4FC3F7").pack(anchor="w", padx=12, pady=(10, 2))
+    ctk.CTkLabel(
+        f_cfg,
+        text="Lưu vào .env. BASE_URL / API_VERSION / ACCOUNT_NO / PAPER cần khởi động lại để áp dụng đầy đủ. "
+        "Cache / WebSocket / TTL nằm trong popup ⚙ BOT.",
+        font=("Arial", 11, "italic"),
+        text_color="#90A4AE",
+        wraplength=560,
+        justify="left",
+    ).pack(anchor="w", padx=12, pady=(0, 8))
+
+    f_grid = ctk.CTkFrame(f_cfg, fg_color="transparent")
+    f_grid.pack(fill="x", padx=12, pady=(0, 4))
+    f_grid.grid_columnconfigure(1, weight=1)
+
+    def _cfg_row(r, label, value):
+        ctk.CTkLabel(f_grid, text=label, anchor="w", width=160).grid(row=r, column=0, sticky="w", pady=3)
+        e = ctk.CTkEntry(f_grid, width=320)
+        e.insert(0, str(value or ""))
+        e.grid(row=r, column=1, sticky="ew", pady=3, padx=(6, 0))
+        return e
+
+    e_acc_no = _cfg_row(0, "DNSE_ACCOUNT_NO", env_utils.get_env_value("DNSE_ACCOUNT_NO", ""))
+    e_base = _cfg_row(1, "DNSE_BASE_URL", env_utils.get_env_value("DNSE_BASE_URL", "https://openapi.dnse.com.vn"))
+    e_ver = _cfg_row(2, "DNSE_API_VERSION", env_utils.get_env_value("DNSE_API_VERSION", "2026-05-07"))
+    # Đọc thẳng từ .env (tránh hiện rỗng khi config trong RAM còn cũ).
+    e_ckps = _cfg_row(3, "CKPS (VN30F)", env_utils.get_env_value("DNSE_CKPS_WATCHLIST", "VN30F1M"))
+    # CKCS (mã cơ sở) đã chuyển sang tab "Cache & Mã".
+
+    f_opt = ctk.CTkFrame(f_cfg, fg_color="transparent")
+    f_opt.pack(fill="x", padx=12, pady=(2, 4))
+    ctk.CTkLabel(f_opt, text="OTP type:").pack(side="left", padx=(0, 6))
+    var_otp_type = ctk.StringVar(value=env_utils.get_env_value("DNSE_OTP_TYPE", "email_otp"))
+    ctk.CTkOptionMenu(f_opt, values=["email_otp", "smart_otp"], variable=var_otp_type, width=140).pack(side="left", padx=(0, 16))
+    # (PAPER/REAL chuyển ở nút MODE trên panel chính — không để trùng ở đây.)
+
+    lbl_cfg_msg = ctk.CTkLabel(f_cfg, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=560, justify="left")
+    lbl_cfg_msg.pack(anchor="w", padx=12, pady=(2, 2))
+
+    def _save_cfg():
+        ckps = [s.strip().upper() for s in e_ckps.get().split(",") if s.strip()]
+        try:
+            env_utils.update_env({
+                "DNSE_ACCOUNT_NO": e_acc_no.get().strip(),
+                "DNSE_BASE_URL": e_base.get().strip(),
+                "DNSE_API_VERSION": e_ver.get().strip(),
+                "DNSE_OTP_TYPE": var_otp_type.get(),
+                "DNSE_CKPS_WATCHLIST": ",".join(ckps),
+            })
+        except Exception as exc:  # noqa: BLE001
+            lbl_cfg_msg.configure(text=f"Không ghi được .env: {exc}", text_color="#E57373")
+            return
+        config.CKPS_SYMBOLS = ckps or ["VN30F1M"]
+        # Cập nhật dropdown Mã CK ngay (khỏi cần restart) theo chế độ đang chọn.
+        try:
+            if hasattr(app, "on_market_type_change") and hasattr(app, "cbo_market_type"):
+                app.on_market_type_change(app.cbo_market_type.get())
+        except Exception:
+            pass
+        lbl_cfg_msg.configure(
+            text="Đã lưu. Danh sách mã đã cập nhật vào dropdown. (BASE_URL/API_VERSION/ACCOUNT_NO/PAPER cần khởi động lại.)",
+            text_color="#81C784",
+        )
+
+    ctk.CTkButton(f_cfg, text="Lưu cấu hình chung", width=180, fg_color="#2E7D32", command=_save_cfg).pack(anchor="w", padx=12, pady=(2, 10))
+
+    # --- 3) Xác thực OTP / Trading-token ---
+    f_otp = ctk.CTkFrame(body, fg_color="#1f2a33", corner_radius=8)
+    f_otp.pack(fill="x", padx=8, pady=(4, 12))
+    ctk.CTkLabel(
+        f_otp, text="XÁC THỰC OTP (TRADING TOKEN ~8 GIỜ)", font=FONT_BOLD, text_color="#4FC3F7"
+    ).pack(anchor="w", padx=12, pady=(10, 2))
+    ctk.CTkLabel(
+        f_otp,
+        text="Bấm 'Gửi OTP email' để DNSE gửi mã về email, nhập mã rồi 'Xác thực'. "
+        "Token hiệu lực ~8 giờ, cần để đặt lệnh thật (market data không cần).",
+        font=("Arial", 11, "italic"),
+        text_color="#90A4AE",
+        wraplength=560,
+        justify="left",
+    ).pack(anchor="w", padx=12, pady=(0, 8))
+
+    f_otp_row = ctk.CTkFrame(f_otp, fg_color="transparent")
+    f_otp_row.pack(fill="x", padx=12, pady=(0, 4))
+    e_otp = ctk.CTkEntry(f_otp_row, width=200, justify="center", placeholder_text="Nhập mã OTP")
+    lbl_otp_msg = ctk.CTkLabel(f_otp, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=560, justify="left")
+    lbl_otp_status = ctk.CTkLabel(f_otp, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=560, justify="left")
+
+    def _set_otp_msg(text, color="#B0BEC5"):
+        if lbl_otp_msg.winfo_exists():
+            lbl_otp_msg.configure(text=text, text_color=color)
+
+    def _refresh_token_status():
+        try:
+            ok = dnse_api.has_trading_token()
+        except Exception:
+            ok = False
+        if lbl_otp_status.winfo_exists():
+            lbl_otp_status.configure(
+                text=("✅ Đã có trading-token (≈8h)." if ok else "Chưa xác thực — chưa đặt được lệnh thật."),
+                text_color="#81C784" if ok else "#FFB74D",
+            )
+
+    def _send_otp():
+        _set_otp_msg("Đang gửi OTP...", "#B0BEC5")
+
+        def _w():
+            try:
+                ok = dnse_api.send_email_otp()
+            except Exception as exc:  # noqa: BLE001
+                app.after(0, lambda: _set_otp_msg(f"Lỗi gửi OTP: {exc}", "#E57373"))
+                return
+            app.after(0, lambda: _set_otp_msg(
+                "Đã gửi OTP về email." if ok else "Gửi OTP thất bại.",
+                "#81C784" if ok else "#E57373",
+            ))
+
+        threading.Thread(target=_w, daemon=True).start()
+
+    def _verify_otp():
+        code = e_otp.get().strip()
+        if not code:
+            _set_otp_msg("Nhập mã OTP trước.", "#E57373")
+            return
+        otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
+        _set_otp_msg("Đang xác thực...", "#B0BEC5")
+
+        def _w():
+            try:
+                ok = dnse_api.verify_otp(otp_type, code)
+            except Exception as exc:  # noqa: BLE001
+                app.after(0, lambda: _set_otp_msg(f"Lỗi xác thực: {exc}", "#E57373"))
+                return
+
+            def _done():
+                _set_otp_msg("✅ Xác thực thành công." if ok else "❌ Xác thực thất bại.", "#81C784" if ok else "#E57373")
+                _refresh_token_status()
+
+            app.after(0, _done)
+
+        threading.Thread(target=_w, daemon=True).start()
+
+    ctk.CTkButton(f_otp_row, text="Gửi OTP email", width=140, fg_color="#0277BD", command=_send_otp).pack(side="left")
+    e_otp.pack(side="left", padx=(8, 8))
+    ctk.CTkButton(f_otp_row, text="Xác thực", width=110, fg_color="#2E7D32", command=_verify_otp).pack(side="left")
+
+    lbl_otp_msg.pack(anchor="w", padx=12, pady=(4, 2))
+    lbl_otp_status.pack(anchor="w", padx=12, pady=(0, 10))
+    _refresh_token_status()
+
+
+# ==============================================================================
+
 # 2. POPUP PRESET (CÓ LIVE PREVIEW ĐẦY ĐỦ)
 
 # ==============================================================================
 
 
-def open_advanced_tools_popup(app):
+def build_paper_config_tab(app, parent):
+    """Tab Paper: chỉ vốn ảo + reset. Phí/spread/cách tính đều mô phỏng như tài khoản thật."""
+    from core import env_utils
 
-    top = ctk.CTkToplevel(app)
-    top.title("Advanced Tools")
-    top.geometry("1080x720")
-    top.minsize(980, 620)
-    top.resizable(True, True)
-    try:
-        top.transient(app)
-    except Exception:
-        pass
-    _bring_popup_to_front(top, delay_ms=100)
-    top._advanced_tools_zoomed = False
-
-    def _toggle_advanced_tools_fullscreen():
-        try:
-            if getattr(top, "_advanced_tools_zoomed", False):
-                top.state("normal")
-                top.geometry("1080x720")
-                top._advanced_tools_zoomed = False
-                btn_fullscreen.configure(text="FULLSCREEN")
-            else:
-                top.state("zoomed")
-                top._advanced_tools_zoomed = True
-                btn_fullscreen.configure(text="RESTORE")
-        except Exception:
-            try:
-                top.attributes("-fullscreen", not bool(top.attributes("-fullscreen")))
-            except Exception:
-                pass
-
-    toolbar = ctk.CTkFrame(top, fg_color="transparent")
-    toolbar.pack(fill="x", padx=12, pady=(8, 0))
-    btn_fullscreen = ctk.CTkButton(
-        toolbar,
-        text="FULLSCREEN",
-        width=120,
-        fg_color="#455A64",
-        command=_toggle_advanced_tools_fullscreen,
-    )
-    btn_fullscreen.pack(side="right")
-    tabs = ctk.CTkTabview(top)
-    tabs.pack(fill="both", expand=True, padx=12, pady=(8, 12))
-    tab_grid = tabs.add("GRID")
-    tab_hedge = tabs.add("HEDGE")
-    tab_backtest = tabs.add("BACKTEST")
-    grid_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_grid, fg_color="transparent"))
-    grid_body.pack(fill="both", expand=True)
+    frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+    frame.pack(fill="both", expand=True, padx=6, pady=6)
+    ctk.CTkLabel(frame, text="CẤU HÌNH PAPER (TÀI KHOẢN ẢO)", font=FONT_BOLD, text_color="#FFD54F").pack(anchor="w", pady=(8, 2))
     ctk.CTkLabel(
-        grid_body, text="GRID Control", font=("Roboto", 16, "bold"), text_color="#00B8D4"
-    ).pack(anchor="w", padx=14, pady=(14, 6))
-    ctk.CTkLabel(
-        grid_body,
-        text="Auto GRID cho daemon. Manual GRID tren panel trade van start duoc khi Auto GRID OFF.",
-        font=("Arial", 12, "italic"),
-        text_color="#80DEEA",
-        anchor="w",
-        wraplength=680,
-    ).pack(fill="x", padx=14, pady=(0, 12))
-    try:
-        from grid.grid_storage import load_grid_settings, save_grid_settings
-        grid_cfg = load_grid_settings()
-    except Exception:
-        grid_cfg = {"ENABLED": False}
-    var_grid_enabled = ctk.BooleanVar(value=grid_cfg.get("ENABLED", False))
-
-    def _set_status_lights(is_on):
-        color = COL_GREEN if is_on else COL_RED
-        for attr in ("ind_grid_light", "ind_ad_grid_light"):
-            light = getattr(app, attr, None)
-            if light and light.winfo_exists():
-                light.configure(fg_color=color)
-
-    def _toggle_grid_enabled():
-        try:
-            from grid.grid_storage import load_grid_settings, save_grid_settings
-            if var_grid_enabled.get() and hasattr(app, "set_auto_trade_enabled"):
-                app.set_auto_trade_enabled(False, reason="GRID_ON")
-            next_cfg = load_grid_settings()
-            next_cfg["ENABLED"] = var_grid_enabled.get()
-            save_grid_settings(next_cfg)
-            _set_status_lights(var_grid_enabled.get())
-            lbl_grid_state.configure(
-                text=f"Auto GRID: {'ON' if var_grid_enabled.get() else 'OFF'}",
-                text_color="#00B8D4" if var_grid_enabled.get() else "gray",
-            )
-            try:
-                lbl_grid_summary.configure(text=_grid_control_summary())
-            except Exception:
-                pass
-            if hasattr(app, "log_message"):
-                state = "ON" if var_grid_enabled.get() else "OFF"
-                app.log_message(f"[GRID] AUTO GRID ENABLED = {state}", target="grid")
-        except Exception as e:
-            messagebox.showerror("GRID", f"Khong the luu GRID switch: {e}", parent=top)
-    f_grid_switch = ctk.CTkFrame(grid_body, fg_color="#242424", corner_radius=8)
-    f_grid_switch.pack(fill="x", padx=14, pady=(0, 12))
-    lbl_grid_state = ctk.CTkLabel(
-        f_grid_switch,
-        text=f"Auto GRID: {'ON' if var_grid_enabled.get() else 'OFF'}",
-        font=("Roboto", 12, "bold"),
-        text_color="#00B8D4" if var_grid_enabled.get() else "gray",
-    )
-    ctk.CTkSwitch(
-        f_grid_switch,
-        text="AUTO GRID ENABLED",
-        variable=var_grid_enabled,
-        progress_color="#00B8D4",
-        fg_color=COL_RED,
-        font=("Roboto", 13, "bold"),
-        command=_toggle_grid_enabled,
-    ).pack(side="left", padx=12, pady=12)
-    lbl_grid_state.pack(side="left", padx=12)
-
-    def _grid_control_summary():
-        try:
-            from grid.grid_storage import load_grid_settings, load_grid_state
-            cfg = load_grid_settings()
-            st = load_grid_state()
-            last = (st.get("last_decision") or {})
-            last_txt = "No decision yet"
-            range_txt = "Range: ---"
-            next_txt = "Next: ---"
-            if last:
-                sym, data = list(last.items())[-1]
-                last_txt = f"{sym}: {data.get('status')} / {data.get('reason')}"
-                boundary = data.get("boundary") or (st.get("active_sessions", {}).get(sym, {}) or {}).get("boundary")
-                if isinstance(boundary, dict):
-                    range_txt = f"Range: {float(boundary.get('lower', 0.0)):.2f} -> {float(boundary.get('upper', 0.0)):.2f} ({boundary.get('source', '---')})"
-                if data.get("reason") == "PRICE_OUT_OF_BOUNDARY":
-                    policy = cfg.get("OUT_OF_RANGE_POLICY", "STOP")
-                    next_txt = "Next: stop new orders" if policy == "STOP" else "Next: auto rebuild range"
-                elif data.get("status") in ("READY", "OPEN"):
-                    next_txt = f"Next: {data.get('direction', 'ORDER')}"
-                else:
-                    next_txt = f"Next: {data.get('reason', 'WAIT')}"
-            return (
-                f"Type: {cfg.get('GRID_TYPE', 'ATR_DYNAMIC')} | "
-                f"Signal: {cfg.get('GRID_SIGNAL_SOURCE', 'OFF')} | "
-                f"OutRange: {cfg.get('OUT_OF_RANGE_POLICY', 'STOP')} | "
-                f"Scan: {cfg.get('GRID_SCAN_INTERVAL_SECONDS', 5)}s | "
-                f"Mode auto: {'ON' if cfg.get('DYNAMIC_MODE_ENABLED', True) else 'OFF'} | "
-                f"Lot: {cfg.get('FIXED_LOT', 0.01)} | "
-                f"Max orders: {cfg.get('MAX_GRID_ORDERS', 0)} | "
-                f"Max DD: {cfg.get('MAX_BASKET_DRAWDOWN', 0.0)}\n"
-                f"{range_txt} | {next_txt}\n"
-                f"Today PnL: {float(st.get('grid_pnl_today', 0.0) or 0.0):+.2f} | "
-                f"Trades: {int(st.get('grid_trades_today', 0) or 0)} | "
-                f"Last: {last_txt}"
-            )
-        except Exception as e:
-            return f"GRID summary error: {e}"
-
-    lbl_grid_summary = ctk.CTkLabel(
-        grid_body,
-        text=_grid_control_summary(),
-        font=("Consolas", 13),
-        text_color="#80DEEA",
+        frame,
+        text="Paper chỉ khác tài khoản thật ở VỐN ẢO. Phí, spread và cách tính đều mô phỏng như thật.",
+        font=("Arial", 11, "italic"),
+        text_color="#90A4AE",
+        wraplength=460,
         justify="left",
-        anchor="w",
-    )
-    lbl_grid_summary.pack(fill="x", padx=14, pady=(0, 10))
+    ).pack(anchor="w", pady=(0, 10))
 
-    quick = ctk.CTkFrame(grid_body, fg_color="#242424", corner_radius=8)
-    quick.pack(fill="x", padx=14, pady=(0, 12))
-    ctk.CTkLabel(quick, text="Safety Quick", font=("Roboto", 13, "bold"), text_color="#00B8D4").grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 4))
+    ctk.CTkLabel(frame, text="Vốn ảo ban đầu (VND):").pack(anchor="w")
+    e_bal = ctk.CTkEntry(frame, justify="center", width=240)
+    e_bal.insert(0, str(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0)))
+    e_bal.pack(anchor="w", pady=(2, 8))
 
-    def _quick_entry(label, value, row, col):
-        ctk.CTkLabel(quick, text=label).grid(row=row, column=col, sticky="w", padx=10, pady=5)
-        entry = ctk.CTkEntry(quick, width=90, justify="center")
-        entry.insert(0, str(value))
-        entry.grid(row=row, column=col + 1, sticky="w", padx=10, pady=5)
-        return entry
+    lbl_msg = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=460, justify="left")
 
-    e_q_max_orders = _quick_entry("Max Orders", grid_cfg.get("MAX_GRID_ORDERS", 0), 1, 0)
-    e_q_max_lot = _quick_entry("Max Lot", grid_cfg.get("MAX_TOTAL_LOT", 0.0), 1, 2)
-    e_q_max_dd = _quick_entry("Basket DD", grid_cfg.get("MAX_BASKET_DRAWDOWN", 0.0), 2, 0)
-    e_q_daily_loss = _quick_entry("Daily Loss", grid_cfg.get("GRID_MAX_DAILY_LOSS", 0.0), 2, 2)
-
-    def _save_quick_safety():
+    def _save_balance():
         try:
-            from grid.grid_storage import load_grid_settings, save_grid_settings
-            next_cfg = load_grid_settings()
-            next_cfg["MAX_GRID_ORDERS"] = int(e_q_max_orders.get() or 0)
-            next_cfg["MAX_TOTAL_LOT"] = float(e_q_max_lot.get() or 0.0)
-            next_cfg["MAX_BASKET_DRAWDOWN"] = float(e_q_max_dd.get() or 0.0)
-            next_cfg["GRID_MAX_DAILY_LOSS"] = float(e_q_daily_loss.get() or 0.0)
-            save_grid_settings(next_cfg)
-            lbl_grid_summary.configure(text=_grid_control_summary())
-            if hasattr(app, "log_message"):
-                app.log_message("[GRID] Quick safety saved.", target="grid")
+            bal = float(e_bal.get() or 0)
         except ValueError:
-            messagebox.showerror("GRID", "Safety quick nhap sai kieu so.", parent=top)
-
-    def _clear_grid_block():
+            lbl_msg.configure(text="Vốn ảo phải là số.", text_color="#E57373")
+            return
         try:
-            mgr = getattr(app, "grid_mgr", None)
-            if mgr:
-                mgr.clear_session_block()
-            lbl_grid_summary.configure(text=_grid_control_summary())
-            if hasattr(app, "log_message"):
-                app.log_message("[GRID] Clear GRID block done.", target="grid")
-        except Exception as e:
-            messagebox.showerror("GRID", f"Khong the clear GRID block: {e}", parent=top)
+            env_utils.update_env({"PAPER_INITIAL_BALANCE": str(bal)})
+        except Exception as exc:  # noqa: BLE001
+            lbl_msg.configure(text=f"Không ghi được .env: {exc}", text_color="#E57373")
+            return
+        config.PAPER_INITIAL_BALANCE = bal
+        lbl_msg.configure(text=f"Đã lưu vốn ảo: {bal:,.0f} VND.", text_color="#81C784")
 
-    def _current_grid_symbol():
+    def _reset_paper():
         try:
-            return app.cbo_symbol.get()
-        except Exception:
-            return getattr(config, "DEFAULT_SYMBOL", "ETHUSD")
-
-    def _rebuild_grid_range():
-        try:
-            sym = _current_grid_symbol()
-            ctx = getattr(app, "latest_market_context", {}).get(sym, {})
-            mgr = getattr(app, "grid_mgr", None)
-            result = mgr.rebuild_session_range(sym, ctx) if mgr else "FAILED|NO_GRID_MANAGER"
-            lbl_grid_summary.configure(text=_grid_control_summary())
-            if hasattr(app, "log_message"):
-                app.log_message(f"[GRID] Rebuild range {sym}: {result}", target="grid")
-        except Exception as e:
-            messagebox.showerror("GRID", f"Khong the rebuild GRID range: {e}", parent=top)
-
-    def _stop_grid_session():
-        try:
-            sym = _current_grid_symbol()
-            mgr = getattr(app, "grid_mgr", None)
-            result = mgr.stop_session(sym) if mgr else "FAILED|NO_GRID_MANAGER"
-            lbl_grid_summary.configure(text=_grid_control_summary())
-            if hasattr(app, "log_message"):
-                app.log_message(f"[GRID] Stop session {sym}: {result}", target="grid")
-        except Exception as e:
-            messagebox.showerror("GRID", f"Khong the stop GRID session: {e}", parent=top)
-
-    ctk.CTkButton(
-        quick,
-        text="SAVE QUICK SAFETY",
-        fg_color="#00838F",
-        hover_color="#006064",
-        command=_save_quick_safety,
-    ).grid(row=3, column=0, columnspan=4, sticky="ew", padx=10, pady=(8, 10))
-    ctk.CTkButton(
-        quick,
-        text="CLEAR GRID BLOCK",
-        fg_color="#455A64",
-        hover_color="#37474F",
-        command=_clear_grid_block,
-    ).grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
-    ctk.CTkButton(
-        quick,
-        text="REBUILD GRID RANGE",
-        fg_color="#1565C0",
-        hover_color="#0D47A1",
-        command=_rebuild_grid_range,
-    ).grid(row=5, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
-    ctk.CTkButton(
-        quick,
-        text="STOP GRID SESSION",
-        fg_color="#6D4C41",
-        hover_color="#4E342E",
-        command=_stop_grid_session,
-    ).grid(row=6, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
-
-    def _open_grid_settings():
-        from grid.grid_ui import open_grid_settings_popup
-        open_grid_settings_popup(app)
-    ctk.CTkButton(
-        grid_body,
-        text="OPEN GRID SETTINGS",
-        fg_color="#00838F",
-        hover_color="#006064",
-        font=("Roboto", 13, "bold"),
-        command=_open_grid_settings,
-    ).pack(anchor="w", padx=14, pady=8)
-    hedge_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_hedge, fg_color="transparent"))
-    hedge_body.pack(fill="both", expand=True)
-    ctk.CTkLabel(
-        hedge_body, text="HEDGE Dual Control", font=("Roboto", 16, "bold"), text_color="#CE93D8"
-    ).pack(anchor="w", padx=14, pady=(14, 6))
-    ctk.CTkLabel(
-        hedge_body,
-        text="Auto HEDGE quét watchlist riêng theo chu kỳ riêng. Signal và Entry/Exit chỉ là bộ lọc entry; safety/daily loss là state riêng của HEDGE.",
-        font=("Arial", 12, "italic"),
-        text_color="#E1BEE7",
-        anchor="w",
-        wraplength=680,
-    ).pack(fill="x", padx=14, pady=(0, 12))
-    try:
-        from hedge.hedge_storage import load_hedge_settings, load_hedge_state, save_hedge_settings
-        hedge_cfg = load_hedge_settings()
-        hedge_state = load_hedge_state()
-    except Exception:
-        hedge_cfg = {"ENABLED": False}
-        hedge_state = {}
-
-    var_hedge_enabled = ctk.BooleanVar(value=hedge_cfg.get("ENABLED", False))
-    var_hedge_signal = ctk.BooleanVar(value=hedge_cfg.get("USE_SIGNAL_FILTER", False))
-    var_hedge_override = ctk.BooleanVar(value=False)
-
-    def _current_hedge_symbol():
-        try:
-            return app.cbo_symbol.get()
-        except Exception:
-            return getattr(config, "DEFAULT_SYMBOL", "ETHUSD")
-
-    def _hedge_timeframe_for_group(group):
-        try:
-            cfg = _effective_hedge_cfg(_current_hedge_symbol())
-        except Exception:
-            cfg = hedge_cfg
-        return cfg.get("SWING_TIMEFRAME", hedge_cfg.get("SWING_TIMEFRAME", "15m"))
-
-    def _save_hedge_timeframe_for_group(group, timeframe):
-        return None
-
-    def _effective_hedge_cfg(symbol=None):
-        symbol = symbol or _current_hedge_symbol()
-        try:
-            mgr = getattr(app, "hedge_mgr", None)
-            return mgr.settings_for_symbol(symbol, load_hedge_settings()) if mgr else load_hedge_settings()
-        except Exception:
-            return hedge_cfg
-
-    hedge_preview_form_getter = None
-
-    def _hedge_preview_text():
-        try:
-            from hedge.hedge_storage import load_hedge_settings as _load_hs
-            base_cfg = _load_hs()
-        except Exception:
-            base_cfg = {}
-        symbols = list(base_cfg.get("WATCHLIST") or [])
-        try:
-            live_symbols = [sym for sym, var in hedge_watchlist_vars.items() if var.get()]
-            if live_symbols:
-                symbols = live_symbols
-        except Exception:
-            pass
-        current_symbol = _current_hedge_symbol()
-        if current_symbol not in symbols:
-            symbols.insert(0, current_symbol)
-        if not symbols:
-            symbols = list(getattr(config, "COIN_LIST", []) or [current_symbol])
-        contexts = getattr(app, "latest_market_context", {}) or {}
-        lines = [f"{'Symbol':<8} {'Price':>10}  {'Gate':<8} {'Signal':<8} {'Entry':<8} Reason"]
-        for symbol in symbols[:8]:
-            cfg = _effective_hedge_cfg(symbol)
-            if symbol == current_symbol and callable(hedge_preview_form_getter):
-                try:
-                    cfg = {**cfg, **hedge_preview_form_getter()}
-                except Exception:
-                    pass
-            ctx = contexts.get(symbol, {}) if isinstance(contexts, dict) else {}
-            gate = {"status": "WAIT", "reason": "No context", "signal_status": "---", "entry_status": "---"}
-            try:
-                gate = app.hedge_mgr.evaluate_entry_gate(symbol, ctx, cfg)
-            except Exception as exc:
-                gate["reason"] = f"ERR:{exc}"
-            price = ctx.get("current_price") or ctx.get("price") or ctx.get("bid") or ctx.get("ask")
-            if price is None and hasattr(app, "connector"):
-                try:
-                    tick = app.connector.get_market_status(symbol)
-                    if isinstance(tick, dict):
-                        price = tick.get("last") or tick.get("bid") or tick.get("ask") or tick.get("price")
-                except Exception:
-                    price = None
-            price_txt = f"{float(price):,.2f}" if isinstance(price, (int, float)) else "---"
-            reason = str(gate.get("reason", "---"))[:28]
-            lines.append(
-                f"{symbol:<8} {price_txt:>10}  {str(gate.get('status', '---')):<8} "
-                f"{str(gate.get('signal_status', '---')):<8} {str(gate.get('entry_status', '---')):<8} {reason}"
-            )
-        if len(symbols) > 8:
-            lines.append(f"... +{len(symbols) - 8} symbols")
-        return "\n".join(lines)
-
-    def _set_hedge_lights(is_on):
-        color = COL_GREEN if is_on else COL_RED
-        for attr in ("ind_hedge_light", "ind_ad_hedge_light", "ind_hedge_ready_light"):
-            light = getattr(app, attr, None)
-            if light and light.winfo_exists():
-                light.configure(fg_color=color)
-
-    def _hedge_summary():
-        try:
-            from hedge.hedge_storage import load_hedge_settings, load_hedge_state
-            cfg = load_hedge_settings()
-            st = load_hedge_state()
-            last = st.get("last_decision") or {}
-            last_txt = "No decision yet"
-            if last:
-                sym, data = list(last.items())[-1]
-                last_txt = f"{sym}: {data.get('status')} / {data.get('reason')}"
-            return (
-                f"Auto scan: {'ON' if cfg.get('ENABLED') else 'OFF'} | "
-                f"Watchlist: {', '.join(cfg.get('WATCHLIST') or []) or 'trống'} | "
-                f"Scan: {cfg.get('HEDGE_SCAN_INTERVAL_SECONDS', 2)}s | Log cooldown: {cfg.get('HEDGE_LOG_COOLDOWN_SECONDS', 300)}s\n"
-                f"Mode: DUAL | "
-                f"Signal filter: {'ON' if cfg.get('USE_SIGNAL_FILTER') else 'OFF'} | "
-                f"Entry/Exit filter: {'ON' if cfg.get('USE_ENTRY_EXIT_FILTER') else 'OFF'} | "
-                f"HEDGE SL/TP: {'ON' if cfg.get('USE_HEDGE_SLTP', cfg.get('USE_SANDBOX_SLTP', True)) else 'OFF'} | "
-                f"TSL: {cfg.get('HEDGE_TSL_MODE', 'BE+STEP_R+SWING') if cfg.get('USE_TSL', True) else 'OFF'} | "
-                f"Survivor: {cfg.get('SURVIVOR_PROTECT', 'BE_FEE')} | "
-                f"Lot mode: {cfg.get('LOT_MODE', 'FIXED')} | Base lot: {cfg.get('FIXED_LOT', 0.1)} | "
-                f"Account risk: {cfg.get('RISK_PERCENT_PER_PAIR', 0.5)}% | Max lot cap: {cfg.get('MAX_LOT_CAP', 1.0)} | "
-                f"Max pairs/symbol: {cfg.get('MAX_PAIRS_PER_SYMBOL', 1)}\n"
-                f"Daily loss: {cfg.get('HEDGE_MAX_DAILY_LOSS', 0.0)} | "
-                f"Session TP/SL: {cfg.get('HEDGE_SESSION_TP_USD', 0.0)}/{cfg.get('HEDGE_SESSION_SL_USD', 0.0)} | "
-                f"Timeout: {cfg.get('HEDGE_MAX_HOLD_MINUTES', 0)}m | "
-                f"Cooldown close: {cfg.get('COOLDOWN_AFTER_CLOSE_SECONDS', 900)}s | "
-                f"Cooldown loss: {cfg.get('COOLDOWN_AFTER_LOSS_SECONDS', 1800)}s | "
-                f"Spread: {'ON' if cfg.get('CHECK_SPREAD', True) else 'OFF'}<= {cfg.get('MAX_SPREAD_POINTS', 150)} | "
-                f"Ping: {'ON' if cfg.get('CHECK_PING', True) else 'OFF'}<= {cfg.get('MAX_PING_MS', 150)}ms\n"
-                f"Today PnL: {float(st.get('hedge_pnl_today', 0.0) or 0.0):+.2f} | "
-                f"Sessions: {int(st.get('hedge_sessions_today', 0) or 0)} | Last: {last_txt}"
-            )
-        except Exception as e:
-            return f"HEDGE summary error: {e}"
-
-    def _toggle_hedge_enabled():
-        try:
-            from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
-            cfg = load_hedge_settings()
-            cfg["ENABLED"] = var_hedge_enabled.get()
-            save_hedge_settings(cfg)
-            _set_hedge_lights(var_hedge_enabled.get())
-            if hasattr(app, "refresh_hedge_runtime_light"):
-                app.refresh_hedge_runtime_light()
-            lbl_hedge_state.configure(
-                text=f"Auto scan: {'ON' if var_hedge_enabled.get() else 'OFF'}",
-                text_color="#CE93D8" if var_hedge_enabled.get() else "gray",
-            )
-            if preview_frame.winfo_exists():
-                preview_frame.configure(border_color=COL_GREEN if var_hedge_enabled.get() else "#6A1B9A")
-            if lbl_preview_live.winfo_exists():
-                lbl_preview_live.configure(
-                    text="LIVE" if var_hedge_enabled.get() else "STANDBY",
-                    text_color=COL_GREEN if var_hedge_enabled.get() else "#B0BEC5",
-                )
-            lbl_hedge_summary.configure(text=_hedge_summary())
-            if hasattr(app, "log_message"):
-                app.log_message(f"[HEDGE] AUTO HEDGE ENABLED = {'ON' if var_hedge_enabled.get() else 'OFF'}", target="hedge")
-        except Exception as e:
-            messagebox.showerror("HEDGE", f"Khong the luu HEDGE switch: {e}", parent=top)
-
-    f_hedge_switch = ctk.CTkFrame(hedge_body, fg_color="#242424", corner_radius=8)
-    f_hedge_switch.pack(fill="x", padx=14, pady=(0, 12))
-    lbl_hedge_state = ctk.CTkLabel(
-        f_hedge_switch,
-        text=f"Auto scan: {'ON' if var_hedge_enabled.get() else 'OFF'}",
-        font=("Roboto", 12, "bold"),
-        text_color="#CE93D8" if var_hedge_enabled.get() else "gray",
-    )
-    ctk.CTkSwitch(
-        f_hedge_switch,
-        text="AUTO HEDGE BOT",
-        variable=var_hedge_enabled,
-        progress_color="#8E24AA",
-        fg_color=COL_RED,
-        font=("Roboto", 13, "bold"),
-        command=_toggle_hedge_enabled,
-    ).pack(side="left", padx=12, pady=12)
-    lbl_hedge_state.pack(side="left", padx=12)
-    _set_hedge_lights(var_hedge_enabled.get())
-
-    lbl_hedge_summary = ctk.CTkLabel(
-        hedge_body,
-        text=_hedge_summary(),
-        font=("Roboto", 12),
-        text_color="#E1BEE7",
-        justify="left",
-        anchor="w",
-    )
-
-    preview_frame = ctk.CTkFrame(
-        hedge_body,
-        fg_color="#171F1C" if var_hedge_enabled.get() else "#211628",
-        corner_radius=8,
-        border_width=2,
-        border_color=COL_GREEN if var_hedge_enabled.get() else "#6A1B9A",
-    )
-    preview_frame.pack(fill="x", padx=14, pady=(0, 10))
-    preview_head = ctk.CTkFrame(preview_frame, fg_color="transparent")
-    preview_head.pack(fill="x", padx=12, pady=(10, 2))
-    ctk.CTkLabel(
-        preview_head,
-        text="HEDGE Gate Monitor",
-        font=("Roboto", 13, "bold"),
-        text_color=COL_GREEN if var_hedge_enabled.get() else "#CE93D8",
-    ).pack(side="left")
-    lbl_preview_live = ctk.CTkLabel(
-        preview_head,
-        text="LIVE" if var_hedge_enabled.get() else "STANDBY",
-        font=("Roboto", 12, "bold"),
-        text_color=COL_GREEN if var_hedge_enabled.get() else "#B0BEC5",
-    )
-    lbl_preview_live.pack(side="right")
-    lbl_hedge_preview = ctk.CTkLabel(
-        preview_frame,
-        text=_hedge_preview_text(),
-        font=("Consolas", 12),
-        text_color="#FFFFFF",
-        justify="left",
-        anchor="w",
-        wraplength=920,
-    )
-    lbl_hedge_preview.pack(fill="x", padx=12, pady=(0, 8))
-
-    ctk.CTkLabel(
-        preview_frame,
-        text=(
-            "Monitor hiển thị Symbol, Price, Signal gate, Entry gate và lý do block/pass theo watchlist."
-        ),
-        font=("Arial", 11, "italic"),
-        text_color="#F8BBD0",
-        anchor="w",
-        justify="left",
-        wraplength=920,
-    ).pack(fill="x", padx=12, pady=(0, 10))
-
-    hsimple = ctk.CTkFrame(
-        hedge_body,
-        fg_color="#242424",
-        corner_radius=8,
-        border_width=1,
-        border_color="#6A1B9A",
-    )
-    hsimple.pack(fill="x", padx=14, pady=(0, 12))
-    hsimple.grid_columnconfigure((0, 1), weight=1, uniform="hedge_cfg")
-    cfg_header = ctk.CTkFrame(hsimple, fg_color="transparent")
-    cfg_header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 4))
-    cfg_header.grid_columnconfigure(0, weight=1)
-    ctk.CTkLabel(
-        cfg_header,
-        text="HEDGE Dual Config",
-        font=("Roboto", 13, "bold"),
-        text_color="#CE93D8",
-    ).grid(row=0, column=0, sticky="w")
-    btn_open_hedge_override = ctk.CTkButton(
-        cfg_header,
-        text="OPEN OVERRIDE",
-        fg_color="#7B1FA2",
-        hover_color="#4A148C",
-        width=150,
-        height=30,
-        state="disabled",
-    )
-    btn_open_hedge_override.grid(row=0, column=1, sticky="e", padx=(8, 0))
-    btn_save_hedge_settings = ctk.CTkButton(
-        cfg_header,
-        text="SAVE SETTINGS",
-        fg_color="#6A1B9A",
-        hover_color="#4A148C",
-        width=140,
-        height=30,
-        state="disabled",
-    )
-    btn_save_hedge_settings.grid(row=0, column=2, sticky="e", padx=(8, 0))
-    btn_clear_hedge_cooldown = ctk.CTkButton(
-        cfg_header,
-        text="CLEAR BLOCK/CD",
-        fg_color="#455A64",
-        hover_color="#37474F",
-        width=145,
-        height=30,
-        state="disabled",
-    )
-    btn_clear_hedge_cooldown.grid(row=0, column=3, sticky="e", padx=(8, 0))
-    var_h_entry_filter = ctk.BooleanVar(value=bool(hedge_cfg.get("USE_ENTRY_EXIT_FILTER", False)))
-    var_h_hedge_sltp = ctk.BooleanVar(value=bool(hedge_cfg.get("USE_HEDGE_SLTP", hedge_cfg.get("USE_SANDBOX_SLTP", True))))
-    var_h_tsl = ctk.BooleanVar(value=bool(hedge_cfg.get("USE_TSL", True)))
-    def _h_section(parent, title, row, col, color="#CE93D8", columnspan=1):
-        frame = ctk.CTkFrame(parent, fg_color="#202020", corner_radius=8, border_width=1, border_color=color)
-        frame.grid(row=row, column=col, columnspan=columnspan, sticky="new", padx=10, pady=8)
-        frame.grid_columnconfigure((1, 3, 5, 7), weight=1)
-        ctk.CTkLabel(frame, text=title, font=("Roboto", 12, "bold"), text_color=color).grid(
-            row=0, column=0, columnspan=8, sticky="w", padx=10, pady=(8, 4)
-        )
-        return frame
-
-    right_stack = ctk.CTkFrame(hsimple, fg_color="transparent")
-    right_stack.grid(row=1, column=1, sticky="new", padx=0, pady=0)
-    right_stack.grid_columnconfigure(0, weight=1)
-    f_risk = _h_section(hsimple, "1) Risk & SL/TP", 1, 0, "#CE93D8")
-    f_filters = _h_section(right_stack, "2) Filters", 0, 0, "#29B6F6")
-    f_watch_actions = _h_section(right_stack, "3) Watchlist", 1, 0, "#7E57C2")
-    f_safety = _h_section(hsimple, "4) Safety", 2, 0, "#FFB300", columnspan=2)
-    f_safety.configure(fg_color="#211F17")
-
-    ctk.CTkCheckBox(f_filters, text="Use Signal Filter", variable=var_hedge_signal).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=6)
-    ctk.CTkCheckBox(f_filters, text="Use Entry/Exit Filter", variable=var_h_entry_filter).grid(row=1, column=2, columnspan=2, sticky="w", padx=10, pady=6)
-    ctk.CTkLabel(f_filters, text="Signal rule").grid(row=2, column=0, sticky="w", padx=10, pady=5)
-    cbo_h2_signal_rule = ctk.CTkOptionMenu(f_filters, values=["SANDBOX_SIGNAL"], width=170)
-    cbo_h2_signal_rule.set(str(hedge_cfg.get("HEDGE_SIGNAL_RULE", "SANDBOX_SIGNAL")).upper())
-    cbo_h2_signal_rule.grid(row=2, column=1, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_filters, text="Entry rule").grid(row=2, column=2, sticky="w", padx=10, pady=5)
-    cbo_h2_entry_rule = ctk.CTkOptionMenu(
-        f_filters,
-        values=["SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZONE", "FALLBACK_R"],
-        width=190,
-    )
-    cbo_h2_entry_rule.set(str(hedge_cfg.get("HEDGE_ENTRY_RULE", "SWING_REJECTION")).upper())
-    cbo_h2_entry_rule.grid(row=2, column=3, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_filters, text="Entry SL").grid(row=3, column=0, sticky="w", padx=10, pady=5)
-    cbo_h2_ee_sl_rule = ctk.CTkOptionMenu(
-        f_filters,
-        values=["MATCH_ENTRY", "SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZONE", "SANDBOX"],
-        width=170,
-    )
-    cbo_h2_ee_sl_rule.set(str(hedge_cfg.get("HEDGE_EE_SL_RULE", "MATCH_ENTRY")).upper().replace("AUTO", "MATCH_ENTRY"))
-    cbo_h2_ee_sl_rule.grid(row=3, column=1, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_filters, text="Entry TP").grid(row=3, column=2, sticky="w", padx=10, pady=5)
-    cbo_h2_ee_tp_rule = ctk.CTkOptionMenu(
-        f_filters,
-        values=["MATCH_ENTRY", "RR", "SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZONE", "NO_TP"],
-        width=190,
-    )
-    cbo_h2_ee_tp_rule.set(str(hedge_cfg.get("HEDGE_EE_TP_RULE", "MATCH_ENTRY")).upper().replace("AUTO", "MATCH_ENTRY"))
-    cbo_h2_ee_tp_rule.grid(row=3, column=3, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(
-        f_filters,
-        text="Signal chạy trước; Entry/Exit là bộ lọc điểm vào nếu được bật. Rule chọn ở đây là riêng của HEDGE.",
-        font=("Arial", 11, "italic"),
-        text_color="#B0BEC5",
-        wraplength=520,
-        justify="left",
-    ).grid(row=4, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 8))
-
-    def _h2_entry(parent, label, value, row, col, width=90):
-        label_widget = ctk.CTkLabel(parent, text=label)
-        label_widget.grid(row=row, column=col, sticky="w", padx=10, pady=5)
-        entry = ctk.CTkEntry(parent, width=width, justify="center")
-        entry.insert(0, str(value))
-        entry.grid(row=row, column=col + 1, sticky="w", padx=10, pady=5)
-        entry._label_widget = label_widget
-        return entry
-
-    def _h_zone(parent, title, row, color="#90CAF9"):
-        ctk.CTkLabel(
-            parent,
-            text=title,
-            font=("Roboto", 11, "bold"),
-            text_color=color,
-        ).grid(row=row, column=0, columnspan=8, sticky="w", padx=10, pady=(10, 2))
-
-    ctk.CTkCheckBox(f_risk, text="HEDGE SL/TP Rule", variable=var_h_hedge_sltp).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=6)
-    ctk.CTkCheckBox(f_risk, text="Use TSL", variable=var_h_tsl).grid(row=1, column=2, columnspan=2, sticky="w", padx=10, pady=6)
-    ctk.CTkLabel(f_risk, text="HEDGE SL rule").grid(row=2, column=0, sticky="w", padx=10, pady=5)
-    cbo_h2_sl_rule = ctk.CTkOptionMenu(
-        f_risk,
-        values=["BASE_SL_ATR", "SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZONE"],
-        width=190,
-    )
-    cbo_h2_sl_rule.set(str(hedge_cfg.get("HEDGE_SL_RULE", "BASE_SL_ATR")).upper())
-    cbo_h2_sl_rule.grid(row=2, column=1, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_risk, text="HEDGE TP rule").grid(row=2, column=2, sticky="w", padx=10, pady=5)
-    cbo_h2_tp_rule = ctk.CTkOptionMenu(
-        f_risk,
-        values=["RR", "SWING", "NO_TP"],
-        width=130,
-    )
-    cbo_h2_tp_rule.set(str(hedge_cfg.get("HEDGE_TP_RULE", "RR")).upper())
-    cbo_h2_tp_rule.grid(row=2, column=3, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_risk, text="Lot mode").grid(row=3, column=0, sticky="w", padx=10, pady=5)
-    cbo_h2_lot_mode = ctk.CTkOptionMenu(f_risk, values=["FIXED", "ACCOUNT_RISK"], width=140)
-    _h2_lot_mode_value = str(hedge_cfg.get("LOT_MODE", "FIXED")).upper()
-    cbo_h2_lot_mode.set("ACCOUNT_RISK" if _h2_lot_mode_value == "RISK_PERCENT" else _h2_lot_mode_value)
-    cbo_h2_lot_mode.grid(row=3, column=1, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_risk, text="Survivor protect").grid(row=3, column=2, sticky="w", padx=10, pady=5)
-    cbo_h2_survivor = ctk.CTkOptionMenu(f_risk, values=["BE_FEE", "BE_ONLY", "OFF"], width=130)
-    cbo_h2_survivor.set(str(hedge_cfg.get("SURVIVOR_PROTECT", "BE_FEE")).upper())
-    cbo_h2_survivor.grid(row=3, column=3, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_risk, text="TSL tactics", text_color="#00E676", font=("Roboto", 12, "bold")).grid(
-        row=4, column=0, sticky="w", padx=10, pady=(8, 4)
-    )
-    _h2_tsl_modes = set(str(hedge_cfg.get("HEDGE_TSL_MODE", "BE+STEP_R+SWING") or "").upper().replace(",", "+").split("+"))
-    var_h2_tsl_be = ctk.BooleanVar(value="BE" in _h2_tsl_modes)
-    var_h2_tsl_pnl = ctk.BooleanVar(value="PNL" in _h2_tsl_modes)
-    var_h2_tsl_step = ctk.BooleanVar(value="STEP_R" in _h2_tsl_modes)
-    var_h2_tsl_swing = ctk.BooleanVar(value="SWING" in _h2_tsl_modes)
-    var_h2_tsl_cash = ctk.BooleanVar(value="BE_CASH" in _h2_tsl_modes)
-    var_h2_tsl_psar = ctk.BooleanVar(value="PSAR_TRAIL" in _h2_tsl_modes)
-    _h2_tsl_checks = [
-        ("BE", var_h2_tsl_be, 0),
-        ("PNL", var_h2_tsl_pnl, 1),
-        ("STEP_R", var_h2_tsl_step, 2),
-        ("SWING", var_h2_tsl_swing, 3),
-        ("BE_CASH", var_h2_tsl_cash, 4),
-        ("PSAR_TRAIL", var_h2_tsl_psar, 5),
-    ]
-    for label, var, idx in _h2_tsl_checks:
-        ctk.CTkCheckBox(f_risk, text=label, variable=var, command=lambda: _refresh_hedge_preview()).grid(
-            row=5 + idx // 3, column=(idx % 3), columnspan=1, sticky="w", padx=10, pady=5
-        )
-    e_h2_lot = _h2_entry(f_risk, "Lot per leg", hedge_cfg.get("FIXED_LOT", 0.1), 7, 0)
-    e_h2_risk_pct = _h2_entry(f_risk, "Account risk %", hedge_cfg.get("RISK_PERCENT_PER_PAIR", 0.5), 7, 2)
-    e_h2_max_lot_cap = _h2_entry(f_risk, "Max lot cap", hedge_cfg.get("MAX_LOT_CAP", 1.0), 8, 0)
-    e_h2_max_pairs = _h2_entry(f_risk, "Max pairs/symbol", hedge_cfg.get("MAX_PAIRS_PER_SYMBOL", 1), 8, 2)
-    ctk.CTkLabel(
-        f_risk,
-        text="Hint: HEDGE SL/TP Rule dùng cùng công thức base SL/TP của sandbox/bot (swingpoint + ATR, swing TP hoặc RR TP), nhưng bật/tắt và state là riêng của HEDGE.",
-        font=("Arial", 11, "italic"),
-        text_color="#F8BBD0",
-        wraplength=520,
-        justify="left",
-    ).grid(row=9, column=0, columnspan=4, sticky="w", padx=10, pady=(4, 8))
-
-    def _compose_h2_tsl_mode():
-        if not var_h_tsl.get():
-            return "OFF"
-        modes = [label for label, var, _idx in _h2_tsl_checks if var.get()]
-        return "+".join(modes) if modes else "OFF"
-
-    def _set_entry_active(entry, active=True):
-        label_widget = getattr(entry, "_label_widget", None)
-        if active:
-            if label_widget:
-                label_widget.grid()
-                label_widget.configure(text_color="#FFFFFF")
-            entry.grid()
-            entry.configure(state="normal")
-        else:
-            if label_widget:
-                label_widget.grid_remove()
-            entry.grid_remove()
-
-    def _refresh_hedge_risk_fields(_value=None):
-        lot_mode = str(cbo_h2_lot_mode.get() or "FIXED").upper()
-        use_tsl = bool(var_h_tsl.get())
-        _set_entry_active(e_h2_lot, lot_mode == "FIXED")
-        _set_entry_active(e_h2_risk_pct, lot_mode == "ACCOUNT_RISK")
-        try:
-            _refresh_hedge_preview()
-        except Exception:
-            pass
-
-    cbo_h2_lot_mode.configure(command=_refresh_hedge_risk_fields)
-    var_h_tsl.trace_add("write", lambda *_: _refresh_hedge_risk_fields())
-    _refresh_hedge_risk_fields()
-
-    e_h2_scan_interval = _h2_entry(f_safety, "Auto scan sec", hedge_cfg.get("HEDGE_SCAN_INTERVAL_SECONDS", 2), 1, 0, width=72)
-    e_h2_log_cd = _h2_entry(f_safety, "Log cooldown sec", hedge_cfg.get("HEDGE_LOG_COOLDOWN_SECONDS", 300), 1, 2, width=72)
-    e_h2_cooldown = _h2_entry(f_safety, "Close cooldown sec", hedge_cfg.get("COOLDOWN_AFTER_CLOSE_SECONDS", 900), 1, 4, width=72)
-    e_h2_loss_cooldown = _h2_entry(f_safety, "Loss cooldown sec", hedge_cfg.get("COOLDOWN_AFTER_LOSS_SECONDS", 1800), 1, 6, width=72)
-    e_h2_max_losses = _h2_entry(f_safety, "Consecutive losses", hedge_cfg.get("MAX_CONSECUTIVE_LOSSES", 3), 2, 0, width=72)
-    e_h2_global_cd = _h2_entry(f_safety, "Global cooldown sec", hedge_cfg.get("GLOBAL_COOLDOWN_SECONDS", 3600), 2, 2, width=72)
-    e_h2_daily_loss = _h2_entry(f_safety, "Daily loss HEDGE", hedge_cfg.get("HEDGE_MAX_DAILY_LOSS", 0.0), 2, 4, width=72)
-    e_h2_max_day = _h2_entry(f_safety, "Max sessions/day", hedge_cfg.get("MAX_SESSIONS_PER_DAY", 0), 2, 6, width=72)
-    e_h2_session_tp = _h2_entry(f_safety, "Session TP USD", hedge_cfg.get("HEDGE_SESSION_TP_USD", 0.0), 3, 0, width=72)
-    e_h2_session_sl = _h2_entry(f_safety, "Session SL USD", hedge_cfg.get("HEDGE_SESSION_SL_USD", 0.0), 3, 2, width=72)
-    e_h2_max_hold = _h2_entry(f_safety, "Max hold min", hedge_cfg.get("HEDGE_MAX_HOLD_MINUTES", 0), 3, 4, width=72)
-    var_h2_check_spread = ctk.BooleanVar(value=bool(hedge_cfg.get("CHECK_SPREAD", True)))
-    var_h2_check_ping = ctk.BooleanVar(value=bool(hedge_cfg.get("CHECK_PING", True)))
-    ctk.CTkCheckBox(f_safety, text="Check spread", variable=var_h2_check_spread).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=5)
-    ctk.CTkCheckBox(f_safety, text="Check ping", variable=var_h2_check_ping).grid(row=4, column=2, columnspan=2, sticky="w", padx=10, pady=5)
-    e_h2_max_spread = _h2_entry(f_safety, "Max spread points", hedge_cfg.get("MAX_SPREAD_POINTS", 150), 4, 4, width=72)
-    e_h2_max_ping = _h2_entry(f_safety, "Max ping ms", hedge_cfg.get("MAX_PING_MS", 150), 4, 6, width=72)
-
-    def _paint_safety(entry, color):
-        label_widget = getattr(entry, "_label_widget", None)
-        if label_widget:
-            label_widget.configure(text_color=color)
-        entry.configure(border_color=color)
-
-    for _entry in (e_h2_scan_interval, e_h2_log_cd, e_h2_cooldown, e_h2_loss_cooldown):
-        _paint_safety(_entry, "#64B5F6")
-    for _entry in (e_h2_max_losses, e_h2_global_cd, e_h2_daily_loss, e_h2_max_day):
-        _paint_safety(_entry, "#FFB300")
-    for _entry in (e_h2_session_tp, e_h2_session_sl, e_h2_max_hold):
-        _paint_safety(_entry, "#CE93D8")
-    for _entry in (e_h2_max_spread, e_h2_max_ping):
-        _paint_safety(_entry, "#4DD0E1")
-    ctk.CTkLabel(
-        f_safety,
-        text="Hint: Xanh=runtime/cooldown, vàng=daily brake, tím=session brake, cyan=execution check. Chỉ ghi HEDGE state riêng, không reset BOT/GRID.",
-        font=("Arial", 11, "italic"),
-        text_color="#FFD54F",
-        wraplength=760,
-        justify="left",
-    ).grid(row=5, column=0, columnspan=8, sticky="w", padx=10, pady=(4, 8))
-
-    watchlist_frame = f_watch_actions
-    ctk.CTkLabel(
-        watchlist_frame,
-        text="Tick symbol Auto HEDGE scan. Manual HEDGE vẫn theo symbol đang chọn.",
-        text_color="#F8BBD0",
-        font=("Arial", 11, "italic"),
-        wraplength=520,
-        justify="left",
-    ).grid(row=1, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 6))
-    hedge_watchlist_vars = {}
-    selected_watchlist = set(hedge_cfg.get("WATCHLIST") or [])
-    hedge_watchlist_symbols = getattr(config, "COIN_LIST", []) or [getattr(config, "DEFAULT_SYMBOL", "ETHUSD")]
-    hedge_action_row = 2 + ((len(hedge_watchlist_symbols) + 3) // 4)
-    for idx, sym in enumerate(hedge_watchlist_symbols):
-        var = ctk.BooleanVar(value=sym in selected_watchlist)
-        hedge_watchlist_vars[sym] = var
-        ctk.CTkCheckBox(watchlist_frame, text=sym, variable=var, command=lambda: _refresh_hedge_preview()).grid(
-            row=2 + idx // 4,
-            column=idx % 4,
-            sticky="w",
-            padx=10,
-            pady=4,
-        )
-
-    def _refresh_hedge_preview():
-        lbl_hedge_summary.configure(text=_hedge_summary())
-        lbl_hedge_preview.configure(text=_hedge_preview_text())
-
-    for _var in (var_hedge_signal, var_h_entry_filter, var_h_hedge_sltp):
-        _var.trace_add("write", lambda *_: _refresh_hedge_preview())
-
-    def _hedge_override_has(symbol):
-        try:
-            from hedge.hedge_storage import load_hedge_settings
-            return bool((load_hedge_settings().get("SYMBOL_OVERRIDES") or {}).get(symbol))
-        except Exception:
-            return False
-
-    def _refresh_hedge_override_button():
-        sym = _current_hedge_symbol()
-        mark = " *" if _hedge_override_has(sym) else ""
-        if hasattr(btn_open_hedge_override, "configure"):
-            btn_open_hedge_override.configure(text=f"OVERRIDE {sym}{mark}")
-
-    def _open_hedge_override_popup():
-        from ui_hedge_override_popup import open_hedge_override_popup
-        open_hedge_override_popup(app, _current_hedge_symbol(), on_close=lambda: (_refresh_hedge_preview(), _refresh_hedge_override_button()))
-
-    def _save_hedge_quick():
-        try:
-            from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
-            cfg = load_hedge_settings()
-            cfg["USE_SIGNAL_FILTER"] = var_hedge_signal.get()
-            cfg["HEDGE_SIGNAL_RULE"] = cbo_h2_signal_rule.get()
-            cfg["USE_ENTRY_EXIT_FILTER"] = var_h_entry_filter.get()
-            cfg["HEDGE_ENTRY_RULE"] = cbo_h2_entry_rule.get()
-            cfg["HEDGE_EE_SL_RULE"] = cbo_h2_ee_sl_rule.get()
-            cfg["HEDGE_EE_TP_RULE"] = cbo_h2_ee_tp_rule.get()
-            cfg["USE_HEDGE_SLTP"] = var_h_hedge_sltp.get()
-            cfg["HEDGE_SL_RULE"] = cbo_h2_sl_rule.get()
-            cfg["HEDGE_TP_RULE"] = cbo_h2_tp_rule.get()
-            cfg.pop("USE_SANDBOX_SLTP", None)
-            cfg["USE_TSL"] = var_h_tsl.get()
-            cfg["HEDGE_TSL_MODE"] = _compose_h2_tsl_mode()
-            cfg["SURVIVOR_PROTECT"] = cbo_h2_survivor.get()
-            cfg["LOT_MODE"] = cbo_h2_lot_mode.get()
-            cfg["FIXED_LOT"] = float(e_h2_lot.get() or 0.1)
-            cfg["RISK_PERCENT_PER_PAIR"] = float(e_h2_risk_pct.get() or 0.0)
-            cfg["MAX_LOT_CAP"] = float(e_h2_max_lot_cap.get() or 0.0)
-            cfg["MAX_PAIRS_PER_SYMBOL"] = int(float(e_h2_max_pairs.get() or 1))
-            cfg["COOLDOWN_AFTER_CLOSE_SECONDS"] = int(float(e_h2_cooldown.get() or 0))
-            cfg["COOLDOWN_AFTER_LOSS_SECONDS"] = int(float(e_h2_loss_cooldown.get() or 0))
-            cfg["MAX_CONSECUTIVE_LOSSES"] = int(float(e_h2_max_losses.get() or 0))
-            cfg["GLOBAL_COOLDOWN_SECONDS"] = int(float(e_h2_global_cd.get() or 0))
-            cfg["HEDGE_SCAN_INTERVAL_SECONDS"] = max(1, int(float(e_h2_scan_interval.get() or 2)))
-            cfg["HEDGE_LOG_COOLDOWN_SECONDS"] = max(0, int(float(e_h2_log_cd.get() or 300)))
-            cfg["CHECK_SPREAD"] = var_h2_check_spread.get()
-            cfg["MAX_SPREAD_POINTS"] = int(float(e_h2_max_spread.get() or 150))
-            cfg["CHECK_PING"] = var_h2_check_ping.get()
-            cfg["MAX_PING_MS"] = int(float(e_h2_max_ping.get() or 150))
-            cfg["HEDGE_MAX_DAILY_LOSS"] = float(e_h2_daily_loss.get() or 0.0)
-            cfg["MAX_SESSIONS_PER_DAY"] = int(float(e_h2_max_day.get() or 0))
-            cfg["HEDGE_SESSION_TP_USD"] = float(e_h2_session_tp.get() or 0.0)
-            cfg["HEDGE_SESSION_SL_USD"] = float(e_h2_session_sl.get() or 0.0)
-            cfg["HEDGE_MAX_HOLD_MINUTES"] = int(float(e_h2_max_hold.get() or 0))
-            cfg["WATCHLIST"] = [sym for sym, var in hedge_watchlist_vars.items() if var.get()]
-            for old_key in (
-                "TACTIC", "USE_SWING_FILTER", "USE_SANDBOX_SLTP", "SWING_GROUP", "SWING_TIMEFRAME", "SWING_TOLERANCE_ATR",
-                "SL_TP_MODE", "SL_ATR_BUFFER", "TP_ATR_BUFFER", "BASKET_EXIT_MODE", "PAIR_TP_USD",
-                "PAIR_SL_USD", "BASKET_TP_R", "BASKET_SL_R", "BASKET_BUFFER_R",
-                "BASKET_TRAIL_START_R", "BASKET_TRAIL_GIVEBACK_R", "LOSING_LEG_SL_USD",
-                "RECOVERY_MODE", "RECOVERY_TARGET_USD", "RECOVERY_BUFFER_R", "RECOVERY_GIVEBACK_USD",
-                "RECOVERY_FAIL_GUARD", "RECOVERY_FAIL_PULLBACK_USD", "RECOVERY_TSL_MODE",
-                "RECOVERY_TSL_ENABLED", "RECOVERY_TSL_START_R", "RECOVERY_TSL_GIVEBACK_R",
-                "NO_MOVE_TIMEOUT_SECONDS", "NO_MOVE_MIN_MFE_USD", "MAX_HOLD_SECONDS",
-            ):
-                cfg.pop(old_key, None)
-            save_hedge_settings(cfg)
-            _refresh_hedge_preview()
-            if hasattr(app, "update_hedge_manual_preview"):
-                app.update_hedge_manual_preview()
-            if hasattr(app, "log_message"):
-                app.log_message("[HEDGE] Quick settings saved.", target="hedge")
+            bal = float(e_bal.get() or 0) or None
         except ValueError:
-            messagebox.showerror("HEDGE", "HEDGE quick nhap sai kieu so.", parent=top)
-
-    def _clear_hedge_block():
-        mgr = getattr(app, "hedge_mgr", None)
-        result = mgr.clear_session_block() if mgr else "FAILED|NO_HEDGE_MANAGER"
-        _refresh_hedge_preview()
+            bal = None
+        try:
+            app.connector.reset_paper(bal)
+        except Exception as exc:  # noqa: BLE001
+            lbl_msg.configure(text=f"Reset thất bại: {exc}", text_color="#E57373")
+            return
         if hasattr(app, "log_message"):
-            app.log_message(f"[HEDGE] Clear block: {result}", target="hedge")
+            app.log_message("✅ Đã reset tài khoản Paper về vốn ảo ban đầu.", target="bot")
+        lbl_msg.configure(text="Đã reset tài khoản Paper về vốn ảo ban đầu.", text_color="#81C784")
 
-    def _collect_hedge_quick_values():
-        return {
-            "USE_SIGNAL_FILTER": var_hedge_signal.get(),
-            "HEDGE_SIGNAL_RULE": cbo_h2_signal_rule.get(),
-            "USE_ENTRY_EXIT_FILTER": var_h_entry_filter.get(),
-            "HEDGE_ENTRY_RULE": cbo_h2_entry_rule.get(),
-            "HEDGE_EE_SL_RULE": cbo_h2_ee_sl_rule.get(),
-            "HEDGE_EE_TP_RULE": cbo_h2_ee_tp_rule.get(),
-            "USE_HEDGE_SLTP": var_h_hedge_sltp.get(),
-            "HEDGE_SL_RULE": cbo_h2_sl_rule.get(),
-            "HEDGE_TP_RULE": cbo_h2_tp_rule.get(),
-            "USE_TSL": var_h_tsl.get(),
-            "HEDGE_TSL_MODE": _compose_h2_tsl_mode(),
-            "SURVIVOR_PROTECT": cbo_h2_survivor.get(),
-            "LOT_MODE": cbo_h2_lot_mode.get(),
-            "FIXED_LOT": float(e_h2_lot.get() or 0.1),
-            "RISK_PERCENT_PER_PAIR": float(e_h2_risk_pct.get() or 0.0),
-            "MAX_LOT_CAP": float(e_h2_max_lot_cap.get() or 0.0),
-            "MAX_PAIRS_PER_SYMBOL": int(float(e_h2_max_pairs.get() or 1)),
-            "COOLDOWN_AFTER_CLOSE_SECONDS": int(float(e_h2_cooldown.get() or 0)),
-            "COOLDOWN_AFTER_LOSS_SECONDS": int(float(e_h2_loss_cooldown.get() or 0)),
-            "MAX_CONSECUTIVE_LOSSES": int(float(e_h2_max_losses.get() or 0)),
-            "GLOBAL_COOLDOWN_SECONDS": int(float(e_h2_global_cd.get() or 0)),
-            "HEDGE_SCAN_INTERVAL_SECONDS": max(1, int(float(e_h2_scan_interval.get() or 2))),
-            "HEDGE_LOG_COOLDOWN_SECONDS": max(0, int(float(e_h2_log_cd.get() or 300))),
-            "CHECK_SPREAD": var_h2_check_spread.get(),
-            "MAX_SPREAD_POINTS": int(float(e_h2_max_spread.get() or 150)),
-            "CHECK_PING": var_h2_check_ping.get(),
-            "MAX_PING_MS": int(float(e_h2_max_ping.get() or 150)),
-            "HEDGE_MAX_DAILY_LOSS": float(e_h2_daily_loss.get() or 0.0),
-            "MAX_SESSIONS_PER_DAY": int(float(e_h2_max_day.get() or 0)),
-            "HEDGE_SESSION_TP_USD": float(e_h2_session_tp.get() or 0.0),
-            "HEDGE_SESSION_SL_USD": float(e_h2_session_sl.get() or 0.0),
-            "HEDGE_MAX_HOLD_MINUTES": int(float(e_h2_max_hold.get() or 0)),
-        }
+    f_btn = ctk.CTkFrame(frame, fg_color="transparent")
+    f_btn.pack(anchor="w", pady=(4, 6))
+    ctk.CTkButton(f_btn, text="Lưu vốn ảo", width=130, fg_color="#2E7D32", command=_save_balance).pack(side="left")
+    ctk.CTkButton(f_btn, text="Reset Paper", width=130, fg_color="#0277BD", command=_reset_paper).pack(side="left", padx=(8, 0))
+    lbl_msg.pack(anchor="w", pady=(4, 2))
 
-    hedge_preview_form_getter = _collect_hedge_quick_values
-
-    def _save_hedge_override():
-        try:
-            from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
-
-            sym = _current_hedge_symbol()
-            cfg = load_hedge_settings()
-            cfg.setdefault("SYMBOL_OVERRIDES", {})[sym] = _collect_hedge_quick_values()
-            save_hedge_settings(cfg)
-            var_hedge_override.set(True)
-            _refresh_hedge_preview()
-            if hasattr(app, "log_message"):
-                app.log_message(f"[HEDGE] Override saved for {sym}.", target="hedge")
-        except ValueError:
-            messagebox.showerror("HEDGE", "Override nhap sai kieu so.", parent=top)
-
-    def _clear_hedge_override():
-        from hedge.hedge_storage import load_hedge_settings, save_hedge_settings
-
-        sym = _current_hedge_symbol()
-        cfg = load_hedge_settings()
-        cfg.setdefault("SYMBOL_OVERRIDES", {}).pop(sym, None)
-        save_hedge_settings(cfg)
-        var_hedge_override.set(False)
-        _refresh_hedge_preview()
-        if hasattr(app, "log_message"):
-            app.log_message(f"[HEDGE] Override cleared for {sym}.", target="hedge")
-
-    btn_open_hedge_override.configure(command=_open_hedge_override_popup, state="normal")
-    btn_save_hedge_settings.configure(command=_save_hedge_quick, state="normal")
-    btn_clear_hedge_cooldown.configure(command=_clear_hedge_block, state="normal")
-    _refresh_hedge_override_button()
-    ctk.CTkLabel(
-        tab_backtest,
-        text="BACKTEST module placeholder. This tab is reserved for historical GRID simulation.",
-        font=("Arial", 13, "italic"),
-        text_color="#BDBDBD",
-        wraplength=680,
-    ).pack(fill="x", padx=14, pady=18)
 
 def open_preset_config_popup(app):
 
-    p_name = app.cbo_preset.get()
+    presets = list(config.PRESETS.keys()) or ["SCALPING"]
+    p_name = getattr(config, "DEFAULT_PRESET", presets[0])
+    if p_name not in config.PRESETS:
+        p_name = presets[0]
     data = config.PRESETS.get(p_name, {})
     top = ctk.CTkToplevel(app)
     top.title(f"Preset: {p_name}")
-    top.geometry("540x780")
+    top.geometry("540x800")
     top.minsize(500, 520)
     _bring_popup_to_front(top)
-    # top.transient(app)
-    body = _speed_up_scroll(ctk.CTkScrollableFrame(top, fg_color="transparent"))
-    body.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+
+    # 2 tab: 'Cố định' (rule lệnh, 1 preset duy nhất) + 'Paper' (vốn ảo)
+    tabs = ctk.CTkTabview(top)
+    tabs.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+    tab_fixed = tabs.add("Cố định")
+    tab_paper = tabs.add("Paper")
+
+    body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_fixed, fg_color="transparent"))
+    body.pack(fill="both", expand=True, padx=4, pady=4)
     acc = app.connector.get_account_info()
     eq = acc["equity"] if acc else 1000.0
-    tick = app.connector.get_market_status(app.cbo_symbol.get())
-    cp = tick.get("ask", 1000.0) if isinstance(tick, dict) else 1000.0
+    cp = 1000.0
+    try:
+        _tk = app.connector.get_tick(app.cbo_symbol.get())
+        if _tk is not None:
+            cp = float(getattr(_tk, "ask", 0) or getattr(_tk, "last", 0) or 1000.0)
+    except Exception:
+        cp = 1000.0
+
+    build_paper_config_tab(app, tab_paper)
+
     ctk.CTkLabel(body, text=f"PRESET: {p_name}", font=FONT_BOLD).pack(pady=10)
     _add_popup_hint(
         body,
@@ -3565,10 +3131,7 @@ def open_tsl_popup(app, override_symbol=None):
             overrides = load_symbol_overrides()
         except:
             overrides = {}
-        symbol_values = list(
-            getattr(config, "COIN_LIST", [])
-            or [getattr(config, "DEFAULT_SYMBOL", "ETHUSD")]
-        )
+        symbol_values = _build_watch_symbols()
         for row, sym in enumerate(symbol_values):
             has_override = bool(overrides.get(sym, {}).get("tsl"))
             row_frame = ctk.CTkFrame(
@@ -3671,7 +3234,7 @@ def open_tsl_popup(app, override_symbol=None):
             from core.storage_manager import get_brain_settings_for_symbol
             from core.storage_manager import load_symbol_overrides
             brain = get_brain_settings_for_symbol()
-            symbols = getattr(config, "COIN_LIST", [])
+            symbols = _build_watch_symbols()
             overrides = load_symbol_overrides()
             row, col = 0, 0
             for sym in symbols:
@@ -3884,7 +3447,7 @@ def open_edit_popup(app, ticket):
 
     def do_tp():
         try:
-            rr = config.PRESETS.get(app.cbo_preset.get(), {}).get("TP_RR_RATIO", 1.5)
+            rr = config.PRESETS.get(getattr(config, "DEFAULT_PRESET", "SCALPING"), {}).get("TP_RR_RATIO", 1.5)
             tp = pos.price_open + (
                 abs(pos.price_open - float(e_sl.get())) * rr
                 if is_buy
@@ -4089,8 +3652,6 @@ def show_history_popup(app):
     history_tabs = ctk.CTkTabview(top)
     history_tabs.pack(fill="both", expand=True)
     tab_bot_history = history_tabs.add("BOT")
-    tab_grid_history = history_tabs.add("GRID")
-    tab_hedge_history = history_tabs.add("HEDGE")
 
     cols = (
         "Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP",
@@ -4136,8 +3697,6 @@ def show_history_popup(app):
 
     trees = {
         "BOT": make_tree(tab_bot_history),
-        "GRID": make_tree(tab_grid_history),
-        "HEDGE": make_tree(tab_hedge_history),
     }
 
     from core.storage_manager import MASTER_LOG_FILE
@@ -4150,14 +3709,6 @@ def show_history_popup(app):
             return default
 
     def row_scope(row):
-        market_mode = str(row[11] if len(row) > 11 else "").upper()
-        trigger = str(row[12] if len(row) > 12 else "").upper()
-        session_id = str(row[13] if len(row) > 13 else "").upper()
-        text = f"{market_mode}|{trigger}|{session_id}"
-        if "HEDGE" in text:
-            return "HEDGE"
-        if "GRID" in text:
-            return "GRID"
         return "BOT"
 
     def clear_trees():
@@ -4240,7 +3791,7 @@ def show_history_popup(app):
         if not os.path.exists(csv_path):
             return
         try:
-            scope_sessions = {"BOT": {}, "GRID": {}, "HEDGE": {}}
+            scope_sessions = {"BOT": {}}
             with open(csv_path, mode="r", encoding="utf-8") as file_obj:
                 reader = csv.reader(file_obj)
                 header = next(reader, None)

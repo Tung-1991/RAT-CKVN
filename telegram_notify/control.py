@@ -6,8 +6,6 @@ from datetime import datetime
 import config
 from core.position_classifier import (
     is_bot_position,
-    is_grid_position,
-    is_hedge_position,
     is_manual_position,
 )
 
@@ -27,7 +25,7 @@ CONTROL_HELP_TEXT = """RAT-control
 /pending
 
 /order
-/set ETHUSD BUY 0.1 1629.11 1733.74
+/set VN30F1M BUY 1 1280.0 1290.0
 """
 
 
@@ -46,19 +44,21 @@ def _command_name(text):
 
 
 def _side(pos):
+    # DNSE BrokerPosition: prefer explicit side/direction string; fall back to numeric type (0 = BUY/LONG).
+    raw = getattr(pos, "side", None) or getattr(pos, "direction", None)
+    if raw is not None:
+        txt = str(raw).strip().upper()
+        if txt in ("BUY", "LONG", "B", "0"):
+            return "BUY"
+        if txt in ("SELL", "SHORT", "S", "1"):
+            return "SELL"
     try:
-        import MetaTrader5 as mt5
-
-        return "BUY" if int(getattr(pos, "type", -1)) == mt5.ORDER_TYPE_BUY else "SELL"
-    except Exception:
         return "BUY" if int(getattr(pos, "type", -1) or 0) == 0 else "SELL"
+    except (TypeError, ValueError):
+        return "BUY"
 
 
 def _pos_source(pos, magics):
-    if is_grid_position(pos, magics):
-        return "GRID"
-    if is_hedge_position(pos, magics):
-        return "HEDGE"
     if is_bot_position(pos, magics):
         return "BOT"
     if is_manual_position(pos, magics):
@@ -176,7 +176,7 @@ def parse_edit_command(text):
 def parse_set_command(text):
     parts = str(text or "").strip().split()
     if len(parts) < 2 or parts[0].lower() != "/set":
-        raise ValueError("Use /set ETHUSD BUY 0.1 1629.11 1733.74")
+        raise ValueError("Use /set VN30F1M BUY 1 1280.0 1290.0")
     if all("=" not in part for part in parts[1:]):
         if len(parts) == 4:
             raw = {"lot": parts[1], "sl": parts[2], "tp": parts[3]}
@@ -188,7 +188,7 @@ def parse_set_command(text):
         raw = _parse_kv(parts[1:])
         unsupported = set(raw) - ORDER_FIELDS
         if unsupported:
-            raise ValueError("Use /set symbol=ETHUSD side=BUY lot=0.1 sl=1629.11 tp=1733.74")
+            raise ValueError("Use /set symbol=VN30F1M side=BUY lot=1 sl=1280.0 tp=1290.0")
     return _normalize_order_fields(raw, require_all=False)
 
 
@@ -419,11 +419,11 @@ class TelegramControlService:
 
     def _draft_sample_text(self, draft):
         draft = draft or {}
-        symbol = draft.get("symbol") or "ETHUSD"
+        symbol = draft.get("symbol") or "VN30F1M"
         side = draft.get("side") or "BUY"
-        lot = draft.get("lot") if draft.get("lot") not in (None, "") else "0.1"
-        sl = draft.get("sl") if draft.get("sl") not in (None, "") else "1629.11"
-        tp = draft.get("tp") if draft.get("tp") not in (None, "") else "1733.74"
+        lot = draft.get("lot") if draft.get("lot") not in (None, "") else "1"
+        sl = draft.get("sl") if draft.get("sl") not in (None, "") else "1280.0"
+        tp = draft.get("tp") if draft.get("tp") not in (None, "") else "1290.0"
         return "\n".join(
             [
                 f"/set {symbol} {side} {lot} {sl} {tp}",
@@ -475,7 +475,7 @@ class TelegramControlService:
         result = self.connector.close_position(pos, comment="telegram_control_close")
         if result:
             return client.send_message(chat_id, f"Close sent for #{ticket} {getattr(pos, 'symbol', '')}.")
-        return client.send_message(chat_id, f"Close failed for #{ticket}. Check RAT6/MT5 logs.")
+        return client.send_message(chat_id, f"Close failed for #{ticket}. Check DNSE logs.")
 
     def _toggle_bot(self, client, chat_id, enabled):
         self.set_bot_enabled(bool(enabled), reason="TELEGRAM_CONTROL")
@@ -537,7 +537,7 @@ class TelegramControlService:
         except ValueError as exc:
             return client.send_message(chat_id, str(exc))
         if not updates:
-            return client.send_message(chat_id, "Use /set ETHUSD BUY 0.1 1629.11 1733.74")
+            return client.send_message(chat_id, "Use /set VN30F1M BUY 1 1280.0 1290.0")
         draft = drafts.update_draft(chat_id, updates)
         return client.send_message_with_keyboard(
             chat_id,

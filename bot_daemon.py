@@ -7,21 +7,16 @@ import json
 import os
 import uuid
 import logging
-import MetaTrader5 as mt5
+import threading
 
 import config
-from core.exness_connector import ExnessConnector
+from core.dnse_connector import DNSEConnector
 from core.data_engine import data_engine
 from core.market_hours import is_symbol_trade_window_open
 from core.position_classifier import is_bot_position, is_manual_position
 from signals.signal_generator import signal_generator
 from core.storage_manager import get_brain_settings_for_symbol
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log
-
-from grid.grid_manager import GridManager
-from grid.grid_storage import load_grid_settings, load_grid_state
-from hedge.hedge_manager import HedgeManager
-from hedge.hedge_storage import load_hedge_settings, load_hedge_state
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [DAEMON] %(message)s")
 logger = logging.getLogger("BotDaemon")
@@ -54,9 +49,9 @@ def update_daemon_paths(account_id: str):
 class StandaloneBotDaemon:
     def __init__(self):
         self.running = False
-        self.connector = ExnessConnector()
+        self.connector = DNSEConnector()
         if not self.connector.connect():
-            logger.error("Không thể kết nối MT5. Daemon sẽ dừng.")
+            logger.error("Không thể kết nối DNSE. Daemon sẽ dừng.")
             return
 
         acc_info = self.connector.get_account_info()
@@ -68,23 +63,11 @@ class StandaloneBotDaemon:
 
         self.dca_pca_interval = 2
         self.last_dca_pca_scan = 0
-        self.last_grid_scan = 0
-        self.last_hedge_scan = 0
         self.pending_signals = []
         self.heartbeat_contexts = {}
         self.last_entry_signal_times = {}
-        self.grid_manager = GridManager(
-            connector=self.connector,
-            data_engine=data_engine,
-            signal_generator=signal_generator,
-            log_callback=lambda msg, error=False, target="grid": logger.error(msg) if error else logger.info(msg),
-        )
-        self.hedge_manager = HedgeManager(
-            connector=self.connector,
-            data_engine=data_engine,
-            signal_generator=signal_generator,
-            log_callback=lambda msg, error=False, target="hedge": logger.error(msg) if error else logger.info(msg),
-        )
+        self._tick_thread = None
+        self._active_symbols = []
 
     def _get_entry_signal_cooldown(self, symbol):
         try:
@@ -184,28 +167,71 @@ class StandaloneBotDaemon:
             pass
         return {}
 
+    def _tick_update_loop(self):
+        """Luồng riêng: poll giá real-time mỗi 2 giây qua trades/latest + quotes/latest."""
+        tick_interval = 2.0
+        while self.running:
+            try:
+                # Chỉ lấy tick cho VN30F1M theo yêu cầu để tối ưu
+                symbols = list(
+                    self._active_symbols
+                    or getattr(config, "BOT_ACTIVE_SYMBOLS", [])
+                    or [getattr(config, "DEFAULT_SYMBOL", "VN30F1M")]
+                )
+                for sym in symbols:
+                    if not self.running:
+                        break
+                    tick = data_engine.fetch_realtime_tick(sym)
+                    if tick:
+                        # Ghi tick vào heartbeat context để UI nhận
+                        ctx = self.heartbeat_contexts.get(sym, {})
+                        if "last" in tick:
+                            ctx["current_price"] = tick["last"]
+                        if "bid" in tick:
+                            ctx["bid"] = tick["bid"]
+                        if "ask" in tick:
+                            ctx["ask"] = tick["ask"]
+                        if "spread" in tick:
+                            ctx["spread"] = tick["spread"]
+                        if "high" in tick:
+                            ctx["day_high"] = tick["high"]
+                        if "low" in tick:
+                            ctx["day_low"] = tick["low"]
+                        ctx["tick_timestamp"] = tick.get("timestamp", time.time())
+                        self.heartbeat_contexts[sym] = ctx
+                        # Ghi tín hiệu ngay để UI cập nhật nhanh
+                        self._atomic_write_signals(symbols)
+            except Exception as e:
+                logger.debug(f"Tick update error: {e}")
+            time.sleep(tick_interval)
+
     def run(self):
         self.running = True
         logger.info(
             "RAT6.0 Daemon started."
         )
         last_signal_scan = 0
+        last_acc_check = 0
+        acc_info = None
 
         while self.running:
             try:
-                acc_info = self.connector.get_account_info()
-                if acc_info is None:
-                    self.connector._is_connected = False
-                    self.connector.connect()
+                now = time.time()
+                if acc_info is None or (now - last_acc_check > 15.0):
                     acc_info = self.connector.get_account_info()
+                    last_acc_check = now
+                    if acc_info is None:
+                        self.connector._is_connected = False
+                        self.connector.connect()
+                        acc_info = self.connector.get_account_info()
                     
                 if acc_info:
                     import core.storage_manager as storage_manager
                     current_acc_id = str(acc_info['login'])
-                    if current_acc_id != storage_manager._active_account_id:
+                    if current_acc_id and current_acc_id != storage_manager._active_account_id:
                         storage_manager.set_active_account(current_acc_id)
                         update_daemon_paths(current_acc_id)
-                        logger.info(f"🔄 Daemon phát hiện đổi MT5 sang {current_acc_id}. Đã cập nhật Workspace.")
+                        logger.info(f"🔄 Daemon phát hiện đổi tài khoản DNSE sang {current_acc_id}. Đã cập nhật Workspace.")
                         
                 live_cfg = self._read_live_config()
                 bot_active = live_cfg.get(
@@ -221,6 +247,13 @@ class StandaloneBotDaemon:
                         config, "BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", [])
                     ),
                 )
+                self._active_symbols = symbols
+
+                # Khởi động luồng tick nếu chưa chạy
+                if self._tick_thread is None or not self._tick_thread.is_alive():
+                    self._tick_thread = threading.Thread(target=self._tick_update_loop, daemon=True)
+                    self._tick_thread.start()
+                    logger.info("🔥 Tick update thread started (2s interval).")
 
                 # [NEW] Lấy thời gian quét động từ UI
                 daemon_delay = live_cfg.get("bot_safeguard", {}).get(
@@ -229,6 +262,17 @@ class StandaloneBotDaemon:
                 self.dca_pca_interval = live_cfg.get("bot_safeguard", {}).get(
                     "DCA_PCA_SCAN_INTERVAL", 2
                 )
+                for _ttl_key in (
+                    "DNSE_TICK_CACHE_TTL_SECONDS",
+                    "DNSE_OHLC_CACHE_TTL_SECONDS",
+                    "DNSE_ACCOUNT_CACHE_TTL_SECONDS",
+                    "DNSE_POSITIONS_CACHE_TTL_SECONDS",
+                ):
+                    if _ttl_key in live_cfg:
+                        try:
+                            setattr(config, _ttl_key, float(live_cfg.get(_ttl_key)))
+                        except Exception:
+                            pass
 
                 now = time.time()
 
@@ -247,44 +291,11 @@ class StandaloneBotDaemon:
                     self._scan_dca_pca()
                     self.last_dca_pca_scan = now
 
-                grid_cfg = load_grid_settings()
-                try:
-                    grid_interval = max(
-                        0.5,
-                        float(grid_cfg.get("GRID_SCAN_INTERVAL_SECONDS", 5) or 5),
-                    )
-                except Exception:
-                    grid_interval = 5.0
-                grid_state = load_grid_state()
-                grid_has_sessions = any(
-                    isinstance(session, dict) and session.get("status") != "STOP_NEW"
-                    for session in (grid_state.get("active_sessions") or {}).values()
-                )
-                if (grid_cfg.get("ENABLED", False) or grid_has_sessions) and (now - self.last_grid_scan >= grid_interval):
-                    grid_symbols = grid_cfg.get("WATCHLIST") or symbols
-                    self.grid_manager.scan(grid_symbols, self.heartbeat_contexts)
-                    self.last_grid_scan = now
-
-                hedge_cfg = load_hedge_settings()
-                hedge_state = load_hedge_state()
-                try:
-                    hedge_interval = max(
-                        0.5,
-                        float(hedge_cfg.get("HEDGE_SCAN_INTERVAL_SECONDS", 2) or 2),
-                    )
-                except Exception:
-                    hedge_interval = 2.0
-                hedge_has_sessions = bool(hedge_state.get("active_sessions") or {})
-                if (hedge_cfg.get("ENABLED", False) or hedge_has_sessions) and (now - self.last_hedge_scan >= hedge_interval):
-                    hedge_symbols = hedge_cfg.get("WATCHLIST") or []
-                    self.hedge_manager.scan(hedge_symbols, self.heartbeat_contexts)
-                    self.last_hedge_scan = now
-
                 # Luồng gốc ngủ rất ngắn để không gây kẹt tiến trình
                 time.sleep(0.5)
 
             except Exception as e:
-                logger.error(f"Lỗi Loop trong Daemon: {e}")
+                logger.exception("Lỗi Loop trong Daemon")
                 time.sleep(2)
 
     def _scan_signals(self, symbols, bot_active):
@@ -297,7 +308,7 @@ class StandaloneBotDaemon:
             is_open, closed_reason = is_symbol_trade_window_open(sym)
             dfs, context = data_engine.fetch_data_v4(sym)
             if dfs is None or context is None:
-                signal_debug_state[sym] = f"[PAUSE] {closed_reason}" if not is_open else "Đang tải dữ liệu MT5..."
+                signal_debug_state[sym] = f"[PAUSE] {closed_reason}" if not is_open else "Đang tải dữ liệu..."
                 continue
 
             # [FIX CORE]: Luôn chạy hàm generate_signal_v4 để tính toán và lưu Trend, Mode vào biến context
@@ -346,7 +357,7 @@ class StandaloneBotDaemon:
 
     def _scan_dca_pca(self):
         # [NEW V4.4] Bỏ get brain global, dời xuống từng vòng lặp Symbol để lấy config riêng
-        positions = mt5.positions_get()
+        positions = self.connector.get_positions()
         if not positions:
             return
 
@@ -402,7 +413,7 @@ class StandaloneBotDaemon:
 
             pos_list.sort(key=lambda x: x.time)
             first_pos = pos_list[0]
-            is_buy = first_pos.type == mt5.ORDER_TYPE_BUY
+            is_buy = first_pos.type == 0
             expected_sig = 1 if is_buy else -1
             
             profit_points = (

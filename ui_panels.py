@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # FILE: ui_panels.py
 # V8.4.1: UPDATED UI PANELS - OPTIMIZED TOP HEADER & CONTEXT PREVIEW (KAISER EDITION)
 
@@ -6,12 +6,13 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk
 import config
+from core.money import money_unit_note
 
 # --- HẰNG SỐ UI ---
 FONT_MAIN = ("Roboto", 13)
 FONT_BOLD = ("Roboto", 13, "bold")
-FONT_EQUITY = ("Roboto", 36, "bold")
-FONT_PNL = ("Roboto", 18, "bold")
+FONT_EQUITY = ("Roboto", 32, "bold")
+FONT_PNL = ("Roboto", 17, "bold")
 FONT_SECTION = ("Roboto", 12, "bold")
 FONT_BIG_VAL = ("Consolas", 18, "bold")
 FONT_PRICE = ("Roboto", 28, "bold")
@@ -30,62 +31,42 @@ COL_SETTING_HOVER = "#155E75"
 def setup_left_panel(app, parent):
     """Xây dựng toàn bộ thanh điều khiển bên trái"""
 
-    # 1. TOP HEADER (Equity & Info) - REWORKED LAYOUT
+    # 1. TOP HEADER (Equity & Info) - COMPACT 2 CỘT
     f_top = ctk.CTkFrame(parent, fg_color="#1a1a1a", corner_radius=8)
-    f_top.pack(fill="x", pady=(5, 5), padx=5)
+    f_top.pack(fill="x", pady=(4, 4), padx=5)
+    f_top.grid_columnconfigure(0, weight=1)
 
-    # Khung trên: Equity & ID/Server
-    f_top_1 = ctk.CTkFrame(f_top, fg_color="transparent")
-    f_top_1.pack(fill="x", padx=5, pady=(5, 0))
-
-    app.lbl_equity = ctk.CTkLabel(
-        f_top_1, text="$----", font=FONT_EQUITY, text_color=COL_GREEN
-    )
-    app.lbl_equity.pack(side="left", padx=5)
-
+    # Cột trái: Equity (to) · ID·Server · PNL·Phí·reset
+    f_left = ctk.CTkFrame(f_top, fg_color="transparent")
+    f_left.grid(row=0, column=0, sticky="nw", padx=(8, 4), pady=4)
+    app.lbl_equity = ctk.CTkLabel(f_left, text="----", font=FONT_EQUITY, text_color=COL_GREEN)
+    app.lbl_equity.pack(anchor="w")
     app.lbl_acc_info = ctk.CTkLabel(
-        f_top_1,
-        text="ID: --- \nServer: ---",
-        font=("Roboto", 10),
-        text_color="gray",
-        justify="right",
+        f_left, text="ID: ---  ·  ---", font=("Roboto", 9), text_color="white", anchor="w",
     )
-    app.lbl_acc_info.pack(side="right", padx=5, anchor="e")
-
-    # Khung dưới: PNL & Brain Status
-    f_top_2 = ctk.CTkFrame(f_top, fg_color="transparent")
-    f_top_2.pack(fill="x", padx=5, pady=(0, 5))
-
-    f_pnl = ctk.CTkFrame(f_top_2, fg_color="transparent")
-    f_pnl.pack(side="left")
-
-    app.lbl_stats = ctk.CTkLabel(
-        f_pnl, text="PNL: $0.00", font=FONT_PNL, text_color="white"
-    )
-    app.lbl_stats.pack(side="left", padx=5)
-
+    app.lbl_acc_info.pack(anchor="w", pady=(0, 3))
+    f_pnl = ctk.CTkFrame(f_left, fg_color="transparent")
+    f_pnl.pack(anchor="w", fill="x")
+    app.lbl_stats = ctk.CTkLabel(f_pnl, text="PNL: 0", font=FONT_PNL, text_color="white")
+    app.lbl_stats.pack(side="left", padx=(0, 12))
+    app.lbl_fee_today = ctk.CTkLabel(f_pnl, text="Phí: 0", font=FONT_FEE, text_color="white")
+    app.lbl_fee_today.pack(side="left")
     ctk.CTkButton(
-        f_pnl,
-        text="⟳",
-        width=25,
-        height=20,
-        fg_color="#333",
-        hover_color="#444",
+        f_pnl, text="⟳", width=24, height=20, fg_color="#333", hover_color="#444",
         command=app.reset_daily_stats,
-    ).pack(side="left", padx=2)
+    ).pack(side="left", padx=8)
 
-    app.lbl_fee_today = ctk.CTkLabel(
-        f_pnl, text="FEE: -$0.00", font=FONT_FEE, text_color="gray"
+    # Cột phải (dồn lên): Đơn vị tiền · PHIÊN · BRAIN
+    f_right = ctk.CTkFrame(f_top, fg_color="transparent")
+    f_right.grid(row=0, column=1, sticky="ne", padx=(4, 8), pady=4)
+    app.lbl_money_unit_note = ctk.CTkLabel(
+        f_right, text=money_unit_note(), font=("Roboto", 9, "bold"), text_color="white", anchor="e",
     )
-    app.lbl_fee_today.pack(side="left", padx=(8, 0))
-
-    app.lbl_brain_status = ctk.CTkLabel(
-        f_top_2,
-        text="🧠 BRAIN: CHỜ...",
-        font=("Roboto", 11, "bold"),
-        text_color="#FF8F00",
-    )
-    app.lbl_brain_status.pack(side="right", padx=5)
+    app.lbl_money_unit_note.pack(anchor="e")
+    app.lbl_session = ctk.CTkLabel(f_right, text="PHIÊN: --", font=("Roboto", 11, "bold"), text_color="#90A4AE", anchor="e")
+    app.lbl_session.pack(anchor="e", pady=(5, 0))
+    app.lbl_brain_status = ctk.CTkLabel(f_right, text="BRAIN: CHỜ...", font=("Roboto", 11, "bold"), text_color="#FF8F00", anchor="e")
+    app.lbl_brain_status.pack(anchor="e", pady=(2, 0))
 
     # 2. SETTINGS PANEL
     f_set = ctk.CTkFrame(parent, fg_color="#1f1f1f", corner_radius=8)
@@ -98,7 +79,7 @@ def setup_left_panel(app, parent):
             f_set,
             text=text,
             font=("Roboto", 11, "bold"),
-            text_color="#B0BEC5",
+            text_color="white",
             anchor="e",
         ).grid(row=row, column=0, sticky="e", padx=(6, 6), pady=4)
 
@@ -122,46 +103,50 @@ def setup_left_panel(app, parent):
         app.var_bypass_checklist.set(not app.var_bypass_checklist.get())
         set_force_button_state()
 
-    setting_label(0, "COIN")
+    setting_label(0, "Mã CK")
     f_coin_row = setting_row(0)
     stretch_columns(f_coin_row, (112, 154))
+    
     app.cbo_symbol = ctk.CTkOptionMenu(
         f_coin_row,
-        values=config.COIN_LIST,
+        values=["VN30F1M"],
         font=FONT_BOLD,
         width=112,
         height=32,
         command=app.on_symbol_change,
     )
-    if config.DEFAULT_SYMBOL in config.COIN_LIST:
-        app.cbo_symbol.set(config.DEFAULT_SYMBOL)
-    elif len(config.COIN_LIST) > 0:
-        app.cbo_symbol.set(config.COIN_LIST[0])
+    app.cbo_symbol.set("VN30F1M")
     app.cbo_symbol.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
-    app.cbo_preset = ctk.CTkOptionMenu(
+    app.cbo_market_type = ctk.CTkOptionMenu(
         f_coin_row,
-        values=list(config.PRESETS.keys()),
+        values=["CK Phái Sinh", "CK Cơ Sở"],
         font=FONT_MAIN,
         width=154,
         height=32,
-        command=app.on_preset_change,
+        command=app.on_market_type_change,
     )
-    app.cbo_preset.set(config.DEFAULT_PRESET)
-    app.cbo_preset.grid(row=0, column=1, sticky="ew")
+    app.cbo_market_type.set("CK Phái Sinh")
+    app.cbo_market_type.grid(row=0, column=1, sticky="ew")
 
-    setting_label(1, "ACC")
+    setting_label(1, "MODE")
     f_account_row = setting_row(1)
     stretch_columns(f_account_row, (128, 74, 104))
-    app.cbo_account_type = ctk.CTkOptionMenu(
+    
+    app.seg_paper_mode = ctk.CTkSegmentedButton(
         f_account_row,
-        values=list(config.ACCOUNT_TYPES_CONFIG.keys()),
-        font=FONT_MAIN,
+        values=["REAL", "PAPER"],
+        font=FONT_BOLD,
         width=128,
         height=32,
+        command=app.on_paper_mode_change,
+        selected_color="#D32F2F",  # Red for REAL initially (will update dynamically)
+        selected_hover_color="#B71C1C",
     )
-    app.cbo_account_type.set(config.DEFAULT_ACCOUNT_TYPE)
-    app.cbo_account_type.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+    # Default to PAPER
+    current_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+    app.seg_paper_mode.set(current_mode)
+    app.seg_paper_mode.grid(row=0, column=0, sticky="ew", padx=(0, 6))
     ctk.CTkButton(
         f_account_row,
         text="\u2699 PRESET",
@@ -315,61 +300,15 @@ def setup_left_panel(app, parent):
     setting_label(6, "TOOLS")
     f_tools = setting_row(6)
     stretch_columns(f_tools, (112, 210))
-    try:
-        from grid.grid_storage import load_grid_settings
-
-        _grid_on = bool(load_grid_settings().get("ENABLED", False))
-    except Exception:
-        _grid_on = False
-    f_ad_status = ctk.CTkFrame(f_tools, fg_color="transparent")
-    f_ad_status.grid(row=0, column=0, sticky="w", padx=(0, 6))
-
-    f_grid_state = ctk.CTkFrame(f_ad_status, fg_color="transparent")
-    f_grid_state.pack(anchor="w", pady=0)
-    app.ind_ad_grid_light = ctk.CTkFrame(
-        f_grid_state,
-        width=9,
-        height=9,
-        corner_radius=5,
-        fg_color=COL_GREEN if _grid_on else COL_RED,
-    )
-    app.ind_ad_grid_light.pack(side="left", padx=(0, 4))
-    ctk.CTkLabel(
-        f_grid_state,
-        text="GRID",
-        font=("Roboto", 11, "bold"),
-        height=14,
-        text_color="#00B8D4" if _grid_on else "gray",
-    ).pack(side="left")
-
-    f_hedge_state = ctk.CTkFrame(f_ad_status, fg_color="transparent")
-    f_hedge_state.pack(anchor="w", pady=0)
-    app.ind_ad_hedge_light = ctk.CTkFrame(
-        f_hedge_state,
-        width=9,
-        height=9,
-        corner_radius=5,
-        fg_color=COL_RED,
-    )
-    app.ind_ad_hedge_light.pack(side="left", padx=(0, 4))
-    ctk.CTkLabel(
-        f_hedge_state,
-        text="HEDGE",
-        font=("Roboto", 11, "bold"),
-        height=14,
-        text_color="gray",
-    ).pack(side="left")
-
     ctk.CTkButton(
         f_tools,
-        text="\u2699 ADVANCED TOOLS",
-        width=210,
+        text="⚙ ADVANCED",
         height=32,
         font=("Roboto", 11, "bold"),
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_advanced_tools_popup,
-    ).grid(row=0, column=1, sticky="ew")
+    ).grid(row=0, column=0, columnspan=2, sticky="ew")
 
     app.update_tactic_buttons_ui()
     app.update_entry_exit_buttons_ui()
@@ -382,7 +321,8 @@ def setup_left_panel(app, parent):
     def make_inp(p, t, v, c):
         f = ctk.CTkFrame(p, fg_color="#2b2b2b", corner_radius=6)
         f.grid(row=0, column=c, padx=3, sticky="ew")
-        ctk.CTkLabel(f, text=t, font=("Roboto", 10, "bold"), text_color="#aaa").pack(
+        lbl = ctk.CTkLabel(f, text=t, font=("Roboto", 10, "bold"), text_color="white")
+        lbl.pack(
             pady=(2, 0)
         )
         ctk.CTkEntry(
@@ -394,8 +334,9 @@ def setup_left_panel(app, parent):
             fg_color="transparent",
             border_width=0,
         ).pack(fill="x")
+        return lbl
 
-    make_inp(f_input, "VOL (Lot)", app.var_manual_lot, 0)
+    app.lbl_manual_qty_title = make_inp(f_input, "Hợp đồng", app.var_manual_lot, 0)
     make_inp(f_input, "TP (Price)", app.var_manual_tp, 1)
     make_inp(f_input, "SL (Price)", app.var_manual_sl, 2)
     for _manual_var in (app.var_manual_lot, app.var_manual_tp, app.var_manual_sl):
@@ -465,11 +406,11 @@ def setup_left_panel(app, parent):
     f_head_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
     f_head_db.pack(fill="x", padx=10, pady=(5, 0))
     app.lbl_prev_lot = ctk.CTkLabel(
-        f_head_db, text="LOT: 0.00", font=FONT_BOLD, text_color="#FFD700"
+        f_head_db, text="HĐ: 0", font=FONT_BOLD, text_color="#FFD700"
     )
     app.lbl_prev_lot.pack(side="left")
     app.lbl_fee_info = ctk.CTkLabel(
-        f_head_db, text="Cost: $0.00", font=FONT_FEE, text_color="#FFD700"
+        f_head_db, text="Phí: 0", font=FONT_FEE, text_color="#FFD700"
     )
     app.lbl_fee_info.pack(side="right")
     f_price_row = ctk.CTkFrame(f_dashboard, fg_color="transparent")
@@ -492,29 +433,7 @@ def setup_left_panel(app, parent):
         hover_color="#006064",
         command=lambda: app.on_manual_trade_mode_change("NORMAL"),
     )
-    app.btn_mode_normal.pack(fill="x", padx=4, pady=(4, 1))
-    app.btn_mode_grid = ctk.CTkButton(
-        app.frame_trade_mode,
-        text="GRID",
-        width=96,
-        height=24,
-        font=("Roboto", 10, "bold"),
-        fg_color="#424242",
-        hover_color="#616161",
-        command=lambda: app.on_manual_trade_mode_change("GRID"),
-    )
-    app.btn_mode_grid.pack(fill="x", padx=4, pady=(1, 4))
-    app.btn_mode_hedge = ctk.CTkButton(
-        app.frame_trade_mode,
-        text="HEDGE",
-        width=96,
-        height=24,
-        font=("Roboto", 10, "bold"),
-        fg_color="#424242",
-        hover_color="#616161",
-        command=lambda: app.on_manual_trade_mode_change("HEDGE"),
-    )
-    app.btn_mode_hedge.pack(fill="x", padx=4, pady=(1, 4))
+    app.btn_mode_normal.pack(fill="x", padx=4, pady=4)
 
     app.lbl_dashboard_price = ctk.CTkLabel(
         f_price_row, text="----.--", font=FONT_PRICE, text_color="white"
@@ -562,7 +481,7 @@ def setup_left_panel(app, parent):
     )
     app.lbl_prev_tp.pack()
     app.lbl_prev_rew = ctk.CTkLabel(
-        f_rew, text="+$0.0", font=FONT_BIG_VAL, text_color=COL_GREEN
+        f_rew, text="+0", font=FONT_BIG_VAL, text_color=COL_GREEN
     )
     app.lbl_prev_rew.pack()
 
@@ -577,7 +496,7 @@ def setup_left_panel(app, parent):
     )
     app.lbl_prev_sl.pack()
     app.lbl_prev_risk = ctk.CTkLabel(
-        f_risk, text="-$0.0", font=FONT_BIG_VAL, text_color=COL_RED
+        f_risk, text="-0", font=FONT_BIG_VAL, text_color=COL_RED
     )
     app.lbl_prev_risk.pack()
 
@@ -628,88 +547,20 @@ def setup_left_panel(app, parent):
     app.seg_preview_mode.set("TSL")
 
     # 5. EXECUTION CONTROLS
-    app.seg_grid_mode = ctk.CTkSegmentedButton(
-        parent,
-        values=["NEUTRAL", "LONG", "SHORT"],
-        font=("Roboto", 13, "bold"),
-        command=app.on_grid_mode_change,
-        height=32,
-        selected_color="#00838F",
-        selected_hover_color="#006064",
-    )
-    app.seg_grid_mode.set(app.var_grid_manual_mode.get())
-
-    app.frame_grid_options = ctk.CTkFrame(parent, fg_color="transparent")
-    app.frame_grid_options.grid_columnconfigure(1, weight=1)
-    app.chk_grid_bypass = ctk.CTkCheckBox(
-        app.frame_grid_options,
-        text="Bypass GRID Signal",
-        variable=app.var_grid_bypass_signal,
-        font=("Roboto", 11, "bold"),
-        text_color="#00B8D4",
-        checkbox_width=18,
-        checkbox_height=18,
-    )
-    app.chk_grid_bypass.grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 4))
-    app.frame_grid_status = ctk.CTkFrame(app.frame_grid_options, fg_color="transparent")
-    app.frame_grid_status.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-    app.ind_grid_ready_light = ctk.CTkFrame(
-        app.frame_grid_status,
-        width=14,
-        height=14,
-        corner_radius=7,
-        fg_color="#FFB300",
-    )
-    app.ind_grid_ready_light.pack(side="left", padx=(0, 6))
-    app.ind_grid_ready_light.pack_propagate(False)
-    app.lbl_grid_manual_preview = ctk.CTkLabel(
-        app.frame_grid_status,
-        text="Mode: ---",
-        font=("Roboto", 11, "bold"),
-        text_color="#80DEEA",
-        anchor="w",
-        justify="left",
-        wraplength=560,
-    )
-    app.lbl_grid_manual_preview.pack(side="left")
-
-    app.frame_hedge_options = ctk.CTkFrame(parent, fg_color="transparent")
-    app.frame_hedge_status = ctk.CTkFrame(app.frame_hedge_options, fg_color="transparent")
-    app.frame_hedge_status.pack(fill="x", pady=(2, 0))
-    app.ind_hedge_ready_light = ctk.CTkFrame(
-        app.frame_hedge_status,
-        width=14,
-        height=14,
-        corner_radius=7,
-        fg_color="#FFB300",
-    )
-    app.ind_hedge_ready_light.pack(side="left", padx=(0, 6))
-    app.ind_hedge_ready_light.pack_propagate(False)
-    app.lbl_hedge_manual_preview = ctk.CTkLabel(
-        app.frame_hedge_status,
-        text="HEDGE: ---",
-        font=("Roboto", 11, "bold"),
-        text_color="#CE93D8",
-        anchor="w",
-        justify="left",
-        wraplength=560,
-    )
-    app.lbl_hedge_manual_preview.pack(side="left")
-
     app.on_manual_trade_mode_change(app.var_manual_trade_mode.get())
 
     # 6. SYSTEM HEALTH
     f_sys = ctk.CTkFrame(parent, fg_color="#1a1a1a")
     f_sys.pack(fill="x", padx=5, pady=(5, 20))
     ctk.CTkLabel(
-        f_sys, text=" SYSTEM HEALTH", font=("Roboto", 11, "bold"), text_color="gray"
+        f_sys, text=" SYSTEM HEALTH", font=("Roboto", 11, "bold"), text_color="white"
     ).pack(anchor="w", padx=5, pady=(5, 0))
 
     app.check_labels = {}
     checks = ["Mạng/Spread", "Daily Loss", "Số Lệnh Thua", "Số Lệnh", "Trạng thái"]
     for name in checks:
         l = ctk.CTkLabel(
-            f_sys, text=f"• {name}", font=("Roboto", 12), text_color="gray", anchor="w"
+            f_sys, text=f"• {name}", font=("Roboto", 12), text_color="white", anchor="w"
         )
         l.pack(fill="x", padx=10)
         app.check_labels[name] = l
@@ -796,9 +647,9 @@ def setup_right_panel(app, parent):
 
     app.tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
     app.tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
-    app.tree.tag_configure("grid_row", background="#153942", foreground="#E0F7FA")
-    app.tree.tag_configure("hedge_row", background="#3B1744", foreground="#F3E5F5")
-
+    # CKCS: chưa khớp = VÀNG, đã khớp = CAM (T+2 chi tiết ghi ở cột STT).
+    app.tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
+    app.tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
     headers = [
         "Ticket",
         "Thời gian",
@@ -853,7 +704,7 @@ def setup_right_panel(app, parent):
         f_log_head,
         text="HỆ THỐNG GHI NHẬT KÝ (LOG)",
         font=("Roboto", 12, "bold"),
-        text_color="#aaa",
+        text_color="white",
     ).pack(side="left")
     ctk.CTkCheckBox(
         f_log_head,
@@ -881,18 +732,13 @@ def setup_right_panel(app, parent):
         if "Preview" in active_tab:
             app.refresh_manual_preview_tab()
             return
+        if "API Health" in active_tab:
+            app.refresh_api_health_panel()
+            return
         if "Bot-Log" in active_tab:
             widget = app.txt_log_bot_log
-        elif "GRID-Log" in active_tab:  # [FIX] GRID-Log phải check trước GRID
-            widget = app.txt_log_grid_log
-        elif "HEDGE-Log" in active_tab:
-            widget = app.txt_log_hedge_log
-        elif "Bot" in active_tab:  # [FIX] Bot phải check trước khi dùng GRID
+        elif "Bot" in active_tab:
             widget = app.txt_log_bot
-        elif "GRID" in active_tab:
-            widget = app.txt_log_grid
-        elif "HEDGE" in active_tab:
-            widget = app.txt_log_hedge
         else:
             widget = app.txt_log_manual
 
@@ -916,20 +762,13 @@ def setup_right_panel(app, parent):
     tab_manual = log_tabview.add("📋 Manual")
     tab_bot = log_tabview.add("🤖 Bot")
     tab_bot_log = log_tabview.add("🤖 Bot-Log")
+    tab_api_health = log_tabview.add("API Health")
 
-    tab_grid = log_tabview.add("GRID")
-    tab_grid_log = log_tabview.add("GRID-Log")
-    tab_hedge = log_tabview.add("HEDGE")
-    tab_hedge_log = log_tabview.add("HEDGE-Log")
     app.log_tabview = log_tabview
     app.log_tab_keys = {
-        "manual": "ðŸ“‹ Manual",
-        "bot": "ðŸ¤– Bot",
-        "bot-log": "ðŸ¤– Bot-Log",
-        "grid": "GRID",
-        "grid-log": "GRID-Log",
-        "hedge": "HEDGE",
-        "hedge-log": "HEDGE-Log",
+        "manual": "📋 Manual",
+        "bot": "🤖 Bot",
+        "bot-log": "🤖 Bot-Log",
     }
     app.log_tab_unread = {k: False for k in app.log_tab_keys}
 
@@ -939,6 +778,8 @@ def setup_right_panel(app, parent):
             app.after(20, lambda t=tab_text: app.clear_log_unread_by_tab_name(t))
             if "Preview" in str(tab_text):
                 app.after(25, app.refresh_manual_preview_tab)
+            if "API Health" in str(tab_text):
+                app.after(25, app.refresh_api_health_panel)
         except Exception:
             app.after(60, app.clear_active_log_unread)
 
@@ -947,6 +788,8 @@ def setup_right_panel(app, parent):
         try:
             if "Preview" in str(log_tabview.get()):
                 app.refresh_manual_preview_tab()
+            if "API Health" in str(log_tabview.get()):
+                app.refresh_api_health_panel()
         except Exception:
             pass
 
@@ -1012,12 +855,13 @@ def setup_right_panel(app, parent):
     )
     lbl_badge.grid(row=0, column=2, padx=(8, 0), pady=2, sticky="e")
 
-    _preset_sl_group = config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SL_GROUP", config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SWING_SL_GROUP", "G2"))
+    _preset_val = getattr(config, "DEFAULT_PRESET", "SCALPING")
+    _preset_sl_group = config.PRESETS.get(_preset_val, {}).get("MANUAL_SL_GROUP", config.PRESETS.get(_preset_val, {}).get("MANUAL_SWING_SL_GROUP", "G2"))
     _preset_sl_group = "DYNAMIC" if "DYNAMIC" in str(_preset_sl_group) else str(_preset_sl_group or "G2")
-    _preset_tp_group = config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_TP_GROUP", config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SWING_TP_GROUP", _preset_sl_group))
+    _preset_tp_group = config.PRESETS.get(_preset_val, {}).get("MANUAL_TP_GROUP", config.PRESETS.get(_preset_val, {}).get("MANUAL_SWING_TP_GROUP", _preset_sl_group))
     _preset_tp_group = "DYNAMIC" if "DYNAMIC" in str(_preset_tp_group) else str(_preset_tp_group or "G2")
-    _sl_mode = str(config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
-    _tp_mode = str(config.PRESETS.get(app.cbo_preset.get(), {}).get("MANUAL_TP_MODE", "RR") or "RR").upper()
+    _sl_mode = str(config.PRESETS.get(_preset_val, {}).get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
+    _tp_mode = str(config.PRESETS.get(_preset_val, {}).get("MANUAL_TP_MODE", "RR") or "RR").upper()
     _tf_display = {
         "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
         "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
@@ -1331,97 +1175,61 @@ def setup_right_panel(app, parent):
     app.txt_log_bot_log.tag_config("WARN", foreground=COL_WARN)
     app.txt_log_bot_log.tag_config("BLUE", foreground="#29B6F6")
 
+    # --- Tab API Health ---
+    api_health_body = ctk.CTkFrame(tab_api_health, fg_color="#121212")
+    api_health_body.pack(fill="both", expand=True, padx=6, pady=6)
+    api_head = ctk.CTkFrame(api_health_body, fg_color="transparent")
+    api_head.pack(fill="x", padx=8, pady=(8, 4))
+    app.lbl_api_health_summary = ctk.CTkLabel(
+        api_head,
+        text="API Health: --",
+        font=("Roboto", 13, "bold"),
+        text_color="white",
+        anchor="w",
+    )
+    app.lbl_api_health_summary.pack(side="left", fill="x", expand=True)
+    ctk.CTkButton(
+        api_head,
+        text="Refresh",
+        width=86,
+        height=26,
+        fg_color="#1565C0",
+        command=app.refresh_api_health_panel,
+    ).pack(side="right")
+    api_health_cols = ctk.CTkFrame(api_health_body, fg_color="transparent")
+    api_health_cols.pack(fill="both", expand=True)
+    api_health_cols.grid_columnconfigure(0, weight=1)
+    api_health_cols.grid_columnconfigure(1, weight=1)
+    api_health_cols.grid_rowconfigure(0, weight=1)
+    app.txt_api_health = tk.Text(
+        api_health_cols,
+        font=("Consolas", 13),
+        bg="#121212",
+        fg="white",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="none",
+        height=10,
+    )
+    app.txt_api_health.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+    app.txt_api_health_detail = tk.Text(
+        api_health_cols,
+        font=("Consolas", 13),
+        bg="#121212",
+        fg="white",
+        bd=0,
+        highlightthickness=0,
+        state="disabled",
+        wrap="word",
+        height=10,
+    )
+    app.txt_api_health_detail.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+    sb_api_x = ttk.Scrollbar(api_health_body, orient="horizontal", command=app.txt_api_health.xview)
+    app.txt_api_health.configure(xscrollcommand=sb_api_x.set)
+    sb_api_x.pack(fill="x", side="bottom")
+    app.refresh_api_health_panel()
+
     # Giữ backward compat: txt_log trỏ vào manual (cho các module cũ)
-    # --- Tab GRID ---
-    app.txt_log_grid = tk.Text(
-        tab_grid,
-        font=("Consolas", 18),
-        bg="#081416",
-        fg="#E0F7FA",
-        bd=0,
-        highlightthickness=0,
-        state="disabled",
-        wrap="none",
-    )
-    sb_grid_x = ttk.Scrollbar(
-        tab_grid, orient="horizontal", command=app.txt_log_grid.xview
-    )
-    app.txt_log_grid.configure(xscrollcommand=sb_grid_x.set)
-    sb_grid_x.pack(fill="x", side="bottom")
-    app.txt_log_grid.pack(fill="both", expand=True)
-    app.txt_log_grid.tag_config("INFO", foreground="#B2EBF2")
-    app.txt_log_grid.tag_config("SUCCESS", foreground="#00E5FF")
-    app.txt_log_grid.tag_config("ERROR", foreground=COL_RED)
-    app.txt_log_grid.tag_config("WARN", foreground=COL_WARN)
-    app.txt_log_grid.tag_config("BLUE", foreground="#29B6F6")
-
-    # --- Tab GRID Log ---
-    app.txt_log_grid_log = tk.Text(
-        tab_grid_log,
-        font=("Consolas", 18),
-        bg="#081416",
-        fg="#B2EBF2",
-        bd=0,
-        highlightthickness=0,
-        state="disabled",
-        wrap="none",
-    )
-    sb_grid_log_x = ttk.Scrollbar(
-        tab_grid_log, orient="horizontal", command=app.txt_log_grid_log.xview
-    )
-    app.txt_log_grid_log.configure(xscrollcommand=sb_grid_log_x.set)
-    sb_grid_log_x.pack(fill="x", side="bottom")
-    app.txt_log_grid_log.pack(fill="both", expand=True)
-    app.txt_log_grid_log.tag_config("INFO", foreground="#B2EBF2")
-    app.txt_log_grid_log.tag_config("SUCCESS", foreground="#00E5FF")
-    app.txt_log_grid_log.tag_config("ERROR", foreground=COL_RED)
-    app.txt_log_grid_log.tag_config("WARN", foreground=COL_WARN)
-    app.txt_log_grid_log.tag_config("BLUE", foreground="#29B6F6")
-
-    # --- Tab HEDGE ---
-    app.txt_log_hedge = tk.Text(
-        tab_hedge,
-        font=("Consolas", 18),
-        bg="#140816",
-        fg="#F3E5F5",
-        bd=0,
-        highlightthickness=0,
-        state="disabled",
-        wrap="none",
-    )
-    sb_hedge_x = ttk.Scrollbar(
-        tab_hedge, orient="horizontal", command=app.txt_log_hedge.xview
-    )
-    app.txt_log_hedge.configure(xscrollcommand=sb_hedge_x.set)
-    sb_hedge_x.pack(fill="x", side="bottom")
-    app.txt_log_hedge.pack(fill="both", expand=True)
-    app.txt_log_hedge.tag_config("INFO", foreground="#E1BEE7")
-    app.txt_log_hedge.tag_config("SUCCESS", foreground="#CE93D8")
-    app.txt_log_hedge.tag_config("ERROR", foreground=COL_RED)
-    app.txt_log_hedge.tag_config("WARN", foreground=COL_WARN)
-    app.txt_log_hedge.tag_config("BLUE", foreground="#29B6F6")
-
-    # --- Tab HEDGE Log ---
-    app.txt_log_hedge_log = tk.Text(
-        tab_hedge_log,
-        font=("Consolas", 18),
-        bg="#140816",
-        fg="#E1BEE7",
-        bd=0,
-        highlightthickness=0,
-        state="disabled",
-        wrap="none",
-    )
-    sb_hedge_log_x = ttk.Scrollbar(
-        tab_hedge_log, orient="horizontal", command=app.txt_log_hedge_log.xview
-    )
-    app.txt_log_hedge_log.configure(xscrollcommand=sb_hedge_log_x.set)
-    sb_hedge_log_x.pack(fill="x", side="bottom")
-    app.txt_log_hedge_log.pack(fill="both", expand=True)
-    app.txt_log_hedge_log.tag_config("INFO", foreground="#E1BEE7")
-    app.txt_log_hedge_log.tag_config("SUCCESS", foreground="#CE93D8")
-    app.txt_log_hedge_log.tag_config("ERROR", foreground=COL_RED)
-    app.txt_log_hedge_log.tag_config("WARN", foreground=COL_WARN)
-    app.txt_log_hedge_log.tag_config("BLUE", foreground="#29B6F6")
-
     app.txt_log = app.txt_log_manual
+

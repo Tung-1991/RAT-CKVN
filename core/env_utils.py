@@ -1,0 +1,90 @@
+# -*- coding: utf-8 -*-
+"""Helpers for reading and updating the project .env file.
+
+The .env file holds DNSE credentials and selected sub-account numbers. The UI
+account picker writes selections back here so they persist across restarts.
+The functions below preserve unrelated lines, comments and ordering.
+"""
+
+import os
+import threading
+from typing import Dict, Optional
+
+DEFAULT_ENV_PATH = ".env"
+
+# Writing .env from the UI thread while the daemon may also read it: guard writes.
+_env_lock = threading.Lock()
+
+
+def _strip_value(raw: str) -> str:
+    return raw.strip().strip('"').strip("'")
+
+
+def load_env(path: str = DEFAULT_ENV_PATH) -> Dict[str, str]:
+    """Parse a .env file into a dict. Missing file -> empty dict."""
+    values: Dict[str, str] = {}
+    if not os.path.exists(path):
+        return values
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            values[key.strip()] = _strip_value(val)
+    return values
+
+
+def apply_env(path: str = DEFAULT_ENV_PATH, override: bool = False) -> Dict[str, str]:
+    """Load .env and push values into os.environ. Returns the parsed dict."""
+    values = load_env(path)
+    for key, val in values.items():
+        if override or key not in os.environ:
+            os.environ[key] = val
+    return values
+
+
+def get_env_value(key: str, default: Optional[str] = None, path: str = DEFAULT_ENV_PATH) -> Optional[str]:
+    """Prefer a live os.environ value, fall back to the .env file, then default."""
+    if key in os.environ and os.environ[key] != "":
+        return os.environ[key]
+    return load_env(path).get(key, default)
+
+
+def update_env(updates: Dict[str, str], path: str = DEFAULT_ENV_PATH) -> None:
+    """Read-modify-write the .env file for the given key/value pairs.
+
+    Existing keys are updated in place (preserving surrounding lines/comments);
+    new keys are appended. Also mirrors values into os.environ so the running
+    process sees them immediately.
+    """
+    if not updates:
+        return
+    with _env_lock:
+        lines = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        remaining = dict(updates)
+        out_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in remaining:
+                    out_lines.append(f"{key}={remaining.pop(key)}\n")
+                    continue
+            out_lines.append(line if line.endswith("\n") else line + "\n")
+
+        if remaining:
+            if out_lines and not out_lines[-1].endswith("\n"):
+                out_lines[-1] += "\n"
+            for key, val in remaining.items():
+                out_lines.append(f"{key}={val}\n")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(out_lines)
+
+    for key, val in updates.items():
+        os.environ[key] = str(val)

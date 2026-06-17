@@ -62,7 +62,7 @@ class FakeConnector:
 
     def close_position(self, pos, comment=""):
         self.closed.append((pos.ticket, comment))
-        return SimpleNamespace(retcode=10009) if self.close_ok else None
+        return SimpleNamespace(ok=True) if self.close_ok else SimpleNamespace(ok=False)
 
 
 def _pos(ticket=1, symbol="ETHUSD", type=0, volume=0.1, profit=5.0, comment="[BOT]_AUTO_ENTRY", magic=11):
@@ -154,7 +154,7 @@ def test_control_accepts_commands_with_bot_suffix():
         settings,
         {"message": {"chat": {"id": "-1003941549878"}, "from": {"id": 2}, "text": "/help@RATBot"}},
     )
-    assert "/set ETHUSD BUY" in client.messages[-1][1]
+    assert "/set VN30F1M BUY" in client.messages[-1][1]
     service.process_update(
         client,
         settings,
@@ -660,7 +660,7 @@ def test_order_wizard_sample_sends_copyable_set(monkeypatch, tmp_path):
             }
         },
     )
-    assert "/set ETHUSD BUY 0.1 1629.11 1733.74" in client.messages[-1][1]
+    assert "/set VN30F1M BUY 1 1280.0 1290.0" in client.messages[-1][1]
     assert client.messages[-1][1].count("/set") == 1
 
 
