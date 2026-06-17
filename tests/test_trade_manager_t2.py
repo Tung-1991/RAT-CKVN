@@ -92,3 +92,21 @@ def test_derivative_sell_is_not_blocked_by_stock_guard(monkeypatch, tmp_path):
     mgr = _manager(monkeypatch, tmp_path, positions=[])
 
     assert mgr._stock_long_only_guard("VN30F1M", "SELL") is None
+
+
+def _long_pos(symbol, volume, settle_date):
+    return SimpleNamespace(
+        ticket="P1", position_id="P1", order_id="O1", symbol=symbol, type=0,
+        volume=volume, profit=0.0, swap=0.0, commission=0.0, time=0.0, magic=9999,
+        comment="[BOT]_AUTO_ENTRY", raw={"settle_date": settle_date},
+    )
+
+
+def test_settled_long_volume_counts_only_arrived_shares(monkeypatch, tmp_path):
+    # 100 đã về (settle quá khứ) + 200 chưa về (settle tương lai) -> chỉ 100 bán được.
+    positions = [_long_pos("FPT", 100, "2000-01-01"), _long_pos("FPT", 200, "2999-01-01")]
+    mgr = _manager(monkeypatch, tmp_path, positions=positions)
+
+    assert mgr._stock_settled_long_volume("FPT") == 100
+    # pre-cap dựa trên số này: lệnh bán sẽ bị cắt về 100 nếu tính ra lớn hơn.
+    assert mgr._stock_settled_long_volume("VN30F1M") == 0  # phái sinh không tính T+2

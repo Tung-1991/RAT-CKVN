@@ -792,6 +792,19 @@ class TradeManager:
         if max_lot_cap > 0:
             lot_size = min(lot_size, max_lot_cap)
 
+        # [T+2] CKCS SELL: không bán/đóng quá số cổ phiếu ĐÃ VỀ (tránh connector từ chối,
+        # message khó hiểu). Đã có _stock_long_only_guard chặn khi =0 ở trên; đây chỉ cắt bớt.
+        if str(direction or "").upper() == "SELL" and settlement.is_cash_stock(symbol):
+            settled = self._stock_settled_long_volume(symbol)
+            if settled <= 0:
+                return f"SAFEGUARD_FAIL|NO_SETTLED_LONG|{symbol} không có cổ phiếu đã về để bán."
+            if lot_size > settled:
+                self.log(
+                    f"[T+2] {symbol}: giảm lệnh bán {lot_size:g} → {settled:g} CP theo số đã về.",
+                    target="bot",
+                )
+                lot_size = settled
+
         child_sl_source = "CALCULATED"
         child_uses_parent_sl = False
 

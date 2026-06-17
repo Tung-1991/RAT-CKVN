@@ -4,12 +4,15 @@
 
 import customtkinter as ctk
 import json
+import logging
 import os
 import threading
 import time
 import config
 from tkinter import messagebox, filedialog
 from ui_indicators_config import open_indicator_config_popup
+
+logger = logging.getLogger("RAT_CKVN")
 
 COL_PANEL = "#202020"
 COL_PANEL_SOFT = "#24172B"
@@ -289,7 +292,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                     if "pca_config" in saved_data:
                         base_data["pca_config"].update(saved_data["pca_config"])
             except Exception as e:
-                print(f"[UI Sandbox] Lỗi đc JSON: {e}")
+                logger.warning("[UI Sandbox] L\u1ed7i \u0111\u1ecdc JSON: %s", e)
 
         return base_data
 

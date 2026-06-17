@@ -57,8 +57,8 @@ def _active_symbols(global_cfg):
 def _known_symbols(global_cfg):
     symbols = []
     for source in (
-        getattr(config, "COIN_LIST", []),
-        getattr(config, "SYMBOLS", []),
+        getattr(config, "CKPS_SYMBOLS", []),
+        getattr(config, "CKCS_WATCHLIST", []),
         global_cfg.get("BOT_ACTIVE_SYMBOLS", []),
     ):
         if isinstance(source, (list, tuple, set)):

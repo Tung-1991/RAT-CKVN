@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import logging
 import os
 import shutil
 import ssl
@@ -8,6 +9,8 @@ import urllib.error
 import urllib.request
 
 from . import history, paths
+
+logger = logging.getLogger("RAT_CKVN")
 
 
 DEFAULT_PROMPT = """Bạn là AI Advisor cho RAT-CKVN. Luôn trả lời bằng tiếng Việt, chuyên nghiệp, sắc gọn và dựa trên bằng chứng.
@@ -86,7 +89,7 @@ def normalize_model(value):
 
 def _stdout_log(message):
     try:
-        print(f"[AI ADVISOR API] {message}", flush=True)
+        logger.info("[AI ADVISOR API] %s", message)
     except Exception:
         pass
 

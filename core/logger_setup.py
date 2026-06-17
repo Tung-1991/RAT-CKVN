@@ -86,8 +86,9 @@ def setup_logging(debug_mode=False, process_name="ui", json_mode=True):
     json_handler.setFormatter(json_formatter)
 
     # --- LỚP MÀN HÌNH UI (CONSOLE) ---
+    # INFO: hiện banner khởi động + sự kiện hệ thống + lỗi. Spam theo tick đã hạ DEBUG nên không ồn.
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO) 
+    console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter('%(message)s'))
 
     # Nạp Handlers

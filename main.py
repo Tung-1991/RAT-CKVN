@@ -278,6 +278,12 @@ class BotUI(ctk.CTk):
         self.log_message(
             "RAT6 CKVN ready."
         )
+        try:
+            from core import safeguard_report
+            for _line in safeguard_report.format_effective_table().splitlines():
+                self.log_message(_line, target="bot")
+        except Exception:
+            pass
 
     def start_daemon_process(self):
         try:
@@ -2240,9 +2246,7 @@ class BotUI(ctk.CTk):
                 )
                 self.run_advisor_triggers_tick()
             except Exception as e:
-                import traceback
-                traceback.print_exc()
-                print(f"[BG_LOOP ERROR] {e}")
+                main_logger.exception("[BG_LOOP ERROR] %s", e)
             time.sleep(config.LOOP_SLEEP_SECONDS)
 
     def update_ui(self, acc, state, check_res, tick, preset, sym, positions):
@@ -3029,7 +3033,7 @@ class BotUI(ctk.CTk):
 
     def _advisor_stdout_log(self, message):
         try:
-            print(f"[AI ADVISOR] {message}", flush=True)
+            main_logger.info("[AI ADVISOR] %s", message)
         except Exception:
             pass
 

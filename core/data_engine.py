@@ -17,6 +17,18 @@ from core.dnse_ws import market_ws
 
 logger = logging.getLogger("DataEngine")
 
+# Throttle cảnh báo OHLC lỗi lặp lại (cùng symbol+lý do): chỉ log lại sau N giây,
+# tránh phình log khi 1 mã hỏng dữ liệu theo từng nhịp quét.
+_OHLC_WARN_TS = {}
+_OHLC_WARN_COOLDOWN = 300.0  # 5 phút
+
+
+def _warn_ohlc_throttled(key, msg, *args):
+    now = time.time()
+    if (now - _OHLC_WARN_TS.get(key, 0.0)) >= _OHLC_WARN_COOLDOWN:
+        logger.warning(msg, *args)
+        _OHLC_WARN_TS[key] = now
+
 # Khởi tạo DNSE API trực tiếp từ .env
 dnse_api = DNSEConnector(
     api_key=os.getenv("DNSE_API_KEY", ""),
@@ -209,21 +221,21 @@ class DataEngine:
 
         required_keys = ("t", "o", "h", "l", "c", "v")
         if not isinstance(data, dict):
-            logger.warning("OHLC invalid for %s tf=%s res=%s: empty response", symbol, timeframe_val, res)
+            _warn_ohlc_throttled(f"{symbol}|{res}|empty", "OHLC invalid for %s tf=%s res=%s: empty response", symbol, timeframe_val, res)
             return pd.DataFrame()
         missing_keys = [key for key in required_keys if key not in data]
         if missing_keys:
-            logger.warning("OHLC invalid for %s tf=%s res=%s: missing %s", symbol, timeframe_val, res, missing_keys)
+            _warn_ohlc_throttled(f"{symbol}|{res}|missing", "OHLC invalid for %s tf=%s res=%s: missing %s", symbol, timeframe_val, res, missing_keys)
             return pd.DataFrame()
         invalid_keys = [key for key in required_keys if not hasattr(data.get(key), "__len__") or data.get(key) is None]
         if invalid_keys:
-            logger.warning("OHLC invalid for %s tf=%s res=%s: null/non-list %s", symbol, timeframe_val, res, invalid_keys)
+            _warn_ohlc_throttled(f"{symbol}|{res}|null", "OHLC invalid for %s tf=%s res=%s: null/non-list %s", symbol, timeframe_val, res, invalid_keys)
             return pd.DataFrame()
         lengths = {key: len(data.get(key)) for key in required_keys}
         if not lengths["t"]:
             return pd.DataFrame()
         if len(set(lengths.values())) != 1:
-            logger.warning("OHLC invalid for %s tf=%s res=%s: length mismatch %s", symbol, timeframe_val, res, lengths)
+            _warn_ohlc_throttled(f"{symbol}|{res}|mismatch", "OHLC invalid for %s tf=%s res=%s: length mismatch %s", symbol, timeframe_val, res, lengths)
             return pd.DataFrame()
             
         df = pd.DataFrame({

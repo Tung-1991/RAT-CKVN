@@ -1,7 +1,7 @@
-# RAT6 AI Advisor Context
+# RAT-CKVN AI Advisor Context
 
 ## Bot overview
-RAT6 is a trading bot/workstation with manual, bot, GRID, HEDGE, DCA/PCA, TSL, BE, BE_CASH, REV_C, safeguard, and multi-timeframe signal context.
+RAT-CKVN is a DNSE OpenAPI trading bot/workstation for CKPS derivatives and CKCS cash stocks. It supports manual orders, bot signals, DCA/PCA, TSL, BE, BE_CASH, REV_C, safeguards, Entry/Exit tactics, ATO/ATC order handling, T+2 settlement, and multi-timeframe signal context.
 
 ## Current operating goal
 
@@ -16,4 +16,4 @@ RAT6 is a trading bot/workstation with manual, bot, GRID, HEDGE, DCA/PCA, TSL, B
 ## Things AI should not suggest
 
 ## Test notes
-Examples: testing REV_C, BE_CASH, TSL, GRID, HEDGE, DCA/PCA.
+Examples: testing REV_C, BE_CASH, TSL, DCA/PCA, Entry/Exit, ATO/ATC, and T+2 settlement.

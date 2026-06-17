@@ -210,6 +210,8 @@ class StandaloneBotDaemon:
         logger.info(
             "RAT6 CKVN Daemon started."
         )
+        from core import safeguard_report
+        safeguard_report.log_effective_safeguard(logger)
         last_signal_scan = 0
         last_acc_check = 0
         acc_info = None

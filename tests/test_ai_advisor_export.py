@@ -103,7 +103,7 @@ def test_storage_master_csv_keeps_unknown_legacy_close_time_blank(monkeypatch, t
     with open(master, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP", "Fee", "PnL ($)", "Reason", "Market Mode", "Trigger", "Session_ID", "MAE ($)", "MFE ($)", "Open Time", "Close Time"])
-        writer.writerow(["13:52:16 -> 16:16:59", "legacy-grid", "ETHUSD", "BUY", "1", "1", "1", "1", "0", "10", "Manual_Close", "ANY", "[GRID]", "GRID", "0", "10", "", "2026-06-10T10:32:39"])
+        writer.writerow(["13:52:16 -> 16:16:59", "legacy-session", "ETHUSD", "BUY", "1", "1", "1", "1", "0", "10", "Manual_Close", "ANY", "[LEGACY]", "LEGACY", "0", "10", "", "2026-06-10T10:32:39"])
 
     storage_manager.set_active_account("TEST_ACCOUNT")
 
@@ -192,7 +192,7 @@ def test_export_skips_unknown_legacy_closed_trades(monkeypatch, tmp_path):
                 "Recorded At": now.isoformat(timespec="seconds"),
                 "Ticket": "unknown-date",
                 "Symbol": "ETHUSD",
-                "Session ID": "GRID",
+                "Session ID": "LEGACY",
                 "Profit": "10",
             },
         )
@@ -347,11 +347,11 @@ def test_generate_package_creates_advisor_response_template(monkeypatch, tmp_pat
     assert result["ok"] is True
     with open(paths.advisor_flow_path(), "r", encoding="utf-8") as f:
         flow = f.read()
-    assert "RAT6 AI Advisor Flow" in flow
+    assert "RAT-CKVN AI Advisor Flow" in flow
     with open(paths.advisor_response_path(), "r", encoding="utf-8") as f:
         text = f.read()
     assert "No API response has been saved yet." in text
-    assert "AI Advisor cho RAT6" in api_client.load_advisor_prompt()
+    assert "AI Advisor cho RAT-CKVN" in api_client.load_advisor_prompt()
     assert api_client.load_api_settings()["technical_settings_limit"] == 1000000
 
 
@@ -752,12 +752,12 @@ def test_technical_snapshot_limits_active_by_symbol_to_relevant_symbols(monkeypa
     _patch_account_dir(monkeypatch, tmp_path)
     live_path = tmp_path / "live_signals.json"
     with open(live_path, "w", encoding="utf-8") as f:
-        f.write('{"pending_signals":[{"symbol":"ETHUSD","action":"BUY","signal_class":"ENTRY"}]}')
+        f.write('{"pending_signals":[{"symbol":"SSI","action":"BUY","signal_class":"ENTRY"}]}')
 
     import core.storage_manager as storage_manager
 
-    monkeypatch.setattr(config_snapshot.config, "COIN_LIST", ["BTCUSD", "ETHUSD", "XAUUSD"], raising=False)
-    monkeypatch.setattr(storage_manager, "load_brain_settings", lambda: {"BOT_ACTIVE_SYMBOLS": ["BTCUSD"]})
+    monkeypatch.setattr(config_snapshot.config, "CKCS_WATCHLIST", ["FPT", "SSI", "VCB"], raising=False)
+    monkeypatch.setattr(storage_manager, "load_brain_settings", lambda: {"BOT_ACTIVE_SYMBOLS": ["FPT"]})
     monkeypatch.setattr(
         storage_manager,
         "get_brain_settings_for_symbol",
@@ -775,23 +775,23 @@ def test_technical_snapshot_limits_active_by_symbol_to_relevant_symbols(monkeypa
     settings = snapshot["settings"]
 
     assert settings["active_by_symbol"] == {
-        "BTCUSD": {"symbol_marker": "BTCUSD"},
-        "ETHUSD": {"symbol_marker": "ETHUSD"},
+        "FPT": {"symbol_marker": "FPT"},
+        "SSI": {"symbol_marker": "SSI"},
     }
-    assert "XAUUSD" in settings["omitted_symbols"]
-    assert settings["relevant_symbols"] == ["BTCUSD", "ETHUSD"]
+    assert "VCB" in settings["omitted_symbols"]
+    assert settings["relevant_symbols"] == ["FPT", "SSI"]
 
 
 def test_technical_snapshot_includes_symbols_from_advisor_workbook(monkeypatch, tmp_path):
     _patch_account_dir(monkeypatch, tmp_path)
     wb = _new_history_workbook()
-    wb["open_trades"].append(["", "", "ETHUSD"])
+    wb["open_trades"].append(["", "", "SSI"])
     wb.save(paths.export_path())
 
     import core.storage_manager as storage_manager
 
-    monkeypatch.setattr(config_snapshot.config, "COIN_LIST", ["BTCUSD", "ETHUSD", "XAUUSD"], raising=False)
-    monkeypatch.setattr(storage_manager, "load_brain_settings", lambda: {"BOT_ACTIVE_SYMBOLS": ["BTCUSD"]})
+    monkeypatch.setattr(config_snapshot.config, "CKCS_WATCHLIST", ["FPT", "SSI", "VCB"], raising=False)
+    monkeypatch.setattr(storage_manager, "load_brain_settings", lambda: {"BOT_ACTIVE_SYMBOLS": ["FPT"]})
     monkeypatch.setattr(
         storage_manager,
         "get_brain_settings_for_symbol",
@@ -801,5 +801,5 @@ def test_technical_snapshot_includes_symbols_from_advisor_workbook(monkeypatch, 
 
     settings = config_snapshot.build_snapshot(reason="test")["settings"]
 
-    assert set(settings["active_by_symbol"]) == {"BTCUSD", "ETHUSD"}
-    assert settings["omitted_symbols"] == ["XAUUSD"]
+    assert set(settings["active_by_symbol"]) == {"FPT", "SSI"}
+    assert settings["omitted_symbols"] == ["VN30F1M", "VCB"]
