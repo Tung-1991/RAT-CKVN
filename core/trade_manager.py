@@ -8,6 +8,7 @@ import math
 import threading
 from types import SimpleNamespace
 import config
+from core import settlement
 from core.data_engine import data_engine
 from core.storage_manager import (
     load_state,
@@ -118,6 +119,48 @@ class TradeManager:
             or getattr(result, "order", None)
             or getattr(result, "ticket", "")
         )
+
+    def _position_settlement_dict(self, pos):
+        raw = getattr(pos, "raw", {}) or {}
+        return {
+            "symbol": str(getattr(pos, "symbol", "") or "").upper(),
+            "type": int(getattr(pos, "type", 0) or 0),
+            "volume": float(getattr(pos, "volume", 0.0) or 0.0),
+            "settle_date": raw.get("settle_date", ""),
+        }
+
+    def _stock_settled_long_volume(self, symbol, positions=None):
+        if not settlement.is_cash_stock(symbol):
+            return 0.0
+        if positions is None:
+            positions = self.connector.get_all_open_positions()
+        rows = [self._position_settlement_dict(p) for p in positions or []]
+        return settlement.available_to_sell(rows, symbol)
+
+    def _stock_long_only_guard(self, symbol, direction):
+        if str(direction or "").upper() != "SELL" or not settlement.is_cash_stock(symbol):
+            return None
+        available = self._stock_settled_long_volume(symbol)
+        if available <= 0:
+            return f"SAFEGUARD_FAIL|NO_SETTLED_LONG|{symbol} không có cổ phiếu đã về để bán/đóng; không mở short CKCS."
+        return None
+
+    def _close_with_t2_log(self, pos, reason=""):
+        result = self.connector.close_position(pos)
+        if result and getattr(result, "error", "") == "STOCK_NOT_SETTLED_T2":
+            ticket = str(getattr(pos, "ticket", "") or getattr(pos, "position_id", "") or "")
+            raw = getattr(pos, "raw", {}) or {}
+            settle = raw.get("settle_date", "")
+            key = f"{ticket}|T2"
+            now = time.time()
+            logs = self.state.setdefault("last_t2_close_logs", {})
+            if now - float(logs.get(key, 0.0) or 0.0) > 900:
+                suffix = f" chờ về {str(settle)[:10]}" if settle else ""
+                reason_text = f" ({reason})" if reason else ""
+                self.log(f"[T+2] treo {getattr(pos, 'symbol', '')}{suffix}{reason_text}", target="bot")
+                logs[key] = now
+                save_state(self.state)
+        return result
 
     def _record_open_trade(self, ticket, symbol, direction, volume, entry_price, sl=0.0, tp=0.0, result=None):
         if not ticket:
@@ -490,8 +533,8 @@ class TradeManager:
                     # Chạy luồng ẩn để cắt lệnh không làm kẹt
                     def _safe_close(pos, ticket_str=str(p.ticket)):
                         try:
-                            result = self.connector.close_position(pos)
-                            if result and not getattr(result, 'success', True):
+                            result = self._close_with_t2_log(pos, "Reverse")
+                            if result and not self._order_ok(result) and getattr(result, "error", "") != "STOCK_NOT_SETTLED_T2":
                                 self.log(f"⚠️ [REVERSE] Đóng lệnh #{ticket_str} THẤT BẠI: {getattr(result, 'comment', 'Unknown')}", target="bot")
                         except Exception as e:
                             self.log(f"⚠️ [REVERSE] Lỗi đóng lệnh #{ticket_str}: {e}", target="bot")
@@ -542,9 +585,16 @@ class TradeManager:
             return f"SAFEGUARD_FAIL|BE_SL_Reentry_Lock|{symbol} {direction} bị khóa vào lại sau BE_SL, còn {wait_s}s."
 
         close_on_reverse = safeguard_cfg.get("CLOSE_ON_REVERSE", False)
+        closed_on_reverse = 0
         if close_on_reverse and signal_class == "ENTRY":
             min_hold = safeguard_cfg.get("CLOSE_ON_REVERSE_MIN_TIME", 180)
-            self.close_opposite_positions(symbol, direction, min_hold)
+            closed_on_reverse = self.close_opposite_positions(symbol, direction, min_hold)
+            if closed_on_reverse and settlement.is_cash_stock(symbol) and str(direction or "").upper() == "SELL":
+                return f"SAFEGUARD_FAIL|REV_CLOSE_ONLY|{symbol} đã phát đóng long CKCS; không mở short."
+
+        stock_guard = self._stock_long_only_guard(symbol, direction)
+        if stock_guard:
+            return stock_guard
 
         # Gọi Checklist độc lập của Bot
         res = self.checklist.run_bot_safeguard_checks(
@@ -793,8 +843,11 @@ class TradeManager:
                 tp_price = 0.0
 
         comment = f"[BOT]_AUTO_{signal_class}"
+        # AUTO: trong phiên ATO/ATC thì đặt orderType ATO/ATC, ngoài phiên -> None (LO/MOK).
+        from core.market_hours import resolve_order_kind
+        order_kind = resolve_order_kind(symbol, safeguard_cfg.get("BOT_ORDER_MODE", "NORMAL"))
         result = self.connector.place_order(
-            symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment
+            symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment, order_kind=order_kind
         )
 
         if self._order_ok(result):
@@ -902,6 +955,10 @@ class TradeManager:
 
             return "SUCCESS"
 
+        err = getattr(result, "error", "") or "API_ERROR"
+        msg = getattr(result, "message", "") or ""
+        if msg or err != "API_ERROR":
+            self.log(f"⛔ [BOT] Đặt lệnh {symbol} thất bại: {err} {msg}".strip(), target="bot")
         return "API_ERROR"
 
     def _adjust_basket_tp(self, parent_ticket):
@@ -953,6 +1010,7 @@ class TradeManager:
         manual_sl=0.0,
         bypass_checklist=False,
         tactic_str="OFF",
+        order_kind=None,
     ):
         config.SYMBOL = symbol
         acc_info = self.connector.get_account_info()
@@ -962,6 +1020,10 @@ class TradeManager:
 
         if not res["passed"] and not bypass_checklist:
             return "CHECKLIST_FAIL"
+
+        stock_guard = self._stock_long_only_guard(symbol, direction)
+        if stock_guard:
+            return stock_guard
 
         params = getattr(config, "PRESETS", {}).get(
             preset_name, {"SL_PERCENT": 0.4, "TP_RR_RATIO": 1.5, "RISK_PERCENT": 0.3}
@@ -1120,6 +1182,7 @@ class TradeManager:
             tp_price,
             manual_magic,
             f"[USER]_{preset_name}",
+            order_kind=order_kind,
         )
 
         if self._order_ok(result):
@@ -1165,7 +1228,9 @@ class TradeManager:
             )
             return f"SUCCESS|{ticket_id}"
 
-        return "API_ERROR"
+        err = getattr(result, "error", "") or "API_ERROR"
+        msg = getattr(result, "message", "") or ""
+        return f"API_ERROR|{err}|{msg}".rstrip("|")
 
     def execute_telegram_sandbox_order(self, symbol, side, lot, sl, tp, bypass_checklist=False):
         symbol = str(symbol or "").strip().upper()
@@ -1564,7 +1629,7 @@ class TradeManager:
                                     "Parent_Closed"
                                 )
                                 threading.Thread(
-                                    target=self.connector.close_position,
+                                    target=self._close_with_t2_log,
                                     args=(child_pos,),
                                     daemon=True,
                                 ).start()
@@ -1592,6 +1657,31 @@ class TradeManager:
             ]
 
             needs_save = False
+
+            # ATC-exit: đóng vị thế BOT ở phiên ATC cuối ngày (nếu bật BOT_ATC_EXIT). 1 lần/ngày/ticket.
+            try:
+                from core.market_hours import market_session_phase
+                from datetime import datetime as _dt
+                _today = _dt.now().strftime("%Y-%m-%d")
+                atc_done = self.state.setdefault("atc_exit_done", {})
+                for pos in tracked_positions:
+                    if not is_bot_position(pos, magics):
+                        continue
+                    sg = self._get_brain_settings(pos.symbol).get("bot_safeguard", {})
+                    if not sg.get("BOT_ATC_EXIT"):
+                        continue
+                    if market_session_phase(pos.symbol)[0] != "ATC":
+                        continue
+                    done_key = f"{pos.ticket}|{_today}"
+                    if atc_done.get(done_key):
+                        continue
+                    res = self._close_with_t2_log(pos, "ATC_Exit")
+                    if res and getattr(res, "error", "") != "STOCK_NOT_SETTLED_T2":
+                        atc_done[done_key] = True
+                        needs_save = True
+            except Exception:
+                pass
+
             for pos in tracked_positions:
                 s_ticket = str(pos.ticket)
                 is_newly_tracked = s_ticket not in [str(t) for t in self.state.get("active_trades", [])]
@@ -1729,7 +1819,7 @@ class TradeManager:
                                 for p in positions:
                                     if p.symbol == symbol:
                                         self.state["exit_reasons"][str(p.ticket)] = "Watermark_Hit"
-                                        self.connector.close_position(p)
+                                        self._close_with_t2_log(p, "Watermark")
                                         time.sleep(0.2)
                                         
                             threading.Thread(target=_close_watermark_seq, args=(tracked_positions, sym), daemon=True).start()
@@ -1814,7 +1904,7 @@ class TradeManager:
                             def _close_basket_seq(b_pos):
                                 for p in b_pos:
                                     self.state["exit_reasons"][str(p.ticket)] = "Basket_Drawdown_Hit"
-                                    self.connector.close_position(p)
+                                    self._close_with_t2_log(p, "Basket_Drawdown")
                                     time.sleep(0.2)
                                     
                             threading.Thread(target=_close_basket_seq, args=(basket_pos,), daemon=True).start()
@@ -1892,7 +1982,7 @@ class TradeManager:
             )
             self.state["exit_reasons"][str(pos.ticket)] = "Anti_Cash_Hard_Stop"
             threading.Thread(
-                target=self.connector.close_position, args=(pos,), daemon=True
+                target=self._close_with_t2_log, args=(pos, "Anti_Cash_Hard_Stop"), daemon=True
             ).start()
             return
 
@@ -1907,7 +1997,7 @@ class TradeManager:
                 )
                 self.state["exit_reasons"][str(pos.ticket)] = "Anti_Cash_Time_Cut"
                 threading.Thread(
-                    target=self.connector.close_position, args=(pos,), daemon=True
+                    target=self._close_with_t2_log, args=(pos, "Anti_Cash_Time_Cut"), daemon=True
                 ).start()
 
     def _check_anti_cash(self, pos):
@@ -1956,7 +2046,7 @@ class TradeManager:
             self._set_anti_cash_lock(pos, reentry_lock_s)
             save_state(self.state)
             threading.Thread(
-                target=self.connector.close_position, args=(pos,), daemon=True
+                target=self._close_with_t2_log, args=(pos, reason), daemon=True
             ).start()
 
         if profit_usd <= -dynamic_threshold:
@@ -2140,7 +2230,7 @@ class TradeManager:
                 rev_state.pop(s_ticket, None)
                 save_state(self.state)
                 threading.Thread(
-                    target=self.connector.close_position, args=(pos,), daemon=True
+                    target=self._close_with_t2_log, args=(pos, "Reverse_Close"), daemon=True
                 ).start()
             else:
                 last_log = self.state.get("last_rev_log_time", {}).get(s_ticket, 0)
@@ -2389,7 +2479,7 @@ class TradeManager:
                                 arms.pop(s_ticket, None)
                                 save_state(self.state)
                                 threading.Thread(
-                                    target=self.connector.close_position, args=(pos,), daemon=True
+                                    target=self._close_with_t2_log, args=(pos, "BE_SL_Recovery_Guard"), daemon=True
                                 ).start()
                                 return f"BE_SL Recovery Guard ${profit_usd:.2f}"
 

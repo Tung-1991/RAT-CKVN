@@ -82,6 +82,17 @@ LOT_STEP = 1.0
 DNSE_POINT_VALUE = 100000.0
 DNSE_STOCK_PRICE_VALUE = 1000.0
 DNSE_PRICE_POINT = 0.1
+
+# --- Ràng buộc CKCS (cổ phiếu cơ sở) ---
+STOCK_ROUND_LOT = 100  # lệnh thường phải là bội số 100 CP (lô chẵn)
+STOCK_DEFAULT_EXCHANGE = "HOSE"  # CKCS hiện (FPT,SSI,VCB,CTG,BID,MBB) đều HOSE
+STOCK_EXCHANGE_BANDS = {"HOSE": 0.07, "HNX": 0.10, "UPCOM": 0.15}  # biên độ trần/sàn theo sàn
+# map mã->sàn override (env "DNSE_STOCK_EXCHANGE_MAP" dạng "SHS:HNX,ABC:UPCOM"); để trống là đủ
+STOCK_SYMBOL_EXCHANGE = {
+    p.split(":")[0].strip().upper(): p.split(":")[1].strip().upper()
+    for p in os.getenv("DNSE_STOCK_EXCHANGE_MAP", "").split(",")
+    if ":" in p
+}
 MONEY_DISPLAY_UNIT = "K_VND"
 DNSE_BROKER_FEE_PER_CONTRACT = 0.0
 DNSE_EXCHANGE_FEE_PER_CONTRACT = 2700.0
@@ -182,6 +193,11 @@ STRICT_RISK_CALC = False  # True: Trừ hao chi phí Spread/Commission thẳng v
 # ==============================================================================
 BOT_SAFEGUARD = {
     "MAX_DAILY_LOSS_PERCENT": 2.5,
+    # Kiểu khớp lệnh của bot: NORMAL = luôn khớp liên tục (LO/MOK);
+    # AUTO = trong phiên ATO/ATC thì đặt lệnh ATO/ATC, ngoài phiên thì liên tục.
+    "BOT_ORDER_MODE": "NORMAL",
+    # Đóng vị thế bot ở phiên ATC cuối ngày (tránh giữ qua đêm).
+    "BOT_ATC_EXIT": False,
     "MAX_OPEN_POSITIONS": 3,
     "MAX_TRADES_PER_DAY": 30,
     "MAX_LOSING_STREAK": 3,

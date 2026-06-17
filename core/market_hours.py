@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Optional
 
 import config
 
@@ -12,6 +13,23 @@ import config
 def _market_now() -> datetime:
     offset_hours = float(getattr(config, "MARKET_HOURS_UTC_OFFSET", 7))
     return datetime.utcnow() + timedelta(hours=offset_hours)
+
+
+def market_now_hm() -> str:
+    """Giờ thị trường hiện tại dạng HH:MM (để hiển thị cạnh đèn phiên)."""
+    return _market_now().strftime("%H:%M")
+
+
+def resolve_order_kind(symbol: str, mode: str = "NORMAL") -> Optional[str]:
+    """Chọn orderType theo chế độ + phiên.
+
+    mode NORMAL -> None (để connector tự dùng LO/MOK).
+    mode AUTO   -> 'ATO'/'ATC' nếu đang trong phiên khớp định kỳ, ngược lại None.
+    """
+    if str(mode or "").upper() != "AUTO":
+        return None
+    phase, _ = market_session_phase(symbol)
+    return phase if phase in ("ATO", "ATC") else None
 
 
 def is_weekday_only_symbol(symbol: str) -> bool:

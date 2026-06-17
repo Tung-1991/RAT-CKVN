@@ -409,6 +409,7 @@ def setup_left_panel(app, parent):
         f_head_db, text="HĐ: 0", font=FONT_BOLD, text_color="#FFD700"
     )
     app.lbl_prev_lot.pack(side="left")
+    # Trạng thái T+2 (Đã về/Chờ về) hiển thị TRONG bảng lệnh theo từng vị thế, không ở header.
     app.lbl_fee_info = ctk.CTkLabel(
         f_head_db, text="Phí: 0", font=FONT_FEE, text_color="#FFD700"
     )
@@ -423,17 +424,20 @@ def setup_left_panel(app, parent):
         f_price_row, fg_color="#424242", corner_radius=6
     )
     app.frame_trade_mode.grid(row=0, column=0, sticky="w", padx=(0, 8))
-    app.btn_mode_normal = ctk.CTkButton(
+    # Kiểu lệnh: NORMAL (khớp liên tục) | ATO (mở cửa) | ATC (đóng cửa).
+    # ATO/ATC chỉ chọn được khi đang đúng phiên (khóa ở update_ui).
+    app.cbo_trade_mode = ctk.CTkOptionMenu(
         app.frame_trade_mode,
-        text="NORMAL",
-        width=96,
+        values=["NORMAL", "ATO", "ATC"],
+        variable=app.var_manual_trade_mode,
+        width=98,
         height=24,
         font=("Roboto", 10, "bold"),
         fg_color="#00838F",
-        hover_color="#006064",
-        command=lambda: app.on_manual_trade_mode_change("NORMAL"),
+        button_color="#006064",
+        command=app.on_manual_trade_mode_change,
     )
-    app.btn_mode_normal.pack(fill="x", padx=4, pady=4)
+    app.cbo_trade_mode.pack(fill="x", padx=4, pady=4)
 
     app.lbl_dashboard_price = ctk.CTkLabel(
         f_price_row, text="----.--", font=FONT_PRICE, text_color="white"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 import logging
 import os
 import time
@@ -11,6 +12,7 @@ import requests
 from dotenv import load_dotenv
 
 import config
+from core import settlement, settlement_ledger, stock_rules
 from core.dnse_signature import generate_signature_header
 
 
@@ -31,6 +33,9 @@ class BrokerTick:
     low: float = 0.0
     open: float = 0.0
     spread: float = 0.0
+    ceiling: float = 0.0
+    floor: float = 0.0
+    reference: float = 0.0
     timestamp: float = field(default_factory=time.time)
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -728,6 +733,10 @@ class DNSEConnector:
             self._positions_cache = []
             self._positions_cache_ts = time.time()
             return []
+        try:
+            settlement_ledger.enrich_positions(self.account_no, positions)
+        except Exception as exc:
+            logger.warning("Settlement ledger enrich failed: %s", exc)
         self._positions_cache = list(positions)
         self._positions_cache_ts = time.time()
         return positions
@@ -792,6 +801,40 @@ class DNSEConnector:
         order_type_name = order_kind or ("LO" if float(price or 0) > 0 else "MOK")
         market_type = self.market_type_for_symbol(symbol)
         account_no = self.account_no_for_symbol(symbol)
+        symbol_key = str(symbol or "").strip().upper()
+        is_stock = settlement.is_cash_stock(symbol_key)
+        if is_stock:
+            # Lô chẵn 100: làm tròn XUỐNG; dưới 1 lô -> chặn.
+            round_lot = int(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+            quantity = stock_rules.round_lot_down(quantity, round_lot)
+            if quantity < round_lot:
+                return BrokerOrderResult(
+                    ok=False,
+                    error="STOCK_ODD_LOT",
+                    message=f"Cổ phiếu {symbol_key}: khối lượng phải là bội số {round_lot} (tối thiểu {round_lot} CP).",
+                )
+            # Biên độ trần/sàn cho lệnh LO (giá > 0).
+            if order_type_name == "LO" and float(price or 0) > 0:
+                tick = self.get_tick(symbol_key)
+                if tick is not None:
+                    band_pct = stock_rules.band_pct_for(symbol_key)
+                    fl, ce = stock_rules.resolve_band(tick.reference, tick.ceiling, tick.floor, band_pct)
+                    if not stock_rules.price_in_band(price, fl, ce):
+                        return BrokerOrderResult(
+                            ok=False,
+                            error="PRICE_OUT_OF_BAND",
+                            message=f"Cổ phiếu {symbol_key}: giá {float(price):g} ngoài biên [sàn {fl:g} .. trần {ce:g}].",
+                        )
+        if side == "NS" and is_stock:
+            enriched = settlement_ledger.enrich_positions(self.account_no, self.get_positions())
+            available = settlement.available_to_sell(enriched, symbol_key)
+            pending = settlement.pending_to_settle(enriched, symbol_key)
+            if available < quantity:
+                msg = (
+                    f"Cổ phiếu {symbol_key} chỉ có {available:g} đã về, cần bán {quantity:g}; "
+                    f"đang chờ về {pending:g}. Không bán khống CKCS."
+                )
+                return BrokerOrderResult(ok=False, error="STOCK_NOT_SETTLED_T2", message=msg)
         symbol = self.resolve_symbol(symbol)  # gửi mã hợp đồng thật cho lệnh phái sinh
         payload = {
             "accountNo": account_no,
@@ -820,10 +863,19 @@ class DNSEConnector:
         result = self._order_result(ok, data, status_code, message)
         if not result.ok:
             logger.error("DNSE order failed: %s", result.error or result.raw)
+        elif side == "NB" and is_stock:
+            ticket = result.position_id or result.order_id or result.ticket
+            buy_date = datetime.now()
+            try:
+                settle = settlement.settle_date_str(buy_date, self.get_working_dates())
+                settlement_ledger.record_buy(self.account_no, ticket, symbol_key, quantity, buy_date, settle)
+            except Exception as exc:
+                logger.warning("Settlement ledger record failed for %s %s: %s", symbol_key, ticket, exc)
         return result
 
-    def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="") -> BrokerOrderResult:
-        return self.send_order(symbol, order_type, lot, price=0.0, sl=sl, tp=tp, comment=comment, magic=magic)
+    def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="", order_kind=None) -> BrokerOrderResult:
+        # order_kind: None -> tự LO/MOK; "ATO"/"ATC" -> lệnh phiên định kỳ mở/đóng cửa.
+        return self.send_order(symbol, order_type, lot, price=0.0, sl=sl, tp=tp, comment=comment, magic=magic, order_kind=order_kind)
 
     def replace_order(self, order_id: str, *, price: Optional[float] = None, quantity: Optional[float] = None, account_no: Optional[str] = None, symbol: Optional[str] = None) -> BrokerOrderResult:
         if self._is_paper_mode():
@@ -886,6 +938,24 @@ class DNSEConnector:
         if self._is_paper_mode():
             return self._paper().close_position(position_or_ticket, comment)
         position_id = getattr(position_or_ticket, "position_id", None) or getattr(position_or_ticket, "ticket", None) or position_or_ticket
+        pos_obj = position_or_ticket if hasattr(position_or_ticket, "symbol") else None
+        if pos_obj is None and isinstance(position_or_ticket, (str, int)):
+            pos_key = str(position_id or "")
+            pos_obj = next(
+                (
+                    p
+                    for p in self.get_positions()
+                    if str(getattr(p, "position_id", "") or getattr(p, "ticket", "") or "") == pos_key
+                    or str(getattr(p, "ticket", "") or "") == pos_key
+                ),
+                None,
+            )
+        if pos_obj is not None and settlement.is_cash_stock(getattr(pos_obj, "symbol", "")):
+            enriched = settlement_ledger.enrich_positions(self.account_no, [pos_obj])
+            settle = (enriched[0] or {}).get("settle_date") if enriched else ""
+            if settle and not settlement.is_settled(settle):
+                msg = f"Cổ phiếu {getattr(pos_obj, 'symbol', '')} chưa về T+2 (về {str(settle)[:10]}), chưa đóng được."
+                return BrokerOrderResult(ok=False, position_id=str(position_id), error="STOCK_NOT_SETTLED_T2", message=msg)
         ok, data, status_code, message = self._request(
             "POST",
             f"/accounts/positions/{position_id}/close",
@@ -895,6 +965,8 @@ class DNSEConnector:
         result = self._order_result(ok, data, status_code, message)
         if not result.position_id:
             result.position_id = str(position_id)
+        if result.ok and pos_obj is not None and settlement.is_cash_stock(getattr(pos_obj, "symbol", "")):
+            settlement_ledger.drop(self.account_no, position_id)
         return result
 
     def close_all_positions(self) -> List[BrokerOrderResult]:
@@ -983,6 +1055,11 @@ class DNSEConnector:
             ask = last
         if not (last or bid or ask):
             return None
+        # Giá trần/sàn/tham chiếu: DNSE có thể nằm ở trade hoặc quote -> gộp tìm.
+        merged = {**(quote if isinstance(quote, dict) else {}), **(trade if isinstance(trade, dict) else {})}
+        ceiling = _to_float(_first_value(merged, ("ceilingPrice", "ceiling", "maxPrice")), 0.0)
+        floor = _to_float(_first_value(merged, ("floorPrice", "floor", "minPrice")), 0.0)
+        reference = _to_float(_first_value(merged, ("referencePrice", "refPrice", "basicPrice", "priorClosePrice")), 0.0)
         tick = BrokerTick(
             symbol=sym_key,
             bid=bid,
@@ -992,6 +1069,9 @@ class DNSEConnector:
             low=_to_float(_first_value(trade, ("lowestPrice", "low")), 0.0),
             open=_to_float(_first_value(trade, ("openPrice", "open")), 0.0),
             spread=round((ask - bid), 4) if ask and bid else 0.0,
+            ceiling=ceiling,
+            floor=floor,
+            reference=reference,
             raw={"trade": trade, "quote": quote},
         )
         self._tick_cache[sym_key] = tick
@@ -1007,13 +1087,17 @@ class DNSEConnector:
             if is_derivative
             else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
         )
+        # Cổ phiếu: lô chẵn 100 -> auto-lot tự làm tròn bội 100. Phái sinh giữ step=1.
+        round_lot = float(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+        volume_min = 1.0 if is_derivative else round_lot
+        volume_step = float(getattr(config, "LOT_STEP", 1.0) or 1.0) if is_derivative else round_lot
         return BrokerSymbolInfo(
             symbol=str(symbol).upper(),
             point=float(getattr(config, "DNSE_PRICE_POINT", 0.1)),
             trade_contract_size=point_value,
-            volume_min=1.0,
+            volume_min=volume_min,
             volume_max=float(getattr(config, "MAX_LOT_SIZE", 200.0) or 200.0) if is_derivative else 1000000.0,
-            volume_step=float(getattr(config, "LOT_STEP", 1.0) or 1.0),
+            volume_step=volume_step,
             spread=float(tick.spread if tick else 0.0),
             market_type=market_type,
             quantity_label="Hợp đồng" if is_derivative else "Cổ phiếu",

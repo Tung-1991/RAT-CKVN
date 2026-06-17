@@ -152,7 +152,7 @@ class BotStrategyUI(ctk.CTkToplevel):
     def __init__(self, master=None, symbol=None):
         super().__init__(master)
         self.override_symbol = symbol
-        title_str = "RAT6.0 Bot Strategy Sandbox"
+        title_str = "RAT6 CKVN Bot Strategy Sandbox"
         if symbol:
             title_str += f" - CẤU HÌNH CON: {symbol}"
         self.title(title_str)

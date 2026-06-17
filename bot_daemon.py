@@ -208,7 +208,7 @@ class StandaloneBotDaemon:
     def run(self):
         self.running = True
         logger.info(
-            "RAT6.0 Daemon started."
+            "RAT6 CKVN Daemon started."
         )
         last_signal_scan = 0
         last_acc_check = 0

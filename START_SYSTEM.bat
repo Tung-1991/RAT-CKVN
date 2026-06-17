@@ -1,8 +1,8 @@
 @echo off
-title RAT6.0 - TOTAL RECOVERY
+title RAT6 CKVN - TOTAL RECOVERY
 color 0B
 echo ======================================================
-echo    RAT6.0 - TOTAL RECOVERY ACTIVE
+echo    RAT6 CKVN - TOTAL RECOVERY ACTIVE
 echo ======================================================
 echo.
 

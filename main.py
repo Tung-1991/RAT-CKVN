@@ -91,7 +91,7 @@ main_logger.addFilter(Suppress10025Filter())
 class BotUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("RAT6.0 - Master Control (Kaiser Edition)")
+        self.title("RAT6 CKVN - Master Control (Kaiser Edition)")
         self.geometry("1650x950")
 
         self.var_auto_trade = tk.BooleanVar(value=False)
@@ -276,7 +276,7 @@ class BotUI(ctk.CTk):
             self.log_message(f"[TELEGRAM CONTROL] Service failed: {exc}", error=True, target="manual")
 
         self.log_message(
-            "RAT6.0 ready."
+            "RAT6 CKVN ready."
         )
 
     def start_daemon_process(self):
@@ -417,7 +417,12 @@ class BotUI(ctk.CTk):
 
         contexts = heartbeat.get("contexts", {})
         if contexts:
-            self.latest_market_context = contexts
+            # MERGE (không ghi đè cả dict) để giữ context fetch on-demand của sandbox
+            # cho các mã CKCS daemon không quét — tránh bị xoá mỗi nhịp heartbeat.
+            if isinstance(self.latest_market_context, dict):
+                self.latest_market_context.update(contexts)
+            else:
+                self.latest_market_context = dict(contexts)
             try:
                 import core.storage_manager as storage_manager
                 self.group_status_tracker = storage_manager.update_group_status_tracker(
@@ -619,9 +624,15 @@ class BotUI(ctk.CTk):
                 hover_color="#B71C1C" if not buy_on else "#616161",
             )
         sym = self.cbo_symbol.get()
+        is_stock = not self._is_derivative_symbol(sym)
         if value == "BUY":
             self.btn_action.configure(
                 text=f"VÀO LỆNH MUA {sym}", fg_color=COL_GREEN, hover_color="#009624"
+            )
+        elif is_stock:
+            # CK cơ sở KHÔNG bán khống — SELL = bán/đóng cổ phiếu ĐÃ VỀ đang giữ.
+            self.btn_action.configure(
+                text=f"BÁN (ĐÓNG) {sym}", fg_color=COL_RED, hover_color="#B71C1C"
             )
         else:
             self.btn_action.configure(
@@ -2337,7 +2348,7 @@ class BotUI(ctk.CTk):
         # Indicator phiên giao dịch theo symbol đang chọn (ATO/MỞ/NGHỈ TRƯA/ATC/ĐÓNG).
         if hasattr(self, "lbl_session"):
             try:
-                from core.market_hours import market_session_phase
+                from core.market_hours import market_session_phase, market_now_hm
                 phase, label = market_session_phase(sym)
                 color = {
                     "OPEN": COL_GREEN,
@@ -2347,7 +2358,40 @@ class BotUI(ctk.CTk):
                     "WEEKEND": COL_RED,
                     "CLOSED": COL_RED,
                 }.get(phase, "#90A4AE")
-                self.lbl_session.configure(text=f"PHIÊN: {label}", text_color=color)
+                self.lbl_session.configure(text=f"PHIÊN: {label} · {market_now_hm()}", text_color=color)
+                # Khóa lựa chọn ATO/ATC theo phiên — chỉ cho chọn khi đang đúng phiên.
+                if hasattr(self, "cbo_trade_mode"):
+                    valid_modes = ["NORMAL"]
+                    if phase == "ATO":
+                        valid_modes.append("ATO")
+                    elif phase == "ATC":
+                        valid_modes.append("ATC")
+                    self.cbo_trade_mode.configure(values=valid_modes)
+                    if self.var_manual_trade_mode.get() not in valid_modes:
+                        self.var_manual_trade_mode.set("NORMAL")
+            except Exception:
+                pass
+
+        # Cổ phiếu (CKCS) KHÔNG bán khống: khóa nút SELL khi không giữ CK đã về.
+        if hasattr(self, "btn_dir_sell"):
+            try:
+                from core import settlement
+                if settlement.is_cash_stock(sym):
+                    rows = [{
+                        "symbol": getattr(p, "symbol", ""),
+                        "type": int(getattr(p, "type", 0) or 0),
+                        "volume": float(getattr(p, "volume", 0.0) or 0.0),
+                        "settle_date": (getattr(p, "raw", {}) or {}).get("settle_date", ""),
+                    } for p in (positions or []) if str(getattr(p, "symbol", "") or "").upper() == str(sym or "").upper()]
+                    sellable = settlement.available_to_sell(rows, sym)
+                    if sellable <= 0:
+                        if self.var_direction.get() == "SELL":
+                            self.on_direction_change("BUY")
+                        self.btn_dir_sell.configure(state="disabled", fg_color="#2a2a2a")
+                    else:
+                        self.btn_dir_sell.configure(state="normal")
+                else:
+                    self.btn_dir_sell.configure(state="normal")
             except Exception:
                 pass
         # FEE label sẽ được cập nhật sau vòng lặp positions (cần data lệnh đang mở)
@@ -2553,6 +2597,7 @@ class BotUI(ctk.CTk):
             # Phí: luôn lấy giá trị tính được gần nhất (fallback profile), không treo "chờ DNSE".
             fee_part = f"Phí GD: {format_money_k(abs(comm_total))}"
             self.lbl_fee_info.configure(text=f"{spread_part} | {fee_part}")
+            # (Trạng thái T+2 Đã về/Chờ về hiển thị theo từng vị thế trong BẢNG LỆNH.)
 
             # 5. HIỂN THỊ RỦI RO LÊN GIAO DIỆN
             is_valid_sl = True
@@ -2939,6 +2984,17 @@ class BotUI(ctk.CTk):
         except Exception:
             pass
 
+        # Kiểu lệnh ATO/ATC (chỉ khi đang đúng phiên), else None -> LO/MOK.
+        order_kind = None
+        try:
+            _mode = self.var_manual_trade_mode.get()
+            if _mode in ("ATO", "ATC"):
+                from core.market_hours import market_session_phase
+                if market_session_phase(s)[0] == _mode:
+                    order_kind = _mode
+        except Exception:
+            order_kind = None
+
         def run_trade_thread():
             result = self.trade_mgr.execute_manual_trade(
                 d,
@@ -2951,6 +3007,7 @@ class BotUI(ctk.CTk):
                 ms,
                 self.var_bypass_checklist.get(),
                 t,
+                order_kind=order_kind,
             )
             if "SUCCESS" not in result:
                 self.log_message(f"❌ THẤT BẠI: {result}", error=True)

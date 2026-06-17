@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 import config
-from core.dnse_connector import DNSEConnector, BrokerOrderResult
+from core.dnse_connector import DNSEConnector, BrokerOrderResult, BrokerTick
+from core import settlement_ledger
 
 
 class FakeResponse:
@@ -230,6 +231,84 @@ def test_send_order_refuses_when_auto_trade_disabled(monkeypatch):
     assert session.calls == []
 
 
+def test_real_stock_buy_records_settlement_ledger(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession(
+        [
+            FakeResponse(200, {"orderId": "O-FPT-1", "status": "NEW"}),
+            FakeResponse(200, {"workingDates": ["2026-06-18", "2026-06-19", "2026-06-22"]}),
+        ]
+    )
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+
+    result = conn.send_order("FPT", "BUY", 100)
+
+    assert result.ok is True
+    ledger_rows = settlement_ledger.enrich_positions(
+        "ACC1",
+        [SimpleNamespace(ticket="P1", position_id="P1", order_id="O-FPT-1", symbol="FPT", type=0, volume=100, raw={"orderId": "O-FPT-1"})],
+    )
+    assert ledger_rows[0]["settle_date"]
+    assert session.calls[0]["json"]["symbol"] == "FPT"
+
+
+def test_real_stock_sell_blocks_when_not_settled(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    settlement_ledger.record_buy("ACC1", "O-FPT-1", "FPT", 100, "2999-01-01", "2999-01-03")
+    session = FakeSession(
+        [
+            FakeResponse(200, {"positions": []}),
+            FakeResponse(
+                200,
+                {
+                    "positions": [
+                        {
+                            "positionId": "P1",
+                            "orderId": "O-FPT-1",
+                            "symbol": "FPT",
+                            "side": "LONG",
+                            "quantity": 100,
+                            "avgPrice": 73.0,
+                            "currentPrice": 73.5,
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+
+    result = conn.send_order("FPT", "SELL", 100)
+
+    assert result.ok is False
+    assert result.error == "STOCK_NOT_SETTLED_T2"
+    assert all(not call["url"].endswith("/accounts/orders") for call in session.calls)
+
+
+def test_real_derivative_sell_is_not_blocked_by_t2(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([FakeResponse(200, {"orderId": "O1", "status": "NEW"})])
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn._symbol_map = {"VN30F1M": "41I1G6000"}
+    conn._symbol_map_ts = 9999999999
+
+    result = conn.send_order("VN30F1M", "SELL", 1)
+
+    assert result.ok is True
+    assert session.calls[0]["json"]["symbol"] == "41I1G6000"
+
+
 def test_paper_mode_uses_real_fee_profile_without_account_or_order_endpoints(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "PAPER_TRADING", True)
     monkeypatch.setattr(config, "PAPER_INITIAL_BALANCE", 100000000.0)
@@ -313,3 +392,94 @@ def test_real_403_returns_account_pending_and_mutes(monkeypatch, caplog):
     assert first["status"] == "ACCOUNT_PENDING"
     assert second["status"] == "ACCOUNT_PENDING"
     assert caplog.text.count("DNSE balances failed [403]") <= 1
+
+
+# --- T+2 nâng cao: lô 100 CP + biên độ trần/sàn (CKCS) ---
+
+def test_stock_buy_rounds_odd_lot_down(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession(
+        [
+            FakeResponse(200, {"orderId": "O-FPT-150", "status": "NEW"}),
+            FakeResponse(200, {"workingDates": ["2026-06-18", "2026-06-19", "2026-06-22"]}),
+        ]
+    )
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+
+    result = conn.send_order("FPT", "BUY", 150)
+
+    assert result.ok is True
+    assert session.calls[0]["json"]["quantity"] == 100  # 150 -> bội 100
+
+
+def test_stock_buy_blocks_below_one_lot(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([])
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+
+    result = conn.send_order("FPT", "BUY", 90)
+
+    assert result.ok is False
+    assert result.error == "STOCK_ODD_LOT"
+    assert session.calls == []  # không gửi lệnh lên DNSE
+
+
+def test_stock_lo_rejects_price_out_of_band(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([])
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn.get_tick = lambda symbol: BrokerTick(symbol=symbol, last=100.0, reference=100.0, ceiling=107.0, floor=93.0)
+
+    result = conn.send_order("FPT", "BUY", 100, price=120.0)
+
+    assert result.ok is False
+    assert result.error == "PRICE_OUT_OF_BAND"
+    assert session.calls == []
+
+
+def test_stock_lo_accepts_price_in_band(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession(
+        [
+            FakeResponse(200, {"orderId": "O-FPT-LO", "status": "NEW"}),
+            FakeResponse(200, {"workingDates": ["2026-06-18", "2026-06-19", "2026-06-22"]}),
+        ]
+    )
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn.get_tick = lambda symbol: BrokerTick(symbol=symbol, last=100.0, reference=100.0, ceiling=107.0, floor=93.0)
+
+    result = conn.send_order("FPT", "BUY", 100, price=100.0)
+
+    assert result.ok is True
+    assert session.calls[0]["json"]["orderType"] == "LO"
+    assert session.calls[0]["json"]["price"] == 100.0
+
+
+def test_derivative_qty_not_forced_to_round_lot(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([FakeResponse(200, {"orderId": "O1", "status": "NEW"})])
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn._symbol_map = {"VN30F1M": "41I1G6000"}
+    conn._symbol_map_ts = 9999999999
+
+    result = conn.send_order("VN30F1M", "BUY", 1, price=1200.0)
+
+    assert result.ok is True
+    assert session.calls[0]["json"]["quantity"] == 1  # phái sinh không bị ép bội 100

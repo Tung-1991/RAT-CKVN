@@ -294,7 +294,7 @@ def record_trade_opened(pos, state=None, market_context=None, source="discovered
 def _module_tags(reason, trigger, tactic, session_id):
     text = "|".join(str(v or "").upper() for v in [reason, trigger, tactic, session_id])
     tags = []
-    for tag in ["REV_C", "BE_CASH", "TSL", "SL", "GRID", "HEDGE", "DCA", "PCA", "BE", "ANTI_CASH"]:
+    for tag in ["REV_C", "BE_CASH", "TSL", "SL", "DCA", "PCA", "BE", "ANTI_CASH", "T+2"]:
         if tag in text:
             tags.append(tag)
     return ",".join(tags) if tags else "unknown"
@@ -302,10 +302,6 @@ def _module_tags(reason, trigger, tactic, session_id):
 
 def _source_type(trigger, session_id):
     text = f"{trigger}|{session_id}".upper()
-    if "HEDGE" in text:
-        return "HEDGE"
-    if "GRID" in text:
-        return "GRID"
     if "[USER]" in text:
         return "MANUAL"
     if "[BOT]" in text or "AUTO" in text:

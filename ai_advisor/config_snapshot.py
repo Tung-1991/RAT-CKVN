@@ -172,11 +172,7 @@ def _source_paths():
         "symbol_overrides": getattr(storage_manager, "SYMBOL_OVERRIDES_FILE", None),
         "tsl_settings": os.path.join(paths.account_dir(), "tsl_settings.json"),
         "presets_config": os.path.join(paths.account_dir(), "presets_config.json"),
-        "grid_settings": os.path.join(paths.account_dir(), "grid_settings.json"),
-        "hedge_settings": os.path.join(paths.account_dir(), "hedge_settings.json"),
         "bot_state": getattr(storage_manager, "STATE_FILE", None),
-        "grid_state": os.path.join(paths.account_dir(), "grid_state.json"),
-        "hedge_state": os.path.join(paths.account_dir(), "hedge_state.json"),
         "live_signals": os.path.join(paths.account_dir(), "live_signals.json"),
         "system_meta": getattr(storage_manager, "SYSTEM_META_FILE", None),
     }
@@ -189,7 +185,7 @@ def _stable_hash(payload):
 
 def _advisor_guide():
     return {
-        "purpose": "Use this package to review RAT6 trading performance, risk controls, module behavior, and configuration drift. Do not propose direct automated order actions.",
+        "purpose": "Use this package to review RAT-CKVN DNSE trading performance, risk controls, signal behavior, T+2 settlement, and configuration drift. Do not propose direct automated order actions.",
         "files": {
             "technical_settings.json": "Current config snapshot plus raw source JSON files.",
             "advisor_export.xlsx": "Filtered trade/config/event view for the selected export window.",
@@ -208,8 +204,6 @@ def _advisor_guide():
             "PCA": "Adds to winning/confirmed basket according to PCA rules.",
             "REV_C": "Recovery/reversal close logic.",
             "A.CUT": "Anti-cash hard stop/giveback guard.",
-            "GRID": "Grid trading module.",
-            "HEDGE": "Hedge trading module.",
             "SANDBOX": "Strategy sandbox/rules preview and bot strategy configuration.",
         },
         "trade_metrics": {

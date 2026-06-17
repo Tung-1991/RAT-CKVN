@@ -405,7 +405,7 @@ def open_advisor_popup(app):
             )
             result = telegram_reporter.send_text_report(
                 text,
-                title="RAT6 Advisor Report",
+                title="RAT6 CKVN Advisor Report",
                 require_enabled=False,
             )
             if result.get("ok"):
@@ -1144,37 +1144,56 @@ def open_bot_setting_popup(app):
     # Bot chỉ trade mã được tick; chưa tick thì không đụng tới.
     watch_symbols = _build_watch_symbols()
 
-    # Tạo layout lưới cho các mã
-    row_idx = 0
-    col_idx = 0
-    for coin in watch_symbols:
+    # Tách 2 nhóm cho dễ phân biệt: Phái sinh (CKPS) | Cơ sở (CKCS).
+    from core import settlement as _settlement
+    ckps_syms = [s for s in watch_symbols if not _settlement.is_cash_stock(s)]
+    ckcs_syms = [s for s in watch_symbols if _settlement.is_cash_stock(s)]
+
+    def _make_coin_cell(parent, coin, row, col):
         var = tk.BooleanVar(value=(coin in allowed_list))
         app.bot_coin_vars[coin] = var
-        f_single_coin = ctk.CTkFrame(f_coins, fg_color="transparent")
-        f_single_coin.grid(row=row_idx, column=col_idx, sticky="w", pady=5, padx=10)
-        chk = ctk.CTkCheckBox(
+        f_single_coin = ctk.CTkFrame(parent, fg_color="transparent")
+        f_single_coin.grid(row=row, column=col, sticky="w", pady=4, padx=8)
+        ctk.CTkCheckBox(
             f_single_coin, text=coin, variable=var, font=("Consolas", 13), width=80
-        )
-        chk.pack(side="left")
+        ).pack(side="left")
         has_override = _symbol_has_override(coin)
         btn_cfg = ctk.CTkButton(
             f_single_coin,
             text="⚙*" if has_override else "⚙",
-            width=25,
-            height=20,
+            width=25, height=20,
             fg_color=COL_WARN if has_override else "#444",
             hover_color="#FFB300" if has_override else "#666",
             text_color="#212121" if has_override else "#FFFFFF",
-            command=lambda c=coin: open_symbol_config_popup(
-                app, c, on_change=refresh_symbol_cfg_buttons
-            ),
+            command=lambda c=coin: open_symbol_config_popup(app, c, on_change=refresh_symbol_cfg_buttons),
         )
         btn_cfg.pack(side="left", padx=(5, 0))
         symbol_cfg_buttons[coin] = btn_cfg
-        col_idx += 1
-        if col_idx > 1:
-            col_idx = 0
-            row_idx += 1
+
+    f_two = ctk.CTkFrame(f_coins, fg_color="transparent")
+    f_two.pack(fill="x")
+
+    # Cột trái: PHÁI SINH (CKPS = VN30F)
+    f_ckps = ctk.CTkFrame(f_two, fg_color="#16212e", corner_radius=8)
+    f_ckps.grid(row=0, column=0, sticky="nw", padx=(0, 8), pady=2)
+    ctk.CTkLabel(f_ckps, text="PHÁI SINH (CKPS)", font=("Roboto", 11, "bold"), text_color="#4FC3F7").grid(
+        row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 2))
+    for i, coin in enumerate(ckps_syms):
+        _make_coin_cell(f_ckps, coin, 1 + i, 0)
+    if not ckps_syms:
+        ctk.CTkLabel(f_ckps, text="(VN30F1M)", text_color="#607D8B").grid(row=1, column=0, padx=8, pady=4)
+
+    # Cột phải: CƠ SỞ (CKCS = cổ phiếu)
+    f_ckcs = ctk.CTkFrame(f_two, fg_color="#2a2412", corner_radius=8)
+    f_ckcs.grid(row=0, column=1, sticky="nw", pady=2)
+    ctk.CTkLabel(f_ckcs, text="CƠ SỞ (CKCS)", font=("Roboto", 11, "bold"), text_color="#FFD54F").grid(
+        row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 2))
+    if ckcs_syms:
+        for i, coin in enumerate(ckcs_syms):
+            _make_coin_cell(f_ckcs, coin, 1 + (i // 2), i % 2)
+    else:
+        ctk.CTkLabel(f_ckcs, text="(nhập mã ở ⚙ ADVANCED → Cache & Mã)", text_color="#607D8B").grid(
+            row=1, column=0, columnspan=2, padx=8, pady=4)
 
     def refresh_watch_symbol_controls():
         try:
@@ -1461,6 +1480,21 @@ def open_bot_setting_popup(app):
         row=3, column=1, columnspan=3, sticky="w", padx=10, pady=(10, 0)
     )
 
+    # --- [NEW] Kiểu lệnh phiên định kỳ ATO/ATC ---
+    ctk.CTkLabel(f_sg_content, text="Kiểu khớp bot:").grid(row=4, column=0, sticky="w", padx=10, pady=(10, 0))
+    cbo_bot_order_mode = ctk.CTkOptionMenu(f_sg_content, values=["NORMAL", "AUTO"], width=140)
+    cbo_bot_order_mode.set(str(safe_cfg.get("BOT_ORDER_MODE", "NORMAL")).upper())
+    cbo_bot_order_mode.grid(row=4, column=1, sticky="w", padx=10, pady=(10, 0))
+    var_bot_atc_exit = ctk.BooleanVar(value=bool(safe_cfg.get("BOT_ATC_EXIT", False)))
+    ctk.CTkCheckBox(
+        f_sg_content, text="Đóng vị thế phiên ATC (cuối ngày)", variable=var_bot_atc_exit, font=("Roboto", 11),
+    ).grid(row=4, column=2, columnspan=2, sticky="w", padx=10, pady=(10, 0))
+    ctk.CTkLabel(
+        f_sg_content,
+        text="AUTO: trong phiên ATO/ATC bot đặt lệnh ATO/ATC, ngoài phiên thì khớp liên tục (LO/MOK).",
+        font=("Arial", 10, "italic"), text_color="#90A4AE", justify="left", wraplength=560,
+    ).grid(row=5, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 4))
+
     # --- [GROUP 3: 🛡️ ĐIỀU KIỆN VẬN HÀNH (OPERATIONAL)] ---
     f_op = ctk.CTkFrame(f_safety, border_width=1, border_color="#2196F3")
     f_op.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=5, pady=8)
@@ -1624,6 +1658,8 @@ def open_bot_setting_popup(app):
                     "MAX_BASKET_DRAWDOWN_UNIT": cbo_gl_basket_dd_unit.get(),
                     "REJECT_ON_MAX_LOT": var_gl_reject_lot.get(),
                     "GLOBAL_BRAKE_MODE": cbo_brake_mode.get(),
+                    "BOT_ORDER_MODE": cbo_bot_order_mode.get(),
+                    "BOT_ATC_EXIT": var_bot_atc_exit.get(),
                 }
             )
             existing_data["BOT_ACTIVE_SYMBOLS"] = [
