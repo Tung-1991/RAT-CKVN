@@ -2618,7 +2618,11 @@ class BotUI(ctk.CTk):
                 # Token THẬT: hiện giờ còn lại + TỰ TẮT AUTO_TRADE khi hết (chống bot gửi lệnh fail âm thầm).
                 if not getattr(config, "PAPER_TRADING", True) and getattr(self, "connector", None) is not None:
                     left = self.connector.trading_token_seconds_left()
-                    if left > 0:
+                    persistent = getattr(self.connector, "trading_token_persistent", False) and bool(self.connector.trading_token)
+                    if persistent:
+                        self._token_expired_alerted = False
+                        self.lbl_session.configure(text=f"PHIÊN: {label} · {market_now_hm()} · TOKEN: OK", text_color=color)
+                    elif left > 0:
                         self._token_expired_alerted = False
                         self.lbl_session.configure(text=f"PHIÊN: {label} · {market_now_hm()} · TOKEN {left/3600:.1f}h", text_color=color)
                     else:

@@ -80,6 +80,22 @@ def test_verify_otp_sets_token_and_expiry():
     assert "X-Signature" in call["headers"]
 
 
+def test_trading_token_ttl_by_otp_type(monkeypatch):
+    monkeypatch.setattr(config, "DNSE_TOKEN_TTL_HOURS", {"email_otp": 0.0, "smart_otp": 8.0})
+    # email OTP -> token KHÔNG tự hết
+    conn = _connector(FakeSession([FakeResponse(200, {"trading-token": "tok"})]))
+    conn.otp_type = "email_otp"
+    assert conn.verify_otp("email_otp", "123456") is True
+    assert conn.trading_token_persistent is True
+    assert conn.trading_token_seconds_left() > 1_000_000
+    # smart OTP -> ~8h
+    conn2 = _connector(FakeSession([FakeResponse(200, {"trading-token": "tok2"})]))
+    conn2.otp_type = "smart_otp"
+    assert conn2.verify_otp("smart_otp", "123456") is True
+    assert conn2.trading_token_persistent is False
+    assert 7.5 * 3600 < conn2.trading_token_seconds_left() <= 8 * 3600
+
+
 def test_send_order_builds_derivative_payload_and_uses_trading_token(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)

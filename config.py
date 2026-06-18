@@ -26,6 +26,9 @@ CKCS_WATCHLIST = [s.strip().upper() for s in os.getenv("DNSE_CKCS_WATCHLIST", ""
 DNSE_CUSTODY_CODE = os.getenv("DNSE_CUSTODY_CODE", "")
 DNSE_STOCK_ACCOUNT_NO = os.getenv("DNSE_STOCK_ACCOUNT_NO", "")
 DNSE_DERIVATIVE_ACCOUNT_NO = os.getenv("DNSE_DERIVATIVE_ACCOUNT_NO", "")
+# Thời hạn trading-token theo loại OTP (giờ). 0 = KHÔNG tự hết (email OTP sống tới khi logout).
+# smart OTP của DNSE hết ~8h. Chỉnh được nếu sàn đổi luật.
+DNSE_TOKEN_TTL_HOURS = {"email_otp": 0.0, "smart_otp": 8.0}
 CRYPTO_SYMBOLS = []
 WEEKDAY_ONLY_SYMBOLS = ["VN30F1M"]
 MARKET_HOURS_UTC_OFFSET = 7 # Giờ VN

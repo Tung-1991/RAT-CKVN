@@ -235,6 +235,7 @@ class DNSEConnector:
         self.is_connected = False
         self.trading_token: Optional[str] = None
         self.trading_token_expires_at: float = 0.0
+        self.trading_token_persistent: bool = False
         self.last_request_time = 0.0
         self.last_latency_ms = 0.0
         self.market_type = os.getenv("DNSE_MARKET_TYPE", "DERIVATIVE")
@@ -426,8 +427,16 @@ class DNSEConnector:
             logger.error("DNSE OTP verification did not return trading token: %s", data)
             return False
         self.trading_token = str(token)
-        self.trading_token_expires_at = time.time() + (8 * 3600)
-        logger.info("DNSE trading token ready. It expires in about 8 hours.")
+        # Thời hạn theo loại OTP: email = không tự hết (đặt mốc xa ~10 năm); smart = ~8h.
+        ttl_map = getattr(config, "DNSE_TOKEN_TTL_HOURS", {}) or {}
+        ttl_hours = float(ttl_map.get(self.otp_type, 8.0))
+        self.trading_token_persistent = ttl_hours <= 0
+        if self.trading_token_persistent:
+            self.trading_token_expires_at = time.time() + (10 * 365 * 24 * 3600)
+            logger.info("DNSE trading token ready (%s — không tự hết hạn).", self.otp_type)
+        else:
+            self.trading_token_expires_at = time.time() + (ttl_hours * 3600)
+            logger.info("DNSE trading token ready (~%.0fh, %s).", ttl_hours, self.otp_type)
         return True
 
     def get_account_info(self) -> Optional[Dict[str, Any]]:
