@@ -308,6 +308,12 @@ class PaperBroker:
             "free_margin": equity,
             "margin_free": equity,
             "margin_level": 0.0,
+            "cash_available": equity,
+            "buying_power": equity,
+            "margin_debt": 0.0,
+            "rtt": None,
+            "margin_call_level": 87.0,
+            "margin_force_level": 80.0,
             "positions": len(positions),
             "realized_pnl": float(self.state.get("realized_pnl", 0.0) or 0.0),
         }

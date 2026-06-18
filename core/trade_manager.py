@@ -8,7 +8,7 @@ import math
 import threading
 from types import SimpleNamespace
 import config
-from core import settlement
+from core import margin_rules, settlement, stock_rules
 from core.data_engine import data_engine
 from core.storage_manager import (
     load_state,
@@ -568,6 +568,10 @@ class TradeManager:
         acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
         safeguard_cfg = brain.get("bot_safeguard", {})
+        if settlement.is_cash_stock(symbol):
+            margin_block = margin_rules.bot_margin_block_reason(acc_info, brain.get("manual_margin", {}))
+            if margin_block:
+                return f"SAFEGUARD_FAIL|BOT_MARGIN_DISABLED|{margin_block}"
 
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
@@ -1024,9 +1028,14 @@ class TradeManager:
         bypass_checklist=False,
         tactic_str="OFF",
         order_kind=None,
+        manual_entry_price=0.0,
+        entry_exit_tactic="OFF",
     ):
         config.SYMBOL = symbol
         acc_info = self.connector.get_account_info()
+        brain = self._get_brain_settings(symbol)
+        margin_cfg = margin_rules.settings_from_brain(brain)
+        manual_margin_active = settlement.is_cash_stock(symbol) and bool(margin_cfg.get("ENABLE_MANUAL_MARGIN"))
         res = self.checklist.run_pre_trade_checks(
             acc_info, self.state, symbol, strict_mode
         )
@@ -1048,8 +1057,15 @@ class TradeManager:
         if not tick or not sym_info:
             return "ERR_NO_TICK"
 
-        price = tick.ask if direction == "BUY" else tick.bid
+        market_price = tick.ask if direction == "BUY" else tick.bid
+        manual_entry_price = float(manual_entry_price or 0.0)
+        price = manual_entry_price if manual_entry_price > 0 else market_price
         equity = acc_info["equity"]
+        risk_base_amount = equity
+        risk_base_label = "EQUITY_NAV"
+        risk_base_warning = ""
+        if manual_margin_active:
+            risk_base_amount, risk_base_label, risk_base_warning = margin_rules.resolve_risk_base(acc_info, margin_cfg)
         order_type = 0 if direction == "BUY" else 1
 
         def resolve_manual_group(key):
@@ -1113,6 +1129,9 @@ class TradeManager:
         auto_lot = manual_lot <= 0
         if manual_lot > 0:
             lot_size = manual_lot
+            # Cổ phiếu: lô tay phải bội số 100 -> làm tròn xuống cho khớp preview + paper/real.
+            if settlement.is_cash_stock(symbol):
+                lot_size = stock_rules.round_lot_down(manual_lot)
         else:
             strict_fee_per_lot = 0.0
             if params.get("STRICT_RISK", False):
@@ -1134,7 +1153,7 @@ class TradeManager:
                 )
                 strict_fee_per_lot = comm_rate + spread_cost
 
-            risk_usd = equity * (risk_pct / 100.0)
+            risk_usd = risk_base_amount * (risk_pct / 100.0)
 
             calc_lot, safe_sl = self.connector.calculate_lot_size(
                 symbol, risk_usd, sl_price, order_type, strict_fee_per_lot
@@ -1182,6 +1201,38 @@ class TradeManager:
                 else price - (abs(price - sl_price) * params.get("TP_RR_RATIO", 1.5))
             )
 
+        margin_meta = {}
+        margin_tag = ""
+        if manual_margin_active:
+            contract_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
+            order_value = abs(float(price or 0.0) * float(lot_size or 0.0) * contract_size)
+            est_loss = abs(float(price or 0.0) - float(sl_price or 0.0)) * float(lot_size or 0.0) * contract_size
+            margin_result = margin_rules.manual_margin_check(
+                acc_info,
+                margin_cfg,
+                order_value=order_value,
+                risk_usd=est_loss,
+                strict=True,
+            )
+            margin_meta = {
+                "enabled": True,
+                "risk_base": risk_base_label,
+                "risk_base_amount": risk_base_amount,
+                "risk_base_warning": risk_base_warning,
+                "order_value": order_value,
+                "estimated_max_loss": est_loss,
+                "snapshot": margin_result.get("snapshot", {}),
+                "checks": margin_result.get("checks", []),
+            }
+            if not margin_result.get("passed", False):
+                fail_msgs = [
+                    str(c.get("msg", ""))
+                    for c in margin_result.get("checks", [])
+                    if str(c.get("status", "")).upper() == "FAIL"
+                ]
+                return "SAFEGUARD_FAIL|MANUAL_MARGIN|" + " | ".join(fail_msgs or ["margin guard failed"])
+            margin_tag = "[MARGIN][MANUAL]"
+
         import core.storage_manager as storage_manager
 
         magics = storage_manager.get_magic_numbers()
@@ -1194,14 +1245,19 @@ class TradeManager:
             sl_price,
             tp_price,
             manual_magic,
-            f"[USER]_{preset_name}",
+            f"[USER]_{preset_name}{margin_tag}",
             order_kind=order_kind,
+            price=manual_entry_price if manual_entry_price > 0 and not order_kind else 0.0,
         )
 
         if self._order_ok(result):
             ticket_id = self._order_ticket(result)
             self._record_open_trade(ticket_id, symbol, direction, lot_size, price, sl_price, tp_price, result)
             self.update_trade_tactic(ticket_id, tactic_str)
+            if entry_exit_tactic and entry_exit_tactic != "OFF":
+                self.update_trade_entry_exit_tactic(ticket_id, entry_exit_tactic)
+            if margin_meta:
+                self.state.setdefault("trade_margin_meta", {})[str(ticket_id)] = margin_meta
             self.state["initial_r_dist"][str(ticket_id)] = abs(price - sl_price)
             self.state.setdefault("initial_r_usd", {})[str(ticket_id)] = self._calc_risk_usd(
                 symbol, order_type, lot_size, price, sl_price
@@ -1231,13 +1287,20 @@ class TradeManager:
                         "tp": tp_price,
                         "tactic": tactic_str,
                         "preset": preset_name,
+                        "margin": margin_meta,
                         "market_context": context or {},
                     },
                 )
             except Exception:
                 pass
+            margin_log = ""
+            if margin_meta:
+                snap = margin_meta.get("snapshot", {})
+                rtt = snap.get("rtt")
+                rtt_txt = "UNKNOWN" if rtt is None else f"{float(rtt):.1f}%"
+                margin_log = f" | MARGIN {risk_base_label} | RTT {rtt_txt}"
             self.log(
-                f"🚀 [USER EXEC] {direction} {symbol} #{ticket_id} | Vol: {lot_size:.2f} | Entry: {price:.5f} | SL: {sl_price:.5f} | TP: {tp_price:.5f} | TSL: {tactic_str}"
+                f"🚀 [USER EXEC] {direction} {symbol} #{ticket_id} | Vol: {lot_size:.2f} | Entry: {price:.5f} | SL: {sl_price:.5f} | TP: {tp_price:.5f} | TSL: {tactic_str}{margin_log}"
             )
             return f"SUCCESS|{ticket_id}"
 
@@ -1615,6 +1678,7 @@ class TradeManager:
                         "initial_costs",
                         "last_tsl_rules",
                         "trade_excursions",
+                        "trade_margin_meta",
                         "be_sl_arms",
                         "rev_confirmations",
                     ]:

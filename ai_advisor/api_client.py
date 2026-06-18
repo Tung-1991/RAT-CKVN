@@ -8,6 +8,8 @@ import time
 import urllib.error
 import urllib.request
 
+import config
+
 from . import history, paths
 
 logger = logging.getLogger("RAT_CKVN")
@@ -28,18 +30,68 @@ PREVIOUS_RESPONSE_LIMIT = 60000
 WORKBOOK_LIMIT_ROWS = 80
 DEFAULT_MAX_OUTPUT_TOKENS = 8000
 WORKBOOK_CELL_LIMIT = 6000
-SUPPORTED_MODELS = ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"]
-MODEL_CONTEXT_TOKENS = {
-    "gpt-5.4-mini": 400000,
-    "gpt-5.4": 1000000,
-    "gpt-5.5": 1000000,
+# Fallback nếu config.py thiếu catalog (giữ api_client tự chạy được).
+_FALLBACK_PROVIDERS = {
+    "openai": {
+        "label": "OpenAI",
+        "endpoint": "https://api.openai.com/v1/responses",
+        "env_key": "OPENAI_API_KEY",
+        "models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+        "default_model": "gpt-5.4-mini",
+        "context_tokens": {"gpt-5.4-mini": 400000, "gpt-5.4": 1000000, "gpt-5.5": 1000000},
+        "pricing": {
+            "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+            "gpt-5.4": {"input": 2.50, "output": 15.00},
+            "gpt-5.5": {"input": 5.00, "output": 30.00},
+        },
+    },
+    "anthropic": {
+        "label": "Claude (Anthropic)",
+        "endpoint": "https://api.anthropic.com/v1/messages",
+        "env_key": "ANTHROPIC_API_KEY",
+        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        "default_model": "claude-sonnet-4-6",
+        "context_tokens": {"claude-opus-4-8": 200000, "claude-sonnet-4-6": 200000, "claude-haiku-4-5": 200000},
+        "pricing": {
+            "claude-opus-4-8": {"input": 5.00, "output": 25.00},
+            "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+            "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+        },
+    },
 }
-MODEL_PRICING_PER_1M = {
-    "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
-    "gpt-5.4": {"input": 2.50, "output": 15.00},
-    "gpt-5.5": {"input": 5.00, "output": 30.00},
-}
-DEFAULT_MODEL = "gpt-5.4-mini"
+
+
+def _providers():
+    cfg = getattr(config, "AI_ADVISOR_PROVIDERS", None)
+    return cfg if isinstance(cfg, dict) and cfg else _FALLBACK_PROVIDERS
+
+
+def default_provider():
+    p = str(getattr(config, "AI_ADVISOR_DEFAULT_PROVIDER", "openai") or "openai").strip().lower()
+    return p if p in _providers() else next(iter(_providers()))
+
+
+def normalize_provider(value):
+    p = str(value or "").strip().lower()
+    return p if p in _providers() else default_provider()
+
+
+def provider_config(provider=None):
+    return _providers()[normalize_provider(provider)]
+
+
+def models_for(provider=None):
+    return list(provider_config(provider).get("models", []))
+
+
+def provider_labels():
+    return {p: cfg.get("label", p) for p, cfg in _providers().items()}
+
+
+DEFAULT_PROVIDER = default_provider()
+DEFAULT_MODEL = provider_config(DEFAULT_PROVIDER).get("default_model", "gpt-5.4-mini")
+# Backward-compat: model của provider mặc định.
+SUPPORTED_MODELS = models_for(DEFAULT_PROVIDER)
 LOCAL_TPM_WINDOW_SECONDS = 60
 LOCAL_REQUEST_OVERHEAD_TOKENS = 10000
 MODEL_TPM_LIMITS = {
@@ -48,6 +100,7 @@ MODEL_TPM_LIMITS = {
 
 
 DEFAULT_API_SETTINGS = {
+    "provider": DEFAULT_PROVIDER,
     "model": DEFAULT_MODEL,
     "web_search_enabled": True,
     "advisor_prompt_limit": PROMPT_LIMIT,
@@ -82,9 +135,67 @@ def _safe_bool(value, default=False):
     return bool(default)
 
 
-def normalize_model(value):
-    model = str(value or DEFAULT_MODEL).strip()
-    return model if model in SUPPORTED_MODELS else DEFAULT_MODEL
+def normalize_model(value, provider=None):
+    models = models_for(provider)
+    model = str(value or "").strip()
+    if model in models:
+        return model
+    return provider_config(provider).get("default_model") or (models[0] if models else DEFAULT_MODEL)
+
+
+def _build_request(provider, model, prompt, body_text, max_output_tokens, web_search, api_key):
+    """Trả (endpoint, headers, payload) theo từng provider. Hàm thuần để test được."""
+    pcfg = provider_config(provider)
+    provider = normalize_provider(provider)
+    endpoint = _get_env_value("ADVISOR_API_URL") or pcfg["endpoint"]
+    if provider == "anthropic":
+        payload = {
+            "model": model,
+            "max_tokens": int(max_output_tokens),
+            "system": prompt,
+            "messages": [{"role": "user", "content": body_text}],
+        }
+        if web_search:
+            payload["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+    else:  # openai (mặc định)
+        payload = {
+            "model": model,
+            "instructions": prompt,
+            "input": body_text,
+            "max_output_tokens": int(max_output_tokens),
+        }
+        if web_search:
+            payload["tools"] = [{"type": "web_search"}]
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+    return endpoint, headers, payload
+
+
+def _parse_response(provider, data):
+    """Trích text trả lời theo từng provider. Hàm thuần để test được."""
+    if normalize_provider(provider) == "anthropic":
+        parts = []
+        for block in data.get("content", []) or []:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts).strip()
+    # openai
+    text = data.get("output_text")
+    if not text:
+        parts = []
+        for item in data.get("output", []) or []:
+            for content in item.get("content", []) or []:
+                if content.get("type") == "output_text":
+                    parts.append(content.get("text", ""))
+        text = "\n".join(parts).strip()
+    return text or ""
 
 
 def _stdout_log(message):
@@ -265,7 +376,8 @@ def load_api_settings():
         min_value=1024,
         max_value=128000,
     )
-    settings["model"] = normalize_model(settings.get("model"))
+    settings["provider"] = normalize_provider(settings.get("provider"))
+    settings["model"] = normalize_model(settings.get("model"), settings["provider"])
     settings["web_search_enabled"] = _safe_bool(settings.get("web_search_enabled"), True)
     if os.path.exists(legacy_path) and (source_path == legacy_path or os.path.exists(path)):
         try:
@@ -288,8 +400,10 @@ def save_api_settings(settings):
 
 def load_api_settings_from_dict(data):
     data = data or {}
+    provider = normalize_provider(data.get("provider"))
     return {
-        "model": normalize_model(data.get("model")),
+        "provider": provider,
+        "model": normalize_model(data.get("model"), provider),
         "web_search_enabled": _safe_bool(data.get("web_search_enabled"), True),
         "advisor_prompt_limit": _safe_int(
             data.get("advisor_prompt_limit"),
@@ -426,8 +540,11 @@ def estimate_api_payload(include_previous_response=False):
     prompt_text = load_advisor_prompt()
     input_sections = build_api_sections(include_previous_response=include_previous_response)
     settings = load_api_settings()
+    provider = settings.get("provider", DEFAULT_PROVIDER)
     model = settings.get("model", DEFAULT_MODEL)
-    pricing = MODEL_PRICING_PER_1M.get(model, MODEL_PRICING_PER_1M[DEFAULT_MODEL])
+    pcfg = provider_config(provider)
+    pricing_map = pcfg.get("pricing", {})
+    pricing = pricing_map.get(model) or next(iter(pricing_map.values()), {"input": 0.0, "output": 0.0})
     text = "\n\n".join(
         part
         for name, section_text in input_sections
@@ -435,7 +552,8 @@ def estimate_api_payload(include_previous_response=False):
     )
     chars = len(text) + len(prompt_text)
     tokens = max(1, int(chars / 4))
-    context_tokens = MODEL_CONTEXT_TOKENS.get(model, MODEL_CONTEXT_TOKENS[DEFAULT_MODEL])
+    context_map = pcfg.get("context_tokens", {})
+    context_tokens = context_map.get(model) or next(iter(context_map.values()), 200000)
     max_output_tokens = settings.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
     context_remaining_tokens = context_tokens - tokens - max_output_tokens
     input_cost = (tokens / 1000000.0) * pricing["input"]
@@ -469,6 +587,7 @@ def estimate_api_payload(include_previous_response=False):
         "estimated_output_2k_usd": output_2k_cost,
         "estimated_output_4k_usd": output_4k_cost,
         "estimated_output_limit_usd": output_limit_cost,
+        "provider": provider,
         "model": model,
         "context_tokens": context_tokens,
         "max_output_tokens": max_output_tokens,
@@ -481,21 +600,24 @@ def estimate_api_payload(include_previous_response=False):
 
 
 def send_package_to_api(prompt=None, include_previous_response=False):
-    key = _get_env_value("OPENAI_API_KEY")
+    settings = load_api_settings()
+    provider = settings.get("provider", DEFAULT_PROVIDER)
+    pcfg = provider_config(provider)
+    env_key_name = pcfg.get("env_key", "OPENAI_API_KEY")
+    key = _get_env_value(env_key_name)
     if not key:
-        msg = "OPENAI_API_KEY is not configured; API mode skipped."
+        msg = f"{env_key_name} is not configured; API mode skipped."
         _stdout_log(msg)
         history.record_event("advisor_api_missing_key", msg, severity="WARN")
         return {"ok": False, "error": msg}
 
-    settings = load_api_settings()
     model = settings.get("model", DEFAULT_MODEL)
-    if model not in SUPPORTED_MODELS:
-        msg = f"Unsupported OpenAI model: {model}. Choose one of: {', '.join(SUPPORTED_MODELS)}"
+    if model not in models_for(provider):
+        msg = f"Unsupported model '{model}' for provider '{provider}'. Choose one of: {', '.join(models_for(provider))}"
         _stdout_log(msg)
         history.record_event("advisor_api_bad_model", msg, severity="ERROR", payload={"model": model})
         return {"ok": False, "error": msg}
-    endpoint = _get_env_value("ADVISOR_API_URL") or "https://api.openai.com/v1/responses"
+    endpoint = _get_env_value("ADVISOR_API_URL") or pcfg.get("endpoint", "https://api.openai.com/v1/responses")
     body_text = build_api_input(include_previous_response=include_previous_response)
     estimate = estimate_api_payload(include_previous_response=include_previous_response)
     if not estimate.get("fits_context"):
@@ -541,35 +663,26 @@ def send_package_to_api(prompt=None, include_previous_response=False):
         f"chars={estimate.get('chars')} tokens~{estimate.get('tokens')} "
         f"include_response={bool(include_previous_response)}"
     )
-    payload = {
-        "model": model,
-        "instructions": prompt or load_advisor_prompt(),
-        "input": body_text,
-        "max_output_tokens": estimate.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
-    }
-    if settings.get("web_search_enabled"):
-        payload["tools"] = [{"type": "web_search"}]
+    _endpoint2, headers, payload = _build_request(
+        provider,
+        model,
+        prompt or load_advisor_prompt(),
+        body_text,
+        estimate.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
+        settings.get("web_search_enabled"),
+        key,
+    )
     req = urllib.request.Request(
         endpoint,
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
     try:
         _record_api_usage(model, requested_tokens)
         with _urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        text = data.get("output_text")
-        if not text:
-            parts = []
-            for item in data.get("output", []) or []:
-                for content in item.get("content", []) or []:
-                    if content.get("type") == "output_text":
-                        parts.append(content.get("text", ""))
-            text = "\n".join(parts).strip()
+        text = _parse_response(provider, data)
         if not text:
             text = json.dumps(data, ensure_ascii=False, indent=2)
         with open(paths.advisor_response_path(), "w", encoding="utf-8") as f:

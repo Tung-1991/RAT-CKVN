@@ -623,7 +623,11 @@ def test_api_client_blocks_payload_that_exceeds_context(monkeypatch, tmp_path):
         f.write("flow marker")
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr(api_client, "MODEL_CONTEXT_TOKENS", {"gpt-5.4-mini": 10})
+    # Ép context tí hon qua catalog provider (cơ chế mới thay cho MODEL_CONTEXT_TOKENS).
+    import copy
+    tiny = copy.deepcopy(api_client._providers())
+    tiny["openai"]["context_tokens"] = {"gpt-5.4-mini": 10}
+    monkeypatch.setattr(api_client.config, "AI_ADVISOR_PROVIDERS", tiny)
 
     def fail_urlopen(*_args, **_kwargs):
         raise AssertionError("urlopen should not be called when payload is too large")
@@ -803,3 +807,63 @@ def test_technical_snapshot_includes_symbols_from_advisor_workbook(monkeypatch, 
 
     assert set(settings["active_by_symbol"]) == {"FPT", "SSI"}
     assert settings["omitted_symbols"] == ["VN30F1M", "VCB"]
+
+
+# --- AI Advisor đa provider/model (OpenAI + Claude) ---
+
+def test_advisor_provider_catalog_has_openai_and_anthropic():
+    providers = api_client._providers()
+    assert "openai" in providers and "anthropic" in providers
+    assert api_client.default_provider() == "openai"
+    assert "gpt-5.4-mini" in api_client.models_for("openai")
+    assert "claude-sonnet-4-6" in api_client.models_for("anthropic")
+
+
+def test_advisor_normalize_model_per_provider():
+    assert api_client.normalize_model("gpt-5.4", "openai") == "gpt-5.4"
+    # model lạ -> rơi về default model của provider đó
+    assert api_client.normalize_model("khong-co", "anthropic") == "claude-sonnet-4-6"
+    assert api_client.normalize_model("claude-opus-4-8", "anthropic") == "claude-opus-4-8"
+    assert api_client.normalize_provider("xxx") == "openai"
+
+
+def test_advisor_build_request_openai_shape_unchanged():
+    endpoint, headers, payload = api_client._build_request(
+        "openai", "gpt-5.4-mini", "SYS", "BODY", 8000, True, "KEY"
+    )
+    assert endpoint.endswith("/v1/responses")
+    assert headers["Authorization"] == "Bearer KEY"
+    assert payload["instructions"] == "SYS" and payload["input"] == "BODY"
+    assert payload["max_output_tokens"] == 8000
+    assert payload["tools"] == [{"type": "web_search"}]
+
+
+def test_advisor_build_request_anthropic_shape():
+    endpoint, headers, payload = api_client._build_request(
+        "anthropic", "claude-sonnet-4-6", "SYS", "BODY", 4096, True, "KEY"
+    )
+    assert endpoint.endswith("/v1/messages")
+    assert headers["x-api-key"] == "KEY"
+    assert headers["anthropic-version"]
+    assert payload["system"] == "SYS"
+    assert payload["messages"] == [{"role": "user", "content": "BODY"}]
+    assert payload["max_tokens"] == 4096
+    assert payload["tools"]  # web_search tool có mặt
+
+
+def test_advisor_parse_response_per_provider():
+    assert api_client._parse_response("anthropic", {"content": [{"type": "text", "text": "hi"}]}) == "hi"
+    assert api_client._parse_response("openai", {"output_text": "ok"}) == "ok"
+
+
+def test_advisor_settings_roundtrip_provider(monkeypatch, tmp_path):
+    _patch_account_dir(monkeypatch, tmp_path)
+    saved = api_client.save_api_settings({"provider": "anthropic", "model": "claude-opus-4-8"})
+    assert saved["provider"] == "anthropic"
+    assert saved["model"] == "claude-opus-4-8"
+    loaded = api_client.load_api_settings()
+    assert loaded["provider"] == "anthropic"
+    assert loaded["model"] == "claude-opus-4-8"
+    # mặc định (chưa lưu gì) -> provider openai
+    api_client.save_api_settings({})
+    assert api_client.load_api_settings()["provider"] == "openai"

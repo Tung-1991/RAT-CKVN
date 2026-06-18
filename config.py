@@ -107,6 +107,17 @@ PAPER_SPREAD_POINTS = 0.0
 PAPER_FALLBACK_PRICE = 0.0
 MAX_LOT_CAP = 0.0  # [NEW V4.4] Giới hạn Lot tối đa cho mỗi lệnh (0 = Không GH)
 MANUAL_CONFIG = {"BYPASS_CHECKLIST": False, "DEFAULT_LOT": 0.0}
+PENDING_ORDER_EXPIRE_HOURS = float(os.getenv("PENDING_ORDER_EXPIRE_HOURS", "24"))
+MANUAL_MARGIN_CONFIG = {
+    "ENABLE_MANUAL_MARGIN": False,
+    "MARGIN_RISK_BASE": "EQUITY_NAV",
+    "MAX_MARGIN_ORDER_VALUE_PCT": 50.0,
+    "MIN_RTT_TO_OPEN": 100.0,
+    "CALL_RTT": 87.0,
+    "FORCE_RTT": 80.0,
+    "MAX_MANUAL_MARGIN_LOSS_PCT": 3.0,
+    "BOT_ALLOW_MARGIN": False,
+}
 
 # ==============================================================================
 # 3. QUẢN LÝ VỐN (Dành cho MANUAL PRESETS trên UI)
@@ -198,6 +209,7 @@ BOT_SAFEGUARD = {
     "BOT_ORDER_MODE": "NORMAL",
     # Đóng vị thế bot ở phiên ATC cuối ngày (tránh giữ qua đêm).
     "BOT_ATC_EXIT": False,
+    "PENDING_ORDER_EXPIRE_HOURS": PENDING_ORDER_EXPIRE_HOURS,
     "MAX_OPEN_POSITIONS": 3,
     "MAX_TRADES_PER_DAY": 30,
     "MAX_LOSING_STREAK": 3,
@@ -241,12 +253,14 @@ BOT_SAFEGUARD = {
 # 6. LOGIC TRAILING STOP CƠ BẢN (BE & STEP & PNL)
 # ==============================================================================
 TSL_CONFIG = {
-    "BE_CASH_TYPE": "USD",  # [NEW V4.4] Tùy chọn: USD, PERCENT, POINT, R
-    "BE_VALUE": 5.0,  # [NEW V4.4] Target khóa lãi cứng
+    # LƯU Ý ĐƠN VỊ: "USD" ở đây = TIỀN THÔ của tài khoản = VND (account VN). Giá trị là VND.
+    "BE_CASH_TYPE": "USD",  # USD = so theo tiền thô (VND). PERCENT/POINT/R = quy đổi khác.
+    "BE_VALUE": 125000.0,  # Bước khóa lãi (VND)
+    "BE_TRIGGER": 250000.0,  # Ngưỡng lãi bắt đầu khóa BE_CASH (VND)
     "BE_CASH_STRAT": "TRAILING (Gap)",
     "BE_CASH_FEE_PROTECT": True,
     "BE_CASH_SOFT_BUFFER_TYPE": "USD",
-    "BE_CASH_SOFT_BUFFER": 3.0,
+    "BE_CASH_SOFT_BUFFER": 75000.0,  # Đệm mềm (VND)
     "BE_CASH_MIN_LOCK": 0.0,
     "BE_MODE": "SOFT",
     "BE_OFFSET_RR": 0.8,
@@ -268,22 +282,23 @@ TSL_CONFIG = {
     "PSAR_MAX": 0.2,
     "PSAR_PROFIT_ONLY": True,
     "PSAR_PROFIT_BUFFER_POINTS": 0,
-    "ANTI_CASH_USD": 10.0,  # [NEW V4.4] Ngưỡng cắt lỗ USD cứng
+    # ANTI_CASH: đơn vị "USD" = tiền thô VND (account VN). Giá trị dưới là VND.
+    "ANTI_CASH_USD": 250000.0,  # Ngưỡng cắt lỗ cứng (VND)
     "ANTI_CASH_HARD_STOP_UNIT": "USD",
     "ANTI_CASH_TIME": 3600,  # [NEW V4.4] Thời gian âm tối đa (giây) - 1 Giờ
     "ANTI_CASH_TIME_ENABLE": True,  # Bật/tắt Time Cut
     "ANTI_CASH_MAE_ENABLE": True,
-    "ANTI_CASH_MAE_MAX_LOSS_USD": 25.0,
+    "ANTI_CASH_MAE_MAX_LOSS_USD": 600000.0,  # (VND)
     "ANTI_CASH_MAE_MAX_LOSS_UNIT": "USD",
     "ANTI_CASH_MAE_MIN_HOLD_SEC": 300,
-    "ANTI_CASH_MAE_LOW_MFE_USD": 5.0,
+    "ANTI_CASH_MAE_LOW_MFE_USD": 120000.0,  # (VND)
     "ANTI_CASH_MAE_LOW_MFE_UNIT": "USD",
     "ANTI_CASH_MFE_ENABLE": True,
-    "ANTI_CASH_MFE_TRIGGER_USD": 30.0,
+    "ANTI_CASH_MFE_TRIGGER_USD": 700000.0,  # (VND)
     "ANTI_CASH_MFE_TRIGGER_UNIT": "USD",
-    "ANTI_CASH_MFE_GIVEBACK_USD": 20.0,
+    "ANTI_CASH_MFE_GIVEBACK_USD": 450000.0,  # (VND)
     "ANTI_CASH_MFE_GIVEBACK_UNIT": "USD",
-    "ANTI_CASH_MFE_FLOOR_USD": 0.0,
+    "ANTI_CASH_MFE_FLOOR_USD": 0.0,  # (VND)
     "ANTI_CASH_MFE_FLOOR_UNIT": "USD",
     "ANTI_CASH_REENTRY_LOCK_SEC": 900,
 }
@@ -502,4 +517,39 @@ PCA_CONFIG = {
     "USE_PARENT_SL": True,
     "CONFIRM_ADX": 23,
     "MINI_BRAIN": MINI_BRAIN_DEFAULT.copy(),
+}
+
+# ==============================================================================
+# 8. AI ADVISOR — catalog đa provider/model (setting GỐC ở đây; UI lưu JSON override)
+# ==============================================================================
+AI_ADVISOR_DEFAULT_PROVIDER = "openai"
+AI_ADVISOR_DEFAULT_MAX_OUTPUT_TOKENS = 8000
+# Mỗi provider: endpoint REST, biến môi trường chứa key, danh sách model, context + giá (USD/1M token).
+AI_ADVISOR_PROVIDERS = {
+    "openai": {
+        "label": "OpenAI",
+        "endpoint": "https://api.openai.com/v1/responses",
+        "env_key": "OPENAI_API_KEY",
+        "models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+        "default_model": "gpt-5.4-mini",
+        "context_tokens": {"gpt-5.4-mini": 400000, "gpt-5.4": 1000000, "gpt-5.5": 1000000},
+        "pricing": {
+            "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+            "gpt-5.4": {"input": 2.50, "output": 15.00},
+            "gpt-5.5": {"input": 5.00, "output": 30.00},
+        },
+    },
+    "anthropic": {
+        "label": "Claude (Anthropic)",
+        "endpoint": "https://api.anthropic.com/v1/messages",
+        "env_key": "ANTHROPIC_API_KEY",
+        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        "default_model": "claude-sonnet-4-6",
+        "context_tokens": {"claude-opus-4-8": 200000, "claude-sonnet-4-6": 200000, "claude-haiku-4-5": 200000},
+        "pricing": {
+            "claude-opus-4-8": {"input": 5.00, "output": 25.00},
+            "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+            "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+        },
+    },
 }

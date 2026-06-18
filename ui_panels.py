@@ -316,7 +316,7 @@ def setup_left_panel(app, parent):
     # 3. MANUAL INPUT PANEL
     f_input = ctk.CTkFrame(parent, fg_color="transparent")
     f_input.pack(fill="x", padx=5, pady=(5, 0))
-    f_input.grid_columnconfigure((0, 1, 2), weight=1)
+    f_input.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
     def make_inp(p, t, v, c):
         f = ctk.CTkFrame(p, fg_color="#2b2b2b", corner_radius=6)
@@ -337,9 +337,10 @@ def setup_left_panel(app, parent):
         return lbl
 
     app.lbl_manual_qty_title = make_inp(f_input, "Hợp đồng", app.var_manual_lot, 0)
-    make_inp(f_input, "TP (Price)", app.var_manual_tp, 1)
-    make_inp(f_input, "SL (Price)", app.var_manual_sl, 2)
-    for _manual_var in (app.var_manual_lot, app.var_manual_tp, app.var_manual_sl):
+    make_inp(f_input, "Giá vào (LO)", app.var_manual_entry, 1)
+    make_inp(f_input, "TP (Price)", app.var_manual_tp, 2)
+    make_inp(f_input, "SL (Price)", app.var_manual_sl, 3)
+    for _manual_var in (app.var_manual_lot, app.var_manual_entry, app.var_manual_tp, app.var_manual_sl):
         try:
             _manual_var.trace_add("write", app.on_manual_input_change)
         except Exception:
@@ -397,6 +398,17 @@ def setup_left_panel(app, parent):
     )
     app.btn_action.pack(fill="x", padx=10, pady=(3, 6))
 
+    app.btn_schedule_order = ctk.CTkButton(
+        parent,
+        text="LIMIT ORDER",
+        font=("Roboto", 13, "bold"),
+        height=32,
+        fg_color="#455A64",
+        hover_color="#546E7A",
+        command=app.on_click_schedule_order,
+    )
+    app.btn_schedule_order.pack(fill="x", padx=10, pady=(0, 4))
+
     # 4. LIVE DASHBOARD
     f_dashboard = ctk.CTkFrame(
         parent, fg_color="#252526", corner_radius=8, border_width=1, border_color="#333"
@@ -409,6 +421,16 @@ def setup_left_panel(app, parent):
         f_head_db, text="HĐ: 0", font=FONT_BOLD, text_color="#FFD700"
     )
     app.lbl_prev_lot.pack(side="left")
+    app.lbl_limit_order_hint = ctk.CTkLabel(
+        f_head_db,
+        text="",
+        font=("Roboto", 10),
+        text_color="#B0BEC5",
+        anchor="center",
+        justify="left",
+        width=260,
+    )
+    app.lbl_limit_order_hint.pack(side="left", padx=10)
     # Trạng thái T+2 (Đã về/Chờ về) hiển thị TRONG bảng lệnh theo từng vị thế, không ở header.
     app.lbl_fee_info = ctk.CTkLabel(
         f_head_db, text="Phí: 0", font=FONT_FEE, text_color="#FFD700"
@@ -468,6 +490,12 @@ def setup_left_panel(app, parent):
         command=lambda: app.on_direction_change("SELL"),
     )
     app.btn_dir_sell.pack(fill="x", padx=4, pady=(1, 4))
+
+    # Trần/Tham chiếu/Sàn (1 dòng nhỏ). Cổ phiếu HOSE ±7%; phái sinh VN30F cũng có biên.
+    app.lbl_band_info = ctk.CTkLabel(
+        f_dashboard, text="", font=("Consolas", 10), text_color="#9E9E9E"
+    )
+    app.lbl_band_info.pack(fill="x", padx=8, pady=(0, 2))
 
     ctk.CTkFrame(f_dashboard, height=1, fg_color="#444").pack(fill="x", padx=5)
     f_grid_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
@@ -654,6 +682,12 @@ def setup_right_panel(app, parent):
     # CKCS: chưa khớp = VÀNG, đã khớp = CAM (T+2 chi tiết ghi ở cột STT).
     app.tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
     app.tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
+    app.tree.tag_configure("local_pending", background="#5c5417", foreground="#FFF3B0")
+    app.tree.tag_configure("local_sending", background="#0b4f5c", foreground="#B2EBF2")
+    app.tree.tag_configure("dnse_order", background="#123f6b", foreground="#D7ECFF")
+    app.tree.tag_configure("dnse_partial", background="#6a3f08", foreground="#FFE0B2")
+    app.tree.tag_configure("order_failed", background="#5c1a1b", foreground="#FFCDD2")
+    app.tree.tag_configure("order_cancelled", background="#303030", foreground="#B0BEC5")
     headers = [
         "Ticket",
         "Thời gian",

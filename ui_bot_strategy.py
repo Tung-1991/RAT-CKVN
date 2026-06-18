@@ -531,8 +531,8 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         self._add_hint_box(
             f,
-            "- Preview chỉ đc context live, không tự quyết định lệnh.\n"
-            "- B/S/N là phiếu BUY/SELL/NONE sau khi lc theo Mode.\n"
+            "- Preview chỉ đọc context live, không tự quyết định lệnh.\n"
+            "- B/S/N là phiếu BUY/SELL/NONE sau khi lọc theo Mode.\n"
             "- Master Action = final result after group rules + Master Mode.\n"
             "- FIX = required, PASS = allows WAIT but blocks opposite, IGNORE = skipped.",
             padx=5,
@@ -581,10 +581,10 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.master_action_lbl = ctk.CTkLabel(header_f, text="MASTER ACTION: WAITING", font=("Roboto", 18, "bold"), text_color="#FFF")
         self.master_action_lbl.pack(pady=(10, 5))
         
-        self.market_mode_lbl = ctk.CTkLabel(header_f, text="MODE: --- | XU HƯỚNG CHNH (BASE): ---", font=("Roboto", 14, "bold"), text_color="#29B6F6")
+        self.market_mode_lbl = ctk.CTkLabel(header_f, text="MODE: --- | XU HƯỚNG CHÍNH (BASE): ---", font=("Roboto", 14, "bold"), text_color="#29B6F6")
         self.market_mode_lbl.pack(pady=5)
         
-        self.master_reason_lbl = ctk.CTkLabel(header_f, text="Trạng thái: ang ch tín hiệu...", font=("Roboto", 12), text_color="#AAA")
+        self.master_reason_lbl = ctk.CTkLabel(header_f, text="Trạng thái: Đang chờ tín hiệu...", font=("Roboto", 12), text_color="#AAA")
         self.master_reason_lbl.pack(pady=(0, 10))
 
         entry_exit_f = ctk.CTkFrame(
@@ -737,7 +737,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                         widget.destroy()
                         
                     if not inds_list:
-                        ctk.CTkLabel(card["scroll_f"], text="-- Ch dữ liệu --", font=("Roboto", 11), text_color="gray").pack(fill="x", pady=10)
+                        ctk.CTkLabel(card["scroll_f"], text="-- Chờ dữ liệu --", font=("Roboto", 11), text_color="gray").pack(fill="x", pady=10)
                     else:
                         for line in inds_list:
                             t_color = "#999" # Mặc định xám
@@ -772,7 +772,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             
             mode_color = "#00E676" if m_mode in ["TREND", "BREAKOUT"] else "#FFB300"
             self.market_mode_lbl.configure(
-                text=f"MARKET MODE: {m_mode} (by {m_src}) | XU HƯỚNG CHNH (BASE): {dir_text} | LUẬT: {eval_mode}",
+                text=f"MARKET MODE: {m_mode} (by {m_src}) | XU HƯỚNG CHÍNH (BASE): {dir_text} | LUẬT: {eval_mode}",
                 text_color=mode_color
             )
 
@@ -969,7 +969,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         self._add_hint_box(
             self.tab_inds,
             "- G0 quyết định Market Mode & Macro Direction; không có G0 thì fallback G1.\n"
-            "- Trend Compass chỉ tính UP/DOWN/NONE cho preview/context.\n"
+            "- Trend Compass CHỈ XEM TRƯỚC (mũi tên UP/DOWN/NONE), KHÔNG quyết định lệnh mua/bán.\n"
             "- Macro Role mới quyết định BASE/BREAKOUT/EXHAUSTION; Mode ANY = luôn được xét.",
         )
 
@@ -986,9 +986,9 @@ class BotStrategyUI(ctk.CTkToplevel):
         headers = [
             "Chỉ báo",
             "ON",
-            "Nhóm (a chn)",
+            "Nhóm (đã chọn)",
             "Trend Compass",
-            "Vai tr� Macro",
+            "Vai trò Macro",
             "Chạy khi (Mode)",
             "Trigger Mode",
             "Thông số",
@@ -1089,7 +1089,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             # Nút Cài đặt Thông số
             btn_cfg = ctk.CTkButton(
                 scroll_frame,
-                text="⚙ Cài đặt",
+                text="⚙ Cài đặt",
                 width=70,
                 fg_color="#424242",
                 hover_color="#616161",
@@ -1231,7 +1231,7 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             tf_frame,
-            text=" CẤU HÌNH KHUNG THỜI GIAN (TIMEFRAMES):",
+            text="CẤU HÌNH KHUNG THỜI GIAN (TIMEFRAMES):",
             font=("Roboto", 13, "bold"),
             text_color="#29B6F6",
         ).grid(row=0, column=0, columnspan=8, pady=5, sticky="w", padx=10)
@@ -1256,7 +1256,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         titles = {
             "G0": "G0: LA BÀN VĨ MÔ (MACRO)",
             "G1": "G1: BỘ LỌC XU HƯỚNG",
-            "G2": "G2: IỂM NỔ (TRIGGER)",
+            "G2": "G2: ĐIỂM NỔ (TRIGGER)",
             "G3": "G3: QUYỀN PHỦ QUYẾT (VETO)",
         }
         colors = {"G0": "#AB47BC", "G1": "#00E676", "G2": "#00B0FF", "G3": "#FF3D00"}
@@ -1373,15 +1373,27 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         self._add_hint_box(
             self.tab_risk,
-            "- Force ANY Mode: b qua macro/mode, phù hợp scalping khi muốn indicator luôn chạy.\n"
+            "- Force ANY Mode: bỏ qua macro/mode, phù hợp scalping khi muốn indicator luôn chạy.\n"
             "- Base Risk: risk gốc của bot; Market Mode multiplier sẽ nhân thêm để ra risk thực tế.\n"
-            "- Nguồn SL G0-G3: chn group dùng Swing/ATR để cắm SL; DYNAMIC-G1/G2 dùng G1 khi TREND/BREAKOUT, còn lại dùng G2.\n"
+            "- Nguồn SL G0-G3: chọn group dùng Swing/ATR để cắm SL; DYNAMIC-G1/G2 dùng G1 khi TREND/BREAKOUT, còn lại dùng G2.\n"
             "- SWING TSL Logic Mode nằm trong popup TSL; chỉ ảnh hưởng TSL SWING sau khi lệnh đã mở, không phải SL ban đầu Swing + ATR buffer.\n"
-            "- REV_C/Close on Reverse: cắt lệnh bot khi tín hiệu đảo chiu; có thể yêu cầu giữ lệnh tối thiểu, min profit hoặc max loss.\n"
+            "- REV_C/Close on Reverse: cắt lệnh bot khi tín hiệu đảo chiều; có thể yêu cầu giữ lệnh tối thiểu, min profit hoặc max loss.\n"
             "- Watermark/Basket nằm ở Bot Safeguard: bảo vệ lợi nhuận toàn bot/rổ DCA-PCA, không dùng cho lệnh manual.",
             padx=20,
             pady=(10, 5),
         )
+
+        # [UI] Ghi rõ thứ tự ưu tiên SL/TP để hết mơ hồ "cái nào thắng".
+        ctk.CTkLabel(
+            self.tab_risk,
+            text=("Thứ tự SL: Entry/Exit SL mode › Swing nhóm base_sl − buffer ATR.    "
+                  "Thứ tự TP: Entry/Exit TP mode › Swing TP › RR ratio › Không TP."),
+            font=("Roboto", 11, "bold"),
+            text_color="#80CBC4",
+            justify="left",
+            anchor="w",
+            wraplength=900,
+        ).pack(fill="x", padx=20, pady=(0, 4))
 
         # --- [NEW] CỤM OPTIONS NÂNG CAO (SCALPING & STRICT RISK) ---
         f_adv = ctk.CTkFrame(
@@ -1436,7 +1448,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         )
         ctk.CTkCheckBox(
             f_adv,
-            text="Close on Reverse (ảo chiu cắt lệnh)",
+            text="Close on Reverse (Đảo chiều cắt lệnh)",
             variable=self.var_close_rev,
             font=("Roboto", 13, "bold"),
             text_color="#00E676",
@@ -1519,8 +1531,8 @@ class BotStrategyUI(ctk.CTkToplevel):
         ctk.CTkLabel(
             f_rev_time,
             text=(
-                "REV_C: khi signal đảo chiu, lệnh li chỉ cắt nếu PnL >= Min Profit; "
-                "lệnh âm chỉ cắt nếu PnL <= Max Loss. Giá trị 0 = b qua điu kiện phía đó."
+                "REV_C: khi signal đảo chiều, lệnh lời chỉ cắt nếu PnL >= Min Profit; "
+                "lệnh âm chỉ cắt nếu PnL <= Max Loss. Giá trị 0 = bỏ qua điều kiện phía đó."
             ),
             font=("Arial", 11, "italic"),
             text_color="#B0BEC5",
@@ -1764,13 +1776,8 @@ class BotStrategyUI(ctk.CTkToplevel):
         ctk.CTkFrame(self.tab_risk, height=2, fg_color="#333").pack(
             fill="x", padx=20, pady=15
         )
-        ctk.CTkLabel(
-            self.tab_risk,
-            text="DYNAMIC RISK MULTIPLIERS (Hệ số rủi ro theo Market Mode)",
-            font=("Roboto", 13, "bold"),
-            text_color="#FFB300",
-        ).pack(anchor="w", padx=20, pady=5)
-
+        # [UI] Phần ít dùng -> gập vào "Nâng cao" (mặc định đóng). Lego: vẫn chỉnh được khi mở.
+        self._mult_adv_open = False
         f_mult = ctk.CTkFrame(
             self.tab_risk,
             fg_color=COL_PANEL,
@@ -1778,7 +1785,28 @@ class BotStrategyUI(ctk.CTkToplevel):
             border_width=1,
             border_color=COL_AMBER,
         )
-        f_mult.pack(fill="x", padx=20)
+
+        btn_mult_adv = ctk.CTkButton(
+            self.tab_risk,
+            text="▸ Nâng cao: Dynamic Risk Multipliers (hệ số rủi ro theo Market Mode)",
+            font=("Roboto", 12, "bold"),
+            fg_color="#37474F",
+            hover_color="#455A64",
+            anchor="w",
+            text_color="#FFB300",
+        )
+        btn_mult_adv.pack(fill="x", padx=20, pady=5)
+
+        def _toggle_mult_adv():
+            self._mult_adv_open = not self._mult_adv_open
+            if self._mult_adv_open:
+                f_mult.pack(fill="x", padx=20, after=btn_mult_adv)
+                btn_mult_adv.configure(text="▾ Nâng cao: Dynamic Risk Multipliers (hệ số rủi ro theo Market Mode)")
+            else:
+                f_mult.pack_forget()
+                btn_mult_adv.configure(text="▸ Nâng cao: Dynamic Risk Multipliers (hệ số rủi ro theo Market Mode)")
+
+        btn_mult_adv.configure(command=_toggle_mult_adv)
 
         mults = risk_data.get("mode_multipliers", {})
         modes = ["ANY", "TREND", "RANGE", "BREAKOUT", "EXHAUSTION"]
@@ -1830,7 +1858,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.dca_mb_cfg = dca_cfg.get("MINI_BRAIN", {})
         ctk.CTkButton(
             dca_frame, 
-            text="⚙ Cài đặt Mini-Brain", 
+            text="⚙ Cài đặt Mini-Brain", 
             width=120, 
             fg_color="#F57C00", 
             command=lambda: self._open_mb_popup("DCA")
@@ -1893,7 +1921,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.pca_mb_cfg = pca_cfg.get("MINI_BRAIN", {})
         ctk.CTkButton(
             pca_frame, 
-            text="⚙ Cài đặt Mini-Brain", 
+            text="⚙ Cài đặt Mini-Brain", 
             width=120, 
             fg_color="#00C853", 
             command=lambda: self._open_mb_popup("PCA")
@@ -1945,7 +1973,7 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             cd_frame,
-            text="DCA/PCA Cooldown (gi�y):",
+            text="DCA/PCA Cooldown (giây):",
             font=("Roboto", 12, "bold"),
             text_color="#29B6F6",
         ).grid(row=0, column=0, padx=10, pady=10, sticky="w")
@@ -2148,7 +2176,7 @@ class BotStrategyUI(ctk.CTkToplevel):
     def load_template(self):
         file_path = filedialog.askopenfilename(
             initialdir=_get_template_dir(),
-            title="Chn Template",
+            title="Chọn Template",
             filetypes=[("JSON files", "*.json")],
             parent=self
         )
@@ -2170,12 +2198,12 @@ class BotStrategyUI(ctk.CTkToplevel):
                     widget.destroy()
                 self._build_ui()
                 messagebox.showinfo(
-                    "Th�nh c�ng",
-                    "ã nạp Template thành công. Hãy bấm LƯU & P DỤNG để kích hoạt!",
+                    "Thành công",
+                    "Đã nạp Template thành công. Hãy bấm LƯU & ÁP DỤNG để kích hoạt!",
                     parent=self
                 )
             except Exception as e:
-                messagebox.showerror("Lỗi", f"Không thể đc Template:\n{e}", parent=self)
+                messagebox.showerror("Lỗi", f"Không thể đọc Template:\n{e}", parent=self)
 
     def save_as_template(self):
         try:
@@ -2190,6 +2218,6 @@ class BotStrategyUI(ctk.CTkToplevel):
             if file_path:
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(output_data, f, indent=4)
-                messagebox.showinfo("Th�nh c�ng", f"ã lưu Template tại:\n{file_path}", parent=self)
+                messagebox.showinfo("Thành công", f"Đã lưu Template tại:\n{file_path}", parent=self)
         except Exception as e:
             messagebox.showerror("Lỗi", f"Lỗi lưu Template:\n{e}", parent=self)

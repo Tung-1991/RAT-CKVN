@@ -409,12 +409,25 @@ class StandaloneBotDaemon:
                 sl_group = "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
             
             atr_val = context.get(f"atr_{sl_group}", 0)
-            # NẾU MẤT DATA ATR -> BỎ QUA KHÔNG NHỒI LỆNH ĐỂ CHỐNG SPAM
+            # NẾU MẤT DATA ATR -> BỎ QUA KHÔNG NHỒI LỆNH (log throttle 5 phút để biết).
             if not atr_val or atr_val <= 0:
+                if not hasattr(self, "_dca_atr_warn_ts"):
+                    self._dca_atr_warn_ts = {}
+                if now - self._dca_atr_warn_ts.get(symbol, 0) > 300:
+                    logger.warning(f"[DCA/PCA] {symbol}: thiếu ATR ({sl_group}) -> bỏ qua nhồi lần này.")
+                    self._dca_atr_warn_ts[symbol] = now
                 continue
 
             pos_list.sort(key=lambda x: x.time)
             first_pos = pos_list[0]
+            # [GUARD] Lệnh gốc (ENTRY) đã đóng, chỉ còn lệnh con DCA/PCA -> KHÔNG nhồi tiếp (mồ côi).
+            has_entry = any(
+                not ("_AUTO_DCA" in str(getattr(p, "comment", "")) or "_AUTO_PCA" in str(getattr(p, "comment", "")))
+                for p in pos_list
+            )
+            if not has_entry:
+                logger.warning(f"[DCA/PCA] {symbol}: lệnh gốc đã đóng, chỉ còn lệnh con -> bỏ qua nhồi.")
+                continue
             is_buy = first_pos.type == 0
             expected_sig = 1 if is_buy else -1
             

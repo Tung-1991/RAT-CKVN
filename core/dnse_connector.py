@@ -154,6 +154,23 @@ def _first_value(data: Dict[str, Any], keys: Iterable[str], default: Any = None)
     return default
 
 
+def _deep_first_value(data: Any, keys: Iterable[str], default: Any = None) -> Any:
+    if isinstance(data, dict):
+        for key in keys:
+            if key in data and data[key] not in (None, ""):
+                return data[key]
+        for value in data.values():
+            found = _deep_first_value(value, keys, None)
+            if found not in (None, ""):
+                return found
+    elif isinstance(data, list):
+        for value in data:
+            found = _deep_first_value(value, keys, None)
+            if found not in (None, ""):
+                return found
+    return default
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -384,6 +401,12 @@ class DNSEConnector:
     def has_trading_token(self) -> bool:
         return bool(self.trading_token and time.time() < self.trading_token_expires_at)
 
+    def trading_token_seconds_left(self) -> float:
+        """Số giây còn lại của trading-token (0 nếu chưa có/đã hết). Cho UI cảnh báo."""
+        if not self.trading_token:
+            return 0.0
+        return max(0.0, float(self.trading_token_expires_at or 0.0) - time.time())
+
     def send_email_otp(self) -> bool:
         ok, data, status_code, message = self._request("POST", "/registration/send-email-otp")
         if not ok:
@@ -435,10 +458,18 @@ class DNSEConnector:
             payload = payload[0] if payload else {}
         if not isinstance(payload, dict):
             payload = {}
-        balance = _to_float(_first_value(payload, ("balance", "cashBalance", "totalAsset", "netAssetValue", "nav")), 0.0)
-        equity = _to_float(_first_value(payload, ("equity", "netAssetValue", "nav", "totalAsset"), balance), balance)
-        margin = _to_float(_first_value(payload, ("margin", "marginValue", "derivativeMargin")), 0.0)
-        free_margin = _to_float(_first_value(payload, ("freeMargin", "availableBalance", "cashAvailable", "buyingPower")), equity - margin)
+        balance = _to_float(_deep_first_value(payload, ("balance", "cashBalance", "totalAsset", "netAssetValue", "nav")), 0.0)
+        equity = _to_float(_deep_first_value(payload, ("equity", "netAssetValue", "nav", "totalAsset"), balance), balance)
+        margin = _to_float(_deep_first_value(payload, ("margin", "marginValue", "derivativeMargin")), 0.0)
+        cash_available = _to_float(_deep_first_value(payload, ("cashAvailable", "cash_available", "cashBalanceAvailable", "availableCash")), 0.0)
+        buying_power = _to_float(_deep_first_value(payload, ("buyingPower", "buying_power", "purchasingPower")), 0.0)
+        available_balance = _to_float(_deep_first_value(payload, ("freeMargin", "availableBalance", "available_balance")), 0.0)
+        free_margin = available_balance or cash_available or buying_power or (equity - margin)
+        margin_debt = _to_float(_deep_first_value(payload, ("marginDebt", "margin_debt", "loan", "loanValue", "debt", "debtValue")), margin)
+        rtt_raw = _deep_first_value(payload, ("rtt", "Rtt", "RTT", "marginRatio", "margin_ratio", "actualRatio"), None)
+        rtt = None if rtt_raw in (None, "") else _to_float(rtt_raw, 0.0)
+        margin_call_level = _to_float(_deep_first_value(payload, ("callRtt", "callMarginRatio", "marginCallLevel")), 87.0)
+        margin_force_level = _to_float(_deep_first_value(payload, ("forceRtt", "forceSellRatio", "marginForceLevel")), 80.0)
         info = {
             "login": self.account_no,
             "server": "DNSE_API",
@@ -448,6 +479,12 @@ class DNSEConnector:
             "free_margin": free_margin,
             "margin_free": free_margin,
             "margin_level": (equity / margin * 100.0) if margin else 0.0,
+            "cash_available": cash_available,
+            "buying_power": buying_power or free_margin,
+            "margin_debt": margin_debt,
+            "rtt": rtt,
+            "margin_call_level": margin_call_level,
+            "margin_force_level": margin_force_level,
             "raw": data,
         }
         self._account_cache = dict(info)
@@ -696,6 +733,15 @@ class DNSEConnector:
         if cache_ttl > 0 and (time.time() - self._positions_cache_ts) < cache_ttl:
             return list(self._positions_cache)
 
+        # Reset cờ "mute 403" theo NGÀY (đang mute vĩnh viễn cả session) — để ngày mới thấy lỗi lại.
+        today = time.strftime("%Y-%m-%d")
+        if getattr(self, "_mute_reset_date", None) != today:
+            DNSEConnector._positions_403_muted = False
+            DNSEConnector._balances_403_muted = False
+            self._positions_error_logged = False
+            self._balances_error_logged = False
+            self._mute_reset_date = today
+
         query_targets: List[Tuple[str, str]] = []
         for market_type, account_no in (
             ("DERIVATIVE", self.derivative_account_no or self.account_no),
@@ -730,6 +776,11 @@ class DNSEConnector:
                 positions.extend(self._position_from_raw(item) for item in payload if isinstance(item, dict))
 
         if not had_ok:
+            # Cả 2 account đều fail -> bot/UI sẽ tưởng 0 vị thế. Cảnh báo (throttle 60s).
+            now_ts = time.time()
+            if (now_ts - getattr(self, "_positions_allfail_log_ts", 0.0)) > 60.0:
+                logger.error("⚠️ KHÔNG tải được vị thế từ TẤT CẢ tài khoản — có thể tưởng 0 lệnh. Kiểm tra kết nối/token.")
+                self._positions_allfail_log_ts = now_ts
             self._positions_cache = []
             self._positions_cache_ts = time.time()
             return []
@@ -767,6 +818,43 @@ class DNSEConnector:
         text = str(order_type).upper()
         return "NB" if text in ("0", "BUY", "LONG", "NB") else "NS"
 
+    def _normalize_stock_order(self, symbol, order_type, volume, price, order_kind):
+        """Chuẩn hoá khối lượng + kiểm luật cổ phiếu, dùng chung cho paper lẫn real.
+
+        Trả (quantity:int, err:BrokerOrderResult|None).
+        - Mọi mã: làm tròn số nguyên, tối thiểu 1.
+        - Cổ phiếu (CKCS): lô chẵn 100 (làm tròn xuống, dưới 1 lô -> STOCK_ODD_LOT);
+          lệnh LO (giá>0) phải nằm trong biên trần/sàn (-> PRICE_OUT_OF_BAND).
+        - Phái sinh: không áp lô 100/biên ở đây.
+        """
+        quantity = max(1, int(round(float(volume or 0))))
+        symbol_key = str(symbol or "").strip().upper()
+        if not settlement.is_cash_stock(symbol_key):
+            return quantity, None
+
+        round_lot = int(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+        quantity = stock_rules.round_lot_down(quantity, round_lot)
+        if quantity < round_lot:
+            return quantity, BrokerOrderResult(
+                ok=False,
+                error="STOCK_ODD_LOT",
+                message=f"Cổ phiếu {symbol_key}: khối lượng phải là bội số {round_lot} (tối thiểu {round_lot} CP).",
+            )
+
+        order_type_name = order_kind or ("LO" if float(price or 0) > 0 else "MOK")
+        if order_type_name == "LO" and float(price or 0) > 0:
+            tick = self.get_tick(symbol_key)
+            if tick is not None:
+                band_pct = stock_rules.band_pct_for(symbol_key)
+                fl, ce = stock_rules.resolve_band(tick.reference, tick.ceiling, tick.floor, band_pct)
+                if not stock_rules.price_in_band(price, fl, ce):
+                    return quantity, BrokerOrderResult(
+                        ok=False,
+                        error="PRICE_OUT_OF_BAND",
+                        message=f"Cổ phiếu {symbol_key}: giá {float(price):g} ngoài biên [sàn {fl:g} .. trần {ce:g}].",
+                    )
+        return quantity, None
+
     def send_order(
         self,
         symbol: str,
@@ -779,11 +867,16 @@ class DNSEConnector:
         magic: int = 0,
         order_kind: Optional[str] = None,
     ) -> BrokerOrderResult:
+        # Chuẩn hoá khối lượng + luật CK (lô 100 + biên trần/sàn) — áp cho CẢ paper lẫn real
+        # để test paper sát thực tế. Phái sinh chỉ làm tròn số nguyên.
+        quantity, norm_err = self._normalize_stock_order(symbol, order_type, volume, price, order_kind)
+        if norm_err is not None:
+            return norm_err
         if self._is_paper_mode():
             return self._paper().place_order(
                 symbol,
                 order_type,
-                volume,
+                quantity,
                 price=price,
                 sl=sl,
                 tp=tp,
@@ -797,34 +890,11 @@ class DNSEConnector:
                 message="AUTO_TRADE_ENABLED is False; refusing to send a new live DNSE order.",
             )
         side = self._normalize_side(order_type)
-        quantity = max(1, int(round(float(volume))))
         order_type_name = order_kind or ("LO" if float(price or 0) > 0 else "MOK")
         market_type = self.market_type_for_symbol(symbol)
         account_no = self.account_no_for_symbol(symbol)
         symbol_key = str(symbol or "").strip().upper()
         is_stock = settlement.is_cash_stock(symbol_key)
-        if is_stock:
-            # Lô chẵn 100: làm tròn XUỐNG; dưới 1 lô -> chặn.
-            round_lot = int(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
-            quantity = stock_rules.round_lot_down(quantity, round_lot)
-            if quantity < round_lot:
-                return BrokerOrderResult(
-                    ok=False,
-                    error="STOCK_ODD_LOT",
-                    message=f"Cổ phiếu {symbol_key}: khối lượng phải là bội số {round_lot} (tối thiểu {round_lot} CP).",
-                )
-            # Biên độ trần/sàn cho lệnh LO (giá > 0).
-            if order_type_name == "LO" and float(price or 0) > 0:
-                tick = self.get_tick(symbol_key)
-                if tick is not None:
-                    band_pct = stock_rules.band_pct_for(symbol_key)
-                    fl, ce = stock_rules.resolve_band(tick.reference, tick.ceiling, tick.floor, band_pct)
-                    if not stock_rules.price_in_band(price, fl, ce):
-                        return BrokerOrderResult(
-                            ok=False,
-                            error="PRICE_OUT_OF_BAND",
-                            message=f"Cổ phiếu {symbol_key}: giá {float(price):g} ngoài biên [sàn {fl:g} .. trần {ce:g}].",
-                        )
         if side == "NS" and is_stock:
             enriched = settlement_ledger.enrich_positions(self.account_no, self.get_positions())
             available = settlement.available_to_sell(enriched, symbol_key)
@@ -873,9 +943,9 @@ class DNSEConnector:
                 logger.warning("Settlement ledger record failed for %s %s: %s", symbol_key, ticket, exc)
         return result
 
-    def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="", order_kind=None) -> BrokerOrderResult:
+    def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="", order_kind=None, price=0.0) -> BrokerOrderResult:
         # order_kind: None -> tự LO/MOK; "ATO"/"ATC" -> lệnh phiên định kỳ mở/đóng cửa.
-        return self.send_order(symbol, order_type, lot, price=0.0, sl=sl, tp=tp, comment=comment, magic=magic, order_kind=order_kind)
+        return self.send_order(symbol, order_type, lot, price=price, sl=sl, tp=tp, comment=comment, magic=magic, order_kind=order_kind)
 
     def replace_order(self, order_id: str, *, price: Optional[float] = None, quantity: Optional[float] = None, account_no: Optional[str] = None, symbol: Optional[str] = None) -> BrokerOrderResult:
         if self._is_paper_mode():

@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
+import time
 from types import SimpleNamespace
 import pytest
 
 import config
 from core.dnse_connector import DNSEConnector, BrokerOrderResult, BrokerTick
 from core import settlement_ledger
+
+
+def test_trading_token_seconds_left():
+    conn = DNSEConnector(api_key="k", api_secret="s", account_no="ACC1", base_url="https://x.test", session=None)
+    assert conn.trading_token_seconds_left() == 0.0  # chưa có token
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = time.time() + 3600
+    assert 3500 < conn.trading_token_seconds_left() <= 3600
+    conn.trading_token_expires_at = time.time() - 10  # đã hết hạn
+    assert conn.trading_token_seconds_left() == 0.0
 
 
 class FakeResponse:
@@ -347,6 +358,39 @@ def test_paper_mode_uses_real_fee_profile_without_account_or_order_endpoints(mon
     assert "/positions" not in session.calls[0]["url"]
 
 
+def test_paper_mode_stock_rounds_odd_lot_like_real(monkeypatch, tmp_path):
+    # Paper phải áp luật giống thật: mua 150 CP -> khớp 100 (bội số lô).
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    monkeypatch.setattr(config, "PAPER_INITIAL_BALANCE", 100000000.0)
+    monkeypatch.chdir(tmp_path)
+    session = FakeSession([FakeResponse(200, {"loanPackages": [{"tradingFee": {"fixedTradingFee": 2000}}]})])
+    conn = _connector(session)
+    conn.get_tick = lambda symbol: BrokerTick(symbol=symbol, bid=73.0, ask=73.1, last=73.0, reference=73.0, ceiling=78.0, floor=68.0)
+
+    result = conn.send_order("FPT", "BUY", 150)
+    positions = conn.get_positions()
+
+    assert result.ok is True
+    assert len(positions) == 1
+    assert positions[0].volume == 100  # 150 -> bội 100 ngay ở paper
+
+
+def test_paper_mode_stock_blocks_price_out_of_band_like_real(monkeypatch, tmp_path):
+    # Paper phải chặn giá ngoài biên giống thật.
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    monkeypatch.setattr(config, "PAPER_INITIAL_BALANCE", 100000000.0)
+    monkeypatch.chdir(tmp_path)
+    session = FakeSession([])
+    conn = _connector(session)
+    conn.get_tick = lambda symbol: BrokerTick(symbol=symbol, bid=73.0, ask=73.1, last=73.0, reference=73.0, ceiling=78.0, floor=68.0)
+
+    result = conn.send_order("FPT", "BUY", 100, price=120.0)
+
+    assert result.ok is False
+    assert result.error == "PRICE_OUT_OF_BAND"
+    assert conn.get_positions() == []  # không mở vị thế paper nào
+
+
 def test_fee_profile_maps_dnse_loan_package(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     session = FakeSession(
@@ -392,6 +436,33 @@ def test_real_403_returns_account_pending_and_mutes(monkeypatch, caplog):
     assert first["status"] == "ACCOUNT_PENDING"
     assert second["status"] == "ACCOUNT_PENDING"
     assert caplog.text.count("DNSE balances failed [403]") <= 1
+
+
+def test_account_info_exposes_margin_fields(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                {
+                    "data": {
+                        "nav": 100_000_000,
+                        "cashAvailable": 90_000_000,
+                        "margin": {"buyingPower": 150_000_000, "rtt": 112.5, "debtValue": 10_000_000},
+                    }
+                },
+            )
+        ]
+    )
+    conn = _connector(session)
+
+    info = conn.get_account_info()
+
+    assert info["equity"] == 100_000_000
+    assert info["cash_available"] == 90_000_000
+    assert info["buying_power"] == 150_000_000
+    assert info["margin_debt"] == 10_000_000
+    assert info["rtt"] == 112.5
 
 
 # --- T+2 nâng cao: lô 100 CP + biên độ trần/sàn (CKCS) ---

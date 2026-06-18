@@ -445,8 +445,13 @@ def record_closed_trade(
         state = state or {}
         tactic = state.get("trade_tactics", {}).get(ticket_str, "unknown")
         ee_tactic = state.get("entry_exit_tactics", {}).get(ticket_str, "unknown")
+        margin_meta = state.get("trade_margin_meta", {}).get(ticket_str, {})
+        if margin_meta:
+            tactic = f"{tactic}|[MARGIN][MANUAL]"
         parent = state.get("child_to_parent", {}).get(ticket_str, "")
         modules = _module_tags(close_reason, trigger_signal, tactic, session_id)
+        if margin_meta and "MARGIN" not in str(modules).upper():
+            modules = f"{modules},MARGIN" if modules and modules != "unknown" else "MARGIN"
         if exit_time is None:
             exit_time = _now()
         hold_seconds = ""

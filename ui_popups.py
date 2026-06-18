@@ -603,6 +603,7 @@ def open_advisor_popup(app):
         text_color="gray",
     ).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
 
+    var_provider = tk.StringVar(value=str(api_settings.get("provider", api_client.DEFAULT_PROVIDER)))
     var_model = tk.StringVar(value=str(api_settings.get("model", api_client.DEFAULT_MODEL)))
     var_prompt_limit = tk.StringVar(value=str(api_settings.get("advisor_prompt_limit", 200000)))
     var_flow_limit = tk.StringVar(value=str(api_settings.get("advisor_flow_limit", 200000)))
@@ -620,10 +621,23 @@ def open_advisor_popup(app):
         else:
             ctk.CTkEntry(edit_top, textvariable=variable, width=150, height=28).grid(row=row, column=1, sticky="e", padx=10, pady=4)
 
-    _edit_row("model", var_model, 2, values=api_client.SUPPORTED_MODELS)
-    _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 3)
-    _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 4)
-    _edit_row("max output tokens", var_max_output, 5)
+    # Provider + Model (model phụ thuộc provider đang chọn).
+    ctk.CTkLabel(edit_top, text="provider", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=2, column=0, sticky="w", padx=10, pady=4)
+    ctk.CTkOptionMenu(edit_top, values=list(api_client._providers().keys()), variable=var_provider, width=150, height=28, command=lambda _v=None: _on_provider_change()).grid(row=2, column=1, sticky="e", padx=10, pady=4)
+
+    ctk.CTkLabel(edit_top, text="model", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=3, column=0, sticky="w", padx=10, pady=4)
+    cbo_model = ctk.CTkOptionMenu(edit_top, values=api_client.models_for(var_provider.get()), variable=var_model, width=150, height=28)
+    cbo_model.grid(row=3, column=1, sticky="e", padx=10, pady=4)
+
+    def _on_provider_change():
+        models = api_client.models_for(var_provider.get())
+        cbo_model.configure(values=models)
+        if var_model.get() not in models:
+            var_model.set(models[0] if models else "")
+
+    _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 4)
+    _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 5)
+    _edit_row("max output tokens", var_max_output, 6)
 
     ctk.CTkCheckBox(
         edit_top,
@@ -632,15 +646,16 @@ def open_advisor_popup(app):
         font=("Roboto", 11, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 4))
+    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 4))
 
     limit_buttons = ctk.CTkFrame(edit_top, fg_color="transparent")
-    limit_buttons.grid(row=7, column=0, columnspan=2, sticky="ew", padx=10, pady=(6, 10))
+    limit_buttons.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=(6, 10))
 
     def save_api_edit():
         try:
             saved = api_client.save_api_settings(
                 {
+                    "provider": var_provider.get(),
                     "model": var_model.get(),
                     "advisor_prompt_limit": var_prompt_limit.get(),
                     "advisor_flow_limit": var_flow_limit.get(),
@@ -652,6 +667,8 @@ def open_advisor_popup(app):
                     "web_search_enabled": var_web_search.get(),
                 }
             )
+            var_provider.set(str(saved.get("provider", api_client.DEFAULT_PROVIDER)))
+            cbo_model.configure(values=api_client.models_for(var_provider.get()))
             var_model.set(str(saved.get("model", api_client.DEFAULT_MODEL)))
             var_prompt_limit.set(str(saved.get("advisor_prompt_limit")))
             var_flow_limit.set(str(saved.get("advisor_flow_limit")))
@@ -1597,6 +1614,12 @@ def open_bot_setting_popup(app):
     e_log_cooldown = ctk.CTkEntry(f_sys_content, width=50, justify="center")
     e_log_cooldown.insert(0, str(safe_cfg.get("LOG_COOLDOWN_MINUTES", 60)))
     e_log_cooldown.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+    ctk.CTkLabel(f_sys_content, text="Hen expire (h):").grid(
+        row=2, column=2, sticky="w", padx=10, pady=5
+    )
+    e_pending_expire = ctk.CTkEntry(f_sys_content, width=50, justify="center")
+    e_pending_expire.insert(0, str(safe_cfg.get("PENDING_ORDER_EXPIRE_HOURS", 24)))
+    e_pending_expire.grid(row=2, column=3, sticky="w", padx=5, pady=5)
 
     # [HINT / LEGEND AT BOTTOM]
     f_hint = ctk.CTkFrame(f_safety, fg_color="#212121")
@@ -1660,6 +1683,7 @@ def open_bot_setting_popup(app):
                     "GLOBAL_BRAKE_MODE": cbo_brake_mode.get(),
                     "BOT_ORDER_MODE": cbo_bot_order_mode.get(),
                     "BOT_ATC_EXIT": var_bot_atc_exit.get(),
+                    "PENDING_ORDER_EXPIRE_HOURS": float(e_pending_expire.get()),
                 }
             )
             existing_data["BOT_ACTIVE_SYMBOLS"] = [
@@ -1915,6 +1939,37 @@ def build_cache_and_symbols_tab(app, parent):
 
     _refresh_ws_status()
 
+    # --- Nâng cao (ít dùng, mặc định ẩn): WS URL / encoding / board ---
+    adv_state = {"open": False}
+    btn_adv = ctk.CTkButton(
+        frame, text="▸ Nâng cao (WebSocket URL / encoding / board)", width=340,
+        fg_color="#37474F", hover_color="#455A64", anchor="w", font=("Roboto", 11),
+    )
+    btn_adv.pack(fill="x", padx=12, pady=(2, 2))
+    f_adv = ctk.CTkFrame(frame, fg_color="#2b2b2b", corner_radius=8)
+
+    def _adv_entry(label, value, row):
+        ctk.CTkLabel(f_adv, text=label).grid(row=row, column=0, sticky="w", padx=10, pady=4)
+        e = ctk.CTkEntry(f_adv, width=300)
+        e.insert(0, str(value))
+        e.grid(row=row, column=1, sticky="w", padx=10, pady=4)
+        return e
+
+    e_ws_url = _adv_entry("WS URL", getattr(config, "DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn"), 0)
+    e_ws_enc = _adv_entry("WS Encoding", getattr(config, "DNSE_WS_ENCODING", "json"), 1)
+    e_ws_board = _adv_entry("WS Board ID", getattr(config, "DNSE_WS_BOARD_ID", "G1"), 2)
+
+    def _toggle_adv():
+        adv_state["open"] = not adv_state["open"]
+        if adv_state["open"]:
+            f_adv.pack(fill="x", padx=12, pady=(0, 8), after=btn_adv)
+            btn_adv.configure(text="▾ Nâng cao (WebSocket URL / encoding / board)")
+        else:
+            f_adv.pack_forget()
+            btn_adv.configure(text="▸ Nâng cao (WebSocket URL / encoding / board)")
+
+    btn_adv.configure(command=_toggle_adv)
+
     lbl_msg = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=520, justify="left")
     lbl_msg.pack(anchor="w", padx=14, pady=(2, 2))
 
@@ -1925,6 +1980,9 @@ def build_cache_and_symbols_tab(app, parent):
             ttl_ohlc = float(e_ttl_ohlc.get() or 30.0)
             ttl_acc = float(e_ttl_acc.get() or 5.0)
             ttl_pos = float(e_ttl_pos.get() or 2.0)
+            ws_url = (e_ws_url.get() or "wss://ws-openapi.dnse.com.vn").strip()
+            ws_enc = (e_ws_enc.get() or "json").strip()
+            ws_board = (e_ws_board.get() or "G1").strip()
             env_utils.update_env({
                 "DNSE_WS_ENABLED": "true" if var_ws_enabled.get() else "false",
                 "DNSE_TICK_CACHE_TTL_SECONDS": str(ttl_tick),
@@ -1932,12 +1990,18 @@ def build_cache_and_symbols_tab(app, parent):
                 "DNSE_ACCOUNT_CACHE_TTL_SECONDS": str(ttl_acc),
                 "DNSE_POSITIONS_CACHE_TTL_SECONDS": str(ttl_pos),
                 "DNSE_CKCS_WATCHLIST": ",".join(ckcs_list),
+                "DNSE_WS_URL": ws_url,
+                "DNSE_WS_ENCODING": ws_enc,
+                "DNSE_WS_BOARD_ID": ws_board,
             })
             config.DNSE_WS_ENABLED = bool(var_ws_enabled.get())
             config.DNSE_TICK_CACHE_TTL_SECONDS = ttl_tick
             config.DNSE_OHLC_CACHE_TTL_SECONDS = ttl_ohlc
             config.DNSE_ACCOUNT_CACHE_TTL_SECONDS = ttl_acc
             config.DNSE_POSITIONS_CACHE_TTL_SECONDS = ttl_pos
+            config.DNSE_WS_URL = ws_url
+            config.DNSE_WS_ENCODING = ws_enc
+            config.DNSE_WS_BOARD_ID = ws_board
             config.CKCS_WATCHLIST = ckcs_list
             try:
                 if hasattr(app, "on_market_type_change") and hasattr(app, "cbo_market_type"):
@@ -1963,6 +2027,116 @@ def build_cache_and_symbols_tab(app, parent):
     ctk.CTkButton(frame, text="Lưu Cache & Mã", width=180, fg_color="#2E7D32", command=_save).pack(anchor="w", padx=14, pady=(2, 10))
 
 
+def build_manual_margin_tab(app, parent):
+    """Manual-only CKCS margin settings. Bot margin stays hard-disabled in v1."""
+    from core import margin_rules, storage_manager
+
+    frame = _speed_up_scroll(ctk.CTkScrollableFrame(parent, fg_color="transparent"))
+    frame.pack(fill="both", expand=True, padx=6, pady=6)
+
+    brain = storage_manager.load_brain_settings()
+    settings = margin_rules.settings_from_brain(brain)
+
+    ctk.CTkLabel(frame, text="CKCS MARGIN MANUAL", font=FONT_BOLD, text_color="#FFD54F").pack(anchor="w", padx=14, pady=(8, 2))
+    _add_popup_hint(
+        frame,
+        "- V1 chỉ hỗ trợ lệnh tay CKCS. Bot không dùng margin dù buying power cao.\n"
+        "- Nếu DNSE không trả RTT/cash rõ ràng: app hiển thị UNKNOWN và mặc định chặn mở margin.\n"
+        "- Lệnh vẫn đi theo tiểu khoản hiện tại; app không tự gọi API vay/deal margin mới.",
+        padx=14,
+        pady=(0, 8),
+    )
+
+    f = ctk.CTkFrame(frame, fg_color="#1f2a33", corner_radius=8)
+    f.pack(fill="x", padx=12, pady=(0, 8))
+    f.grid_columnconfigure(1, weight=1)
+
+    var_enable = ctk.BooleanVar(value=bool(settings.get("ENABLE_MANUAL_MARGIN")))
+    ctk.CTkSwitch(
+        f,
+        text="ENABLE_MANUAL_MARGIN",
+        variable=var_enable,
+        progress_color=COL_GREEN,
+        fg_color=COL_RED,
+        font=("Roboto", 12, "bold"),
+    ).grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 8))
+
+    ctk.CTkLabel(f, text="MARGIN_RISK_BASE", anchor="w").grid(row=1, column=0, sticky="w", padx=12, pady=4)
+    var_base = ctk.StringVar(value=str(settings.get("MARGIN_RISK_BASE", "EQUITY_NAV")))
+    ctk.CTkOptionMenu(f, variable=var_base, values=["EQUITY_NAV", "FREE_CASH"], width=180).grid(row=1, column=1, sticky="w", padx=8, pady=4)
+
+    entries = {}
+
+    def _entry(row, key, label):
+        ctk.CTkLabel(f, text=label, anchor="w").grid(row=row, column=0, sticky="w", padx=12, pady=4)
+        e = ctk.CTkEntry(f, width=120, justify="center")
+        e.insert(0, str(settings.get(key, "")))
+        e.grid(row=row, column=1, sticky="w", padx=8, pady=4)
+        entries[key] = e
+
+    _entry(2, "MAX_MARGIN_ORDER_VALUE_PCT", "Max order value (% NAV)")
+    _entry(3, "MIN_RTT_TO_OPEN", "Min RTT to open")
+    _entry(4, "CALL_RTT", "Call RTT")
+    _entry(5, "FORCE_RTT", "Force RTT")
+    _entry(6, "MAX_MANUAL_MARGIN_LOSS_PCT", "Max manual loss (% NAV)")
+
+    ctk.CTkLabel(
+        f,
+        text="BOT_ALLOW_MARGIN = False (hard disabled v1)",
+        text_color="#FF8A80",
+        font=("Roboto", 12, "bold"),
+    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 10))
+
+    f_snap = ctk.CTkFrame(frame, fg_color="#2b2b2b", corner_radius=8)
+    f_snap.pack(fill="x", padx=12, pady=(0, 8))
+    lbl_snap = ctk.CTkLabel(f_snap, text="Account margin snapshot: ...", justify="left", anchor="w", font=("Consolas", 11), text_color="#B0BEC5")
+    lbl_snap.pack(fill="x", padx=12, pady=10)
+
+    def _refresh_snapshot():
+        try:
+            acc = app.connector.get_account_info() if getattr(app, "connector", None) else {}
+            snap = margin_rules.account_snapshot(acc, settings)
+            rtt = snap.get("rtt")
+            rtt_txt = "UNKNOWN" if rtt is None else f"{float(rtt):.1f}%"
+            lbl_snap.configure(
+                text=(
+                    f"cash_available={snap.get('cash_available', 0):,.0f} | "
+                    f"buying_power={snap.get('buying_power', 0):,.0f} | "
+                    f"margin_debt={snap.get('margin_debt', 0):,.0f} | RTT={rtt_txt}"
+                )
+            )
+        except Exception as exc:
+            lbl_snap.configure(text=f"Account margin snapshot: ERROR {exc}", text_color="#E57373")
+
+    _refresh_snapshot()
+
+    lbl_msg = ctk.CTkLabel(frame, text="", text_color="#B0BEC5", wraplength=560, justify="left")
+    lbl_msg.pack(anchor="w", padx=14, pady=(2, 4))
+
+    def _save():
+        try:
+            next_settings = margin_rules.settings_from_brain({"manual_margin": settings})
+            next_settings["ENABLE_MANUAL_MARGIN"] = bool(var_enable.get())
+            next_settings["MARGIN_RISK_BASE"] = str(var_base.get() or "EQUITY_NAV").upper()
+            for key, entry in entries.items():
+                next_settings[key] = float(entry.get() or margin_rules.DEFAULT_MANUAL_MARGIN[key])
+            next_settings["BOT_ALLOW_MARGIN"] = False
+            brain_now = storage_manager.load_brain_settings()
+            brain_now["manual_margin"] = next_settings
+            storage_manager.save_brain_settings(brain_now)
+            config.MANUAL_MARGIN_CONFIG = dict(next_settings)
+            settings.update(next_settings)
+            lbl_msg.configure(text="Đã lưu CKCS margin manual. Bot margin vẫn OFF.", text_color="#81C784")
+            _refresh_snapshot()
+        except Exception as exc:
+            lbl_msg.configure(text=f"Lỗi lưu margin: {exc}", text_color="#E57373")
+
+    buttons = ctk.CTkFrame(frame, fg_color="transparent")
+    buttons.pack(fill="x", padx=12, pady=(0, 12))
+    ctk.CTkButton(buttons, text="Lưu Margin Manual", width=170, fg_color="#2E7D32", command=_save).pack(side="left")
+    ctk.CTkButton(buttons, text="Refresh Snapshot", width=150, fg_color="#455A64", command=_refresh_snapshot).pack(side="left", padx=(8, 0))
+
+
 def open_advanced_tools_popup(app):
     """Trung tâm cài đặt hệ thống: tài khoản DNSE/.env + xác thực OTP (trading-token)."""
     import os
@@ -1979,9 +2153,11 @@ def open_advanced_tools_popup(app):
     tabs.pack(fill="both", expand=True, padx=8, pady=8)
     tab_sys = tabs.add("Hệ thống")
     tab_cache = tabs.add("Cache & Mã")
+    tab_margin = tabs.add("Margin CKCS")
 
     # Tab 2: gom cache + watchlist CKCS
     build_cache_and_symbols_tab(app, tab_cache)
+    build_manual_margin_tab(app, tab_margin)
 
     # Tab 1: tài khoản / cấu hình / OTP
     body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_sys, fg_color="transparent"))
@@ -3003,13 +3179,18 @@ def open_tsl_popup(app, override_symbol=None):
         unit_menu.set("R" if unit in ("%R", "PERCENT_R") else (unit or "USD"))
         unit_menu.pack(side="left")
         return entry, unit_menu
+    ctk.CTkLabel(
+        f_anti,
+        text="⚠️ Đơn vị 'USD' ở đây = TIỀN THÔ của tài khoản (VND). VD 250000 = 250.000đ.",
+        font=("Roboto", 10, "italic"), text_color="#FFB300",
+    ).pack(anchor="w", padx=8, pady=(2, 0))
     f_anti_grid = ctk.CTkFrame(f_anti, fg_color="transparent")
     f_anti_grid.pack(anchor="center", pady=(4, 2))
     row_hard = anti_row(f_anti_grid)
     e_anti_usd, cbo_anti_usd_unit = anti_money_field(
         row_hard,
         "Hard Stop:",
-        tsl_cfg.get("ANTI_CASH_USD", 10.0),
+        tsl_cfg.get("ANTI_CASH_USD", 250000.0),
         tsl_cfg.get("ANTI_CASH_HARD_STOP_UNIT", "USD"),
     )
     e_anti_time = anti_field(

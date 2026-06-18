@@ -63,3 +63,21 @@ def test_place_order_forwards_order_kind_to_payload(monkeypatch):
     assert result.ok is True
     assert session.calls[0]["json"]["orderType"] == "ATO"
     assert session.calls[0]["json"]["symbol"] == "41I1G6000"
+
+
+def test_place_order_with_price_uses_limit_order(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([FakeResponse(200, {"orderId": "O2", "status": "NEW"})])
+    conn = DNSEConnector(api_key="k", api_secret="s", account_no="ACC1", base_url="https://x.test", session=session)
+    assert conn.connect()
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn._symbol_map = {"VN30F1M": "41I1G6000"}
+    conn._symbol_map_ts = 9999999999
+
+    result = conn.place_order("VN30F1M", "BUY", 1, 1190, 1220, 77, "[USER]", price=1200)
+
+    assert result.ok is True
+    assert session.calls[0]["json"]["orderType"] == "LO"
+    assert session.calls[0]["json"]["price"] == 1200.0

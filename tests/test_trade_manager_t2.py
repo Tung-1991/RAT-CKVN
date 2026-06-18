@@ -25,6 +25,25 @@ class DummyConnector:
     def get_all_open_positions(self):
         return list(self.positions)
 
+    def get_tick(self, symbol):
+        return SimpleNamespace(symbol=symbol, bid=1209.0, ask=1210.0, last=1210.0, spread=1.0)
+
+    def get_symbol_info(self, symbol):
+        return SimpleNamespace(
+            symbol=symbol,
+            point=0.1,
+            trade_contract_size=100000.0,
+            volume_min=1.0,
+            volume_max=200.0,
+            volume_step=1.0,
+            trade_stops_level=0.0,
+            spread=1.0,
+        )
+
+    def calculate_profit(self, symbol, side, volume, entry_price, exit_price):
+        direction = 1 if str(side).upper() in ("0", "BUY", "NB") else -1
+        return (float(exit_price) - float(entry_price)) * direction * float(volume) * 100000.0
+
     def close_position(self, pos):
         self.closed.append(pos)
         return SimpleNamespace(ok=True, error="", message="")
