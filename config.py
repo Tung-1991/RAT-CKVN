@@ -86,6 +86,12 @@ DNSE_POINT_VALUE = 100000.0
 DNSE_STOCK_PRICE_VALUE = 1000.0
 DNSE_PRICE_POINT = 0.1
 
+# --- UI đặt lệnh tay ---
+# Gộp "EXECUTE BUY" + "LIMIT ORDER" thành 1 nút thông minh + tick "Thị trường".
+# Tick -> lệnh thị trường (ATO/ATC tự nhận theo phiên); bỏ tick -> LO theo giá nhập/giá hiện tại.
+# Đặt False để quay lại 2 nút + dropdown ATO/ATC cũ (lego, không xóa code cũ).
+UNIFIED_ORDER_BUTTON = True
+
 # --- Ràng buộc CKCS (cổ phiếu cơ sở) ---
 STOCK_ROUND_LOT = 100  # lệnh thường phải là bội số 100 CP (lô chẵn)
 STOCK_DEFAULT_EXCHANGE = "HOSE"  # CKCS hiện (FPT,SSI,VCB,CTG,BID,MBB) đều HOSE

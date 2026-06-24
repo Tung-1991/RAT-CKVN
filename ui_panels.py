@@ -15,7 +15,7 @@ FONT_EQUITY = ("Roboto", 32, "bold")
 FONT_PNL = ("Roboto", 17, "bold")
 FONT_SECTION = ("Roboto", 12, "bold")
 FONT_BIG_VAL = ("Consolas", 18, "bold")
-FONT_PRICE = ("Roboto", 28, "bold")
+FONT_PRICE = ("Roboto", 23, "bold")
 FONT_FEE = ("Roboto", 13, "bold")
 
 COL_GREEN = "#00C853"
@@ -44,7 +44,8 @@ def setup_left_panel(app, parent):
     app.lbl_acc_info = ctk.CTkLabel(
         f_left, text="ID: ---  ·  ---", font=("Roboto", 9), text_color="white", anchor="w",
     )
-    app.lbl_acc_info.pack(anchor="w", pady=(0, 3))
+    app.lbl_acc_info.pack(anchor="w", pady=(0, 1))
+    # Tiền mặt / Giá trị CP -> chuyển hết vào popup "Danh mục CP" cho gọn header.
     f_pnl = ctk.CTkFrame(f_left, fg_color="transparent")
     f_pnl.pack(anchor="w", fill="x")
     app.lbl_stats = ctk.CTkLabel(f_pnl, text="PNL: 0", font=FONT_PNL, text_color="white")
@@ -81,11 +82,11 @@ def setup_left_panel(app, parent):
             font=("Roboto", 11, "bold"),
             text_color="white",
             anchor="e",
-        ).grid(row=row, column=0, sticky="e", padx=(6, 6), pady=4)
+        ).grid(row=row, column=0, sticky="e", padx=(6, 6), pady=3)
 
     def setting_row(row):
         frame = ctk.CTkFrame(f_set, fg_color="transparent")
-        frame.grid(row=row, column=1, sticky="ew", padx=(0, 6), pady=4)
+        frame.grid(row=row, column=1, sticky="ew", padx=(0, 6), pady=3)
         return frame
 
     def stretch_columns(frame, widths):
@@ -112,7 +113,7 @@ def setup_left_panel(app, parent):
         values=["VN30F1M"],
         font=FONT_BOLD,
         width=112,
-        height=32,
+        height=30,
         command=app.on_symbol_change,
     )
     app.cbo_symbol.set("VN30F1M")
@@ -123,7 +124,7 @@ def setup_left_panel(app, parent):
         values=["CK Phái Sinh", "CK Cơ Sở"],
         font=FONT_MAIN,
         width=154,
-        height=32,
+        height=30,
         command=app.on_market_type_change,
     )
     app.cbo_market_type.set("CK Phái Sinh")
@@ -138,7 +139,7 @@ def setup_left_panel(app, parent):
         values=["REAL", "PAPER"],
         font=FONT_BOLD,
         width=128,
-        height=32,
+        height=30,
         command=app.on_paper_mode_change,
         selected_color="#D32F2F",  # Red for REAL initially (will update dynamically)
         selected_hover_color="#B71C1C",
@@ -151,7 +152,7 @@ def setup_left_panel(app, parent):
         f_account_row,
         text="\u2699 PRESET",
         width=92,
-        height=32,
+        height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_preset_config_popup,
@@ -162,7 +163,7 @@ def setup_left_panel(app, parent):
         font=("Roboto", 11, "bold"),
         text_color="white",
         width=74,
-        height=32,
+        height=30,
         fg_color="#424242",
         hover_color="#616161",
         command=toggle_force_button,
@@ -174,34 +175,34 @@ def setup_left_panel(app, parent):
     f_tsl_row = setting_row(2)
     stretch_columns(f_tsl_row, (36, 40, 46, 54, 48, 48, 42))
     app.btn_tactic_be = ctk.CTkButton(
-        f_tsl_row, text="BE", width=36, height=32, command=lambda: app.toggle_tactic("BE")
+        f_tsl_row, text="BE", width=36, height=30, command=lambda: app.toggle_tactic("BE")
     )
     app.btn_tactic_be.grid(row=0, column=0, sticky="ew", padx=(0, 3))
     app.btn_tactic_pnl = ctk.CTkButton(
-        f_tsl_row, text="PNL", width=40, height=32, command=lambda: app.toggle_tactic("PNL")
+        f_tsl_row, text="PNL", width=40, height=30, command=lambda: app.toggle_tactic("PNL")
     )
     app.btn_tactic_pnl.grid(row=0, column=1, sticky="ew", padx=3)
     app.btn_tactic_step = ctk.CTkButton(
-        f_tsl_row, text="STEP", width=46, height=32, command=lambda: app.toggle_tactic("STEP_R")
+        f_tsl_row, text="STEP", width=46, height=30, command=lambda: app.toggle_tactic("STEP_R")
     )
     app.btn_tactic_step.grid(row=0, column=2, sticky="ew", padx=3)
     app.btn_tactic_swing = ctk.CTkButton(
-        f_tsl_row, text="SWING", width=54, height=32, command=lambda: app.toggle_tactic("SWING")
+        f_tsl_row, text="SWING", width=54, height=30, command=lambda: app.toggle_tactic("SWING")
     )
     app.btn_tactic_swing.grid(row=0, column=3, sticky="ew", padx=3)
     app.btn_tactic_cash = ctk.CTkButton(
-        f_tsl_row, text="CASH", width=48, height=32, command=lambda: app.toggle_tactic("BE_CASH")
+        f_tsl_row, text="CASH", width=48, height=30, command=lambda: app.toggle_tactic("BE_CASH")
     )
     app.btn_tactic_cash.grid(row=0, column=4, sticky="ew", padx=3)
     app.btn_tactic_psar = ctk.CTkButton(
-        f_tsl_row, text="PSAR", width=48, height=32, command=lambda: app.toggle_tactic("PSAR_TRAIL")
+        f_tsl_row, text="PSAR", width=48, height=30, command=lambda: app.toggle_tactic("PSAR_TRAIL")
     )
     app.btn_tactic_psar.grid(row=0, column=5, sticky="ew", padx=3)
     ctk.CTkButton(
         f_tsl_row,
         text="TSL",
         width=42,
-        height=32,
+        height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_tsl_popup,
@@ -211,30 +212,30 @@ def setup_left_panel(app, parent):
     f_entry = setting_row(3)
     stretch_columns(f_entry, (36, 62, 62, 40, 42, 42))
     app.btn_entry_r = ctk.CTkButton(
-        f_entry, text="R", width=36, height=32, command=lambda: app.toggle_entry_exit_tactic("FALLBACK_R")
+        f_entry, text="R", width=36, height=30, command=lambda: app.toggle_entry_exit_tactic("FALLBACK_R")
     )
     app.btn_entry_r.grid(row=0, column=0, sticky="ew", padx=(0, 3))
     app.btn_entry_swing = ctk.CTkButton(
-        f_entry, text="RETEST", width=62, height=32, command=lambda: app.toggle_entry_exit_tactic("SWING_REJECTION")
+        f_entry, text="RETEST", width=62, height=30, command=lambda: app.toggle_entry_exit_tactic("SWING_REJECTION")
     )
     app.btn_entry_swing.grid(row=0, column=1, sticky="ew", padx=3)
     app.btn_entry_struct = ctk.CTkButton(
-        f_entry, text="STRUCT", width=62, height=32, command=lambda: app.toggle_entry_exit_tactic("SWING_STRUCTURE")
+        f_entry, text="STRUCT", width=62, height=30, command=lambda: app.toggle_entry_exit_tactic("SWING_STRUCTURE")
     )
     app.btn_entry_struct.grid(row=0, column=2, sticky="ew", padx=3)
     app.btn_entry_fib = ctk.CTkButton(
-        f_entry, text="FIB", width=40, height=32, command=lambda: app.toggle_entry_exit_tactic("FIB_RETRACE")
+        f_entry, text="FIB", width=40, height=30, command=lambda: app.toggle_entry_exit_tactic("FIB_RETRACE")
     )
     app.btn_entry_fib.grid(row=0, column=3, sticky="ew", padx=3)
     app.btn_entry_pullback = ctk.CTkButton(
-        f_entry, text="PULL", width=42, height=32, command=lambda: app.toggle_entry_exit_tactic("PULLBACK_ZONE")
+        f_entry, text="PULL", width=42, height=30, command=lambda: app.toggle_entry_exit_tactic("PULLBACK_ZONE")
     )
     app.btn_entry_pullback.grid(row=0, column=4, sticky="ew", padx=3)
     ctk.CTkButton(
         f_entry,
         text="EE",
         width=42,
-        height=32,
+        height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_entry_exit_popup,
@@ -244,26 +245,26 @@ def setup_left_panel(app, parent):
     f_def = setting_row(4)
     stretch_columns(f_def, (50, 50, 50, 58, 110))
     app.btn_tactic_dca = ctk.CTkButton(
-        f_def, text="DCA", width=50, height=32, command=lambda: app.toggle_tactic("AUTO_DCA")
+        f_def, text="DCA", width=50, height=30, command=lambda: app.toggle_tactic("AUTO_DCA")
     )
     app.btn_tactic_dca.grid(row=0, column=0, sticky="ew", padx=(0, 3))
     app.btn_tactic_pca = ctk.CTkButton(
-        f_def, text="PCA", width=50, height=32, command=lambda: app.toggle_tactic("AUTO_PCA")
+        f_def, text="PCA", width=50, height=30, command=lambda: app.toggle_tactic("AUTO_PCA")
     )
     app.btn_tactic_pca.grid(row=0, column=1, sticky="ew", padx=3)
     app.btn_tactic_rev_c = ctk.CTkButton(
-        f_def, text="REV", width=50, height=32, command=lambda: app.toggle_tactic("REV_C")
+        f_def, text="REV", width=50, height=30, command=lambda: app.toggle_tactic("REV_C")
     )
     app.btn_tactic_rev_c.grid(row=0, column=2, sticky="ew", padx=3)
     app.btn_tactic_anti_cash = ctk.CTkButton(
-        f_def, text="A.CUT", width=58, height=32, command=lambda: app.toggle_tactic("ANTI_CASH")
+        f_def, text="A.CUT", width=58, height=30, command=lambda: app.toggle_tactic("ANTI_CASH")
     )
     app.btn_tactic_anti_cash.grid(row=0, column=3, sticky="ew", padx=3)
     ctk.CTkButton(
         f_def,
         text="\u2699 AI ADVISOR",
         width=110,
-        height=32,
+        height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_advisor_popup,
@@ -280,7 +281,7 @@ def setup_left_panel(app, parent):
         f_bot_row,
         text="\u2699 BOT",
         width=112,
-        height=32,
+        height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
         command=app.open_bot_setting_popup,
@@ -289,7 +290,7 @@ def setup_left_panel(app, parent):
         f_bot_row,
         text="\u2699 SANDBOX",
         width=120,
-        height=32,
+        height=30,
         font=("Roboto", 11, "bold"),
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
@@ -303,7 +304,7 @@ def setup_left_panel(app, parent):
     ctk.CTkButton(
         f_tools,
         text="⚙ ADVANCED",
-        height=32,
+        height=30,
         font=("Roboto", 11, "bold"),
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
@@ -387,27 +388,33 @@ def setup_left_panel(app, parent):
     app.lbl_market_context.pack(side="left", fill="x", expand=True, padx=5)
     f_context.pack_forget()
 
+    _unified = bool(getattr(config, "UNIFIED_ORDER_BUTTON", True))
+    # [GỘP NÚT] Tick "Thị trường" + dropdown ATO/ATC nằm ở CỘT TRÁI của giá (trong dashboard).
+    # Nút EXECUTE BUY giữ nguyên vị trí cũ (ngay dưới ô nhập).
+
     app.btn_action = ctk.CTkButton(
         parent,
         text="EXECUTE BUY",
-        font=("Roboto", 15, "bold"),
-        height=40,
+        font=("Roboto", 14, "bold"),
+        height=34,
         fg_color=COL_GREEN,
         hover_color="#009624",
-        command=app.on_click_trade,
+        command=app.on_click_smart_order if _unified else app.on_click_trade,
     )
     app.btn_action.pack(fill="x", padx=10, pady=(3, 6))
 
+    # Nút "LIMIT ORDER" cũ — ẩn khi gộp nút (giữ widget để code cũ không lỗi).
     app.btn_schedule_order = ctk.CTkButton(
         parent,
         text="LIMIT ORDER",
         font=("Roboto", 13, "bold"),
-        height=32,
+        height=30,
         fg_color="#455A64",
         hover_color="#546E7A",
         command=app.on_click_schedule_order,
     )
-    app.btn_schedule_order.pack(fill="x", padx=10, pady=(0, 4))
+    if not _unified:
+        app.btn_schedule_order.pack(fill="x", padx=10, pady=(0, 4))
 
     # 4. LIVE DASHBOARD
     f_dashboard = ctk.CTkFrame(
@@ -416,7 +423,7 @@ def setup_left_panel(app, parent):
     f_dashboard.pack(fill="x", padx=5, pady=(2, 8))
 
     f_head_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
-    f_head_db.pack(fill="x", padx=10, pady=(5, 0))
+    f_head_db.pack(fill="x", padx=10, pady=(2, 0))
     app.lbl_prev_lot = ctk.CTkLabel(
         f_head_db, text="HĐ: 0", font=FONT_BOLD, text_color="#FFD700"
     )
@@ -430,44 +437,70 @@ def setup_left_panel(app, parent):
         justify="left",
         width=260,
     )
-    app.lbl_limit_order_hint.pack(side="left", padx=10)
+    app.lbl_limit_order_hint.pack_forget()
     # Trạng thái T+2 (Đã về/Chờ về) hiển thị TRONG bảng lệnh theo từng vị thế, không ở header.
     app.lbl_fee_info = ctk.CTkLabel(
         f_head_db, text="Phí: 0", font=FONT_FEE, text_color="#FFD700"
     )
     app.lbl_fee_info.pack(side="right")
     f_price_row = ctk.CTkFrame(f_dashboard, fg_color="transparent")
-    f_price_row.pack(fill="x", padx=8, pady=(3, 3))
-    f_price_row.grid_columnconfigure(0, minsize=106)
+    f_price_row.pack(fill="x", padx=8, pady=(2, 0))
+    f_price_row.grid_columnconfigure(0, minsize=116)
     f_price_row.grid_columnconfigure(1, weight=1)
     f_price_row.grid_columnconfigure(2, minsize=106)
 
     app.frame_trade_mode = ctk.CTkFrame(
         f_price_row, fg_color="#424242", corner_radius=6
     )
-    app.frame_trade_mode.grid(row=0, column=0, sticky="w", padx=(0, 8))
-    # Kiểu lệnh: NORMAL (khớp liên tục) | ATO (mở cửa) | ATC (đóng cửa).
-    # ATO/ATC chỉ chọn được khi đang đúng phiên (khóa ở update_ui).
-    app.cbo_trade_mode = ctk.CTkOptionMenu(
-        app.frame_trade_mode,
-        values=["NORMAL", "ATO", "ATC"],
-        variable=app.var_manual_trade_mode,
-        width=98,
-        height=24,
-        font=("Roboto", 10, "bold"),
-        fg_color="#00838F",
-        button_color="#006064",
-        command=app.on_manual_trade_mode_change,
-    )
-    app.cbo_trade_mode.pack(fill="x", padx=4, pady=4)
+    app.frame_trade_mode.grid(row=0, column=0, sticky="nw", padx=(0, 8))
+    if _unified:
+        # [GỘP NÚT] Bên trái giá: dropdown Hẹn phiên ATO/ATC, giữ layout gọn như bản cũ.
+        app.cbo_schedule_session = ctk.CTkOptionMenu(
+            app.frame_trade_mode,
+            values=["☀️ ATO", "🌙 ATC"],
+            width=104,
+            height=26,
+            font=("Roboto", 11, "bold"),
+            fg_color="#00838F",
+            button_color="#006064",
+            command=app.on_schedule_session_change,
+        )
+        app.cbo_schedule_session.set("☀️ ATO")
+        app.cbo_schedule_session.pack(fill="x", padx=4, pady=4)
+    else:
+        # Kiểu lệnh cũ: NORMAL (liên tục) | ATO (mở cửa) | ATC (đóng cửa).
+        app.cbo_trade_mode = ctk.CTkOptionMenu(
+            app.frame_trade_mode,
+            values=["NORMAL", "ATO", "ATC"],
+            variable=app.var_manual_trade_mode,
+            width=98,
+            height=24,
+            font=("Roboto", 10, "bold"),
+            fg_color="#00838F",
+            button_color="#006064",
+            command=app.on_manual_trade_mode_change,
+        )
+        app.cbo_trade_mode.pack(fill="x", padx=4, pady=4)
 
     app.lbl_dashboard_price = ctk.CTkLabel(
-        f_price_row, text="----.--", font=FONT_PRICE, text_color="white"
+        f_price_row, text="----.--", font=("Roboto", 30, "bold"), text_color="white"
     )
-    app.lbl_dashboard_price.grid(row=0, column=1, sticky="ew")
+    app.lbl_dashboard_price.grid(row=0, column=1, sticky="ew", padx=(0, 0))
+    # [GỘP NÚT] Tick "Thị trường" nằm dưới giá, đúng bố cục cũ: trái ATO, giữa giá, phải BUY/SELL.
+    if _unified:
+        app.chk_market_order = ctk.CTkCheckBox(
+            f_price_row,
+            text="Thị trường",
+            variable=app.var_manual_market,
+            font=("Roboto", 10, "bold"),
+            checkbox_width=16,
+            checkbox_height=16,
+            command=app.refresh_limit_order_hint,
+        )
+        app.chk_market_order.grid(row=1, column=1, pady=(0, 0))
 
     app.frame_direction = ctk.CTkFrame(f_price_row, fg_color="#424242", corner_radius=6)
-    app.frame_direction.grid(row=0, column=2, sticky="e", padx=(8, 0))
+    app.frame_direction.grid(row=0, column=2, sticky="ne", padx=(8, 0))
     app.btn_dir_buy = ctk.CTkButton(
         app.frame_direction,
         text="BUY",
@@ -478,7 +511,7 @@ def setup_left_panel(app, parent):
         hover_color="#009624",
         command=lambda: app.on_direction_change("BUY"),
     )
-    app.btn_dir_buy.pack(fill="x", padx=4, pady=(4, 1))
+    app.btn_dir_buy.pack(fill="x", padx=4, pady=(3, 1))
     app.btn_dir_sell = ctk.CTkButton(
         app.frame_direction,
         text="SELL",
@@ -489,17 +522,31 @@ def setup_left_panel(app, parent):
         hover_color="#616161",
         command=lambda: app.on_direction_change("SELL"),
     )
-    app.btn_dir_sell.pack(fill="x", padx=4, pady=(1, 4))
+    app.btn_dir_sell.pack(fill="x", padx=4, pady=(1, 3))
+
+    # Dòng trạng thái/hẹn lệnh màu vàng đặt sát hàng điều khiển để panel bớt trống.
+    app.lbl_order_status = ctk.CTkLabel(
+        f_dashboard,
+        text="",
+        font=("Roboto", 11, "bold"),
+        text_color="#FFD54F",
+        anchor="center",
+        justify="center",
+    )
+    if _unified:
+        app.lbl_order_status.pack(fill="x", padx=10, pady=(0, 0))
 
     # Trần/Tham chiếu/Sàn (1 dòng nhỏ). Cổ phiếu HOSE ±7%; phái sinh VN30F cũng có biên.
+    # Trần/Tham chiếu/Sàn của ngày — để biết khoảng giá khi đặt lệnh thị trường/ATO/ATC.
     app.lbl_band_info = ctk.CTkLabel(
-        f_dashboard, text="", font=("Consolas", 10), text_color="#9E9E9E"
+        f_dashboard, text="", font=("Consolas", 11, "bold"), text_color="#FFCC80"
     )
-    app.lbl_band_info.pack(fill="x", padx=8, pady=(0, 2))
+    # Chỉ pack khi main.py có dữ liệu trần/tham chiếu/sàn; tránh giữ khoảng đen khi rỗng.
+    app.lbl_band_info_pack_options = {"fill": "x", "padx": 8, "pady": (0, 1)}
 
     ctk.CTkFrame(f_dashboard, height=1, fg_color="#444").pack(fill="x", padx=5)
     f_grid_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
-    f_grid_db.pack(fill="x", padx=5, pady=3)
+    f_grid_db.pack(fill="x", padx=5, pady=1)
     f_grid_db.columnconfigure((0, 1), weight=1)
 
     f_rew = ctk.CTkFrame(f_grid_db, fg_color="transparent")
@@ -509,11 +556,11 @@ def setup_left_panel(app, parent):
     )
     app.lbl_head_tp.pack()
     app.lbl_prev_tp = ctk.CTkLabel(
-        f_rew, text="---", font=("Consolas", 14), text_color=COL_GREEN
+        f_rew, text="---", font=("Consolas", 13), text_color=COL_GREEN
     )
     app.lbl_prev_tp.pack()
     app.lbl_prev_rew = ctk.CTkLabel(
-        f_rew, text="+0", font=FONT_BIG_VAL, text_color=COL_GREEN
+        f_rew, text="+0", font=("Consolas", 15, "bold"), text_color=COL_GREEN
     )
     app.lbl_prev_rew.pack()
 
@@ -524,11 +571,11 @@ def setup_left_panel(app, parent):
     )
     app.lbl_head_sl.pack()
     app.lbl_prev_sl = ctk.CTkLabel(
-        f_risk, text="---", font=("Consolas", 14), text_color=COL_RED
+        f_risk, text="---", font=("Consolas", 13), text_color=COL_RED
     )
     app.lbl_prev_sl.pack()
     app.lbl_prev_risk = ctk.CTkLabel(
-        f_risk, text="-0", font=FONT_BIG_VAL, text_color=COL_RED
+        f_risk, text="-0", font=("Consolas", 15, "bold"), text_color=COL_RED
     )
     app.lbl_prev_risk.pack()
 
@@ -583,7 +630,7 @@ def setup_left_panel(app, parent):
 
     # 6. SYSTEM HEALTH
     f_sys = ctk.CTkFrame(parent, fg_color="#1a1a1a")
-    f_sys.pack(fill="x", padx=5, pady=(5, 20))
+    f_sys.pack(fill="x", padx=5, pady=(5, 6))
     ctk.CTkLabel(
         f_sys, text=" SYSTEM HEALTH", font=("Roboto", 11, "bold"), text_color="white"
     ).pack(anchor="w", padx=5, pady=(5, 0))
@@ -596,6 +643,48 @@ def setup_left_panel(app, parent):
         )
         l.pack(fill="x", padx=10)
         app.check_labels[name] = l
+
+
+def setup_portfolio_tree(app, parent):
+    """Bảng Danh mục cổ phiếu cơ sở (CKCS) — read-only (Phase 1).
+
+    Mỗi mã 1 dòng: KL sở hữu / KL bán được (đã về T+2) / chờ về / giá vốn /
+    giá hiện tại / giá trị / lãi-lỗ. Mã lô lẻ được tô màu + ghi chú.
+    Dữ liệu nạp ở main.update_portfolio_table().
+    """
+    f_port = ctk.CTkFrame(parent, fg_color="#2b2b2b")
+    f_port.pack(fill="both", expand=True)
+
+    cols = (
+        "Symbol", "Qty", "Sellable", "Pending",
+        "AvgCost", "Price", "Value", "PnL", "Note",
+    )
+    app.tree_portfolio = ttk.Treeview(
+        f_port, columns=cols, show="headings", style="Treeview", selectmode="browse",
+    )
+    app.tree_portfolio.tag_configure("odd_lot", background="#5c3a17", foreground="#FFD7A0")
+    app.tree_portfolio.tag_configure("profit_row", background="#234d20", foreground="#e0e0e0")
+    app.tree_portfolio.tag_configure("loss_row", background="#5c1a1b", foreground="#e0e0e0")
+    app.tree_portfolio.tag_configure("flat_row", background="#2b2b2b", foreground="#e0e0e0")
+
+    headers = [
+        "Mã", "KL sở hữu", "KL bán được", "Chờ về",
+        "Giá vốn", "Giá hiện tại", "Giá trị", "Lãi/Lỗ (%)", "Ghi chú",
+    ]
+    widths = [160, 200, 220, 160, 220, 220, 320, 360, 420]
+    anchors = ["center", "e", "e", "e", "e", "e", "e", "e", "w"]
+    for c, h, w, a in zip(cols, headers, widths, anchors):
+        app.tree_portfolio.heading(c, text=h)
+        app.tree_portfolio.column(c, width=w, anchor=a, minwidth=w, stretch=False)
+
+    sb = ttk.Scrollbar(f_port, orient="vertical", command=app.tree_portfolio.yview)
+    sb_x = ttk.Scrollbar(f_port, orient="horizontal", command=app.tree_portfolio.xview)
+    app.tree_portfolio.configure(yscrollcommand=sb.set, xscrollcommand=sb_x.set)
+    app.tree_portfolio.grid(row=0, column=0, sticky="nsew")
+    sb.grid(row=0, column=1, sticky="ns")
+    sb_x.grid(row=1, column=0, sticky="ew")
+    f_port.grid_rowconfigure(0, weight=1)
+    f_port.grid_columnconfigure(0, weight=1)
 
 
 def setup_right_panel(app, parent):
@@ -616,6 +705,15 @@ def setup_right_panel(app, parent):
         command=app.show_history_popup,
         fg_color="#444",
     ).pack(side="right")
+    ctk.CTkButton(
+        f_head,
+        text="📊 Danh mục CP",
+        width=130,
+        height=24,
+        command=app.open_portfolio_popup,
+        fg_color=COL_SETTING,
+        hover_color=COL_SETTING_HOVER,
+    ).pack(side="right", padx=5)
     ctk.CTkButton(
         f_head,
         text="Đóng hết",

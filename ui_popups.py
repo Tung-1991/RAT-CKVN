@@ -4165,4 +4165,69 @@ def open_minibrain_popup(app, title, mb_cfg, on_save_callback):
     ).pack(pady=10)
 
 
+def open_portfolio_popup(app):
+    """Cửa sổ Danh mục cổ phiếu nắm giữ (CKCS) — read-only.
+
+    Liệt kê mọi mã đang giữ (gộp lô cùng mã), sắp theo giá trị giảm dần, kèm
+    tách Tổng / Tiền mặt / Giá trị cổ phiếu. Dữ liệu nạp ở app.update_portfolio_table().
+    """
+    import ui_panels
+
+    existing = getattr(app, "portfolio_popup", None)
+    if existing is not None:
+        try:
+            if existing.winfo_exists():
+                _bring_popup_to_front(existing)
+                app.update_portfolio_table()
+                return
+        except Exception:
+            pass
+
+    top = ctk.CTkToplevel(app)
+    top.title("Danh mục cổ phiếu nắm giữ")
+    top.geometry("1500x620")
+    top.minsize(1100, 420)
+    _bring_popup_to_front(top)
+    app.portfolio_popup = top
+
+    # Thanh tách tài sản: Tổng · Tiền mặt · Giá trị CP
+    f_sum = ctk.CTkFrame(top, fg_color="#1a1a1a", corner_radius=8)
+    f_sum.pack(fill="x", padx=8, pady=(8, 4))
+    app.lbl_port_total = ctk.CTkLabel(
+        f_sum, text="Tổng tài sản: --", font=("Roboto", 16, "bold"), text_color="#00C853",
+    )
+    app.lbl_port_total.pack(side="left", padx=12, pady=8)
+    app.lbl_port_cash = ctk.CTkLabel(
+        f_sum, text="Tiền: --", font=("Roboto", 14, "bold"), text_color="#90CAF9",
+    )
+    app.lbl_port_cash.pack(side="left", padx=12)
+    app.lbl_port_stock = ctk.CTkLabel(
+        f_sum, text="Cổ phiếu: --", font=("Roboto", 14, "bold"), text_color="#FFCC80",
+    )
+    app.lbl_port_stock.pack(side="left", padx=12)
+    ctk.CTkButton(
+        f_sum, text="⟳ Làm mới", width=100, height=26,
+        command=app.update_portfolio_table,
+    ).pack(side="right", padx=10)
+
+    # Bảng danh mục (dựng lại app.tree_portfolio trong cửa sổ này)
+    body = ctk.CTkFrame(top, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+    ui_panels.setup_portfolio_tree(app, body)
+
+    def _on_close():
+        app.portfolio_popup = None
+        app.tree_portfolio = None
+        app.lbl_port_total = None
+        app.lbl_port_cash = None
+        app.lbl_port_stock = None
+        try:
+            top.destroy()
+        except Exception:
+            pass
+
+    top.protocol("WM_DELETE_WINDOW", _on_close)
+    app.update_portfolio_table()
+
+
 

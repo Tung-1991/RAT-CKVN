@@ -114,6 +114,10 @@ class BotUI(ctk.CTk):
         )
         self.var_direction = tk.StringVar(value="BUY")
         self.var_manual_trade_mode = tk.StringVar(value="NORMAL")
+        # Tick "Thị trường" cho nút gộp: True -> lệnh thị trường, False -> LO.
+        self.var_manual_market = tk.BooleanVar(value=False)
+        # Phiên đấu giá để HẸN khi đặt ngoài giờ: ATO (mở cửa) | ATC (đóng cửa).
+        self.var_manual_schedule_session = tk.StringVar(value="ATO")
         self.var_preview_trade_after_apply = tk.BooleanVar(value=False)
 
         self.tactic_states = {
@@ -785,6 +789,12 @@ class BotUI(ctk.CTk):
 
     def refresh_limit_order_hint(self):
         label = getattr(self, "lbl_limit_order_hint", None)
+        # Nút gộp: dùng dòng trạng thái mới (dưới nút) -> ẩn hint cũ để khỏi trùng.
+        if bool(getattr(config, "UNIFIED_ORDER_BUTTON", True)):
+            if label:
+                label.configure(text="")
+            self.refresh_order_status()
+            return
         if not label:
             return
         try:
@@ -811,6 +821,87 @@ class BotUI(ctk.CTk):
             label.configure(text=text, text_color=color)
         except Exception:
             label.configure(text="LO -> OPEN | blank -> ATO", text_color="#B0BEC5")
+        # Nút gộp: cập nhật luôn dòng trạng thái mới.
+        self.refresh_order_status()
+
+    def refresh_order_status(self):
+        """Dòng trạng thái cho nút gộp: nói rõ nút sắp gửi lệnh gì theo phiên + tick."""
+        lbl = getattr(self, "lbl_order_status", None)
+        if lbl is None:
+            return
+        if not bool(getattr(config, "UNIFIED_ORDER_BUTTON", True)):
+            return
+        try:
+            from core.market_hours import market_session_phase
+            symbol = self.cbo_symbol.get()
+            phase = market_session_phase(symbol)[0]
+            market = bool(self.var_manual_market.get())
+            entry = self._safe_float(self.var_manual_entry.get() or 0.0)
+            if market:
+                if phase == "ATO":
+                    text, color = "→ Thị trường: gửi ATO (đấu giá mở cửa)", "#26C6DA"
+                elif phase == "ATC":
+                    text, color = "→ Thị trường: gửi ATC (đấu giá đóng cửa)", "#26C6DA"
+                elif phase == "OPEN":
+                    text, color = "→ Thị trường: khớp ngay mọi giá", "#81C784"
+                else:
+                    sess = self.var_manual_schedule_session.get()
+                    sess_lbl = "Mở cửa (ATO) sáng" if sess == "ATO" else "Đóng cửa (ATC) chiều"
+                    text, color = f"→ Hẹn phiên {sess_lbl}", "#FFD54F"
+            else:
+                price = entry if entry > 0 else float(getattr(self, "last_price_val", 0.0) or 0.0)
+                ptxt = f"@{price:g}" if price > 0 else ""
+                if phase == "OPEN":
+                    text, color = f"→ LO {ptxt}: gửi ngay (phiên liên tục)", "#81C784"
+                elif phase in ("ATO", "ATC"):
+                    text, color = f"→ LO {ptxt}: hẹn tới phiên liên tục", "#FFD54F"
+                else:
+                    text, color = f"→ Ngoài giờ: hẹn lệnh LO {ptxt}", "#FFD54F"
+            lbl.configure(text=text, text_color=color)
+        except Exception:
+            lbl.configure(text="", text_color="#81C784")
+
+    def on_schedule_session_change(self, value):
+        """Nút gạt 'Hẹn phiên': ☀️ ATO -> ATO, 🌙 ATC -> ATC."""
+        self.var_manual_schedule_session.set("ATC" if "ATC" in str(value) else "ATO")
+        self.refresh_order_status()
+
+    def on_click_smart_order(self):
+        """Nút gộp: tự chọn LO/thị trường (theo tick) + gửi ngay/hẹn lệnh (theo phiên)."""
+        try:
+            from core.market_hours import market_session_phase
+            symbol = self.cbo_symbol.get()
+            phase = market_session_phase(symbol)[0]
+        except Exception:
+            phase = ""
+        market = bool(self.var_manual_market.get())
+
+        if market:
+            # Lệnh thị trường: bỏ giá LO.
+            self.var_manual_entry.set("")
+            if phase in ("ATO", "ATC"):
+                self.var_manual_trade_mode.set(phase)        # đang phiên đấu giá -> gửi luôn
+            elif phase == "OPEN":
+                self.var_manual_trade_mode.set("NORMAL")     # phiên liên tục -> MP
+            else:
+                # Ngoài giờ -> hẹn vào phiên đấu giá đã chọn (Mở cửa ATO / Đóng cửa ATC).
+                sess = self.var_manual_schedule_session.get()
+                self.var_manual_trade_mode.set(sess if sess in ("ATO", "ATC") else "ATO")
+        else:
+            # LO: trống giá -> điền giá đang chạy để có mức đặt cụ thể.
+            if self._safe_float(self.var_manual_entry.get() or 0.0) <= 0:
+                live = float(getattr(self, "last_price_val", 0.0) or 0.0)
+                if live > 0:
+                    self.var_manual_entry.set(f"{live:g}")
+            self.var_manual_trade_mode.set("NORMAL")
+
+        has_lo = (not market) and self._safe_float(self.var_manual_entry.get() or 0.0) > 0
+        # Gửi NGAY khi đang trong phiên giao dịch; LO chỉ gửi ngay được ở phiên liên tục (OPEN).
+        send_now = phase in ("ATO", "OPEN", "ATC") and not (has_lo and phase != "OPEN")
+        if send_now:
+            self.on_click_trade()
+        else:
+            self.on_click_schedule_order()
 
     def _preview_tf_group(self, symbol, context):
         raw = ""
@@ -2207,6 +2298,89 @@ class BotUI(ctk.CTk):
     def _fmt_money(self, value, signed=False, suffix=False):
         return format_vnd(value, signed=signed, suffix=suffix)
 
+    @staticmethod
+    def _fmt_qty(value):
+        try:
+            return f"{int(round(float(value or 0.0))):,}"
+        except (TypeError, ValueError):
+            return "0"
+
+    def open_portfolio_popup(self):
+        """Mở cửa sổ Danh mục cổ phiếu nắm giữ (CKCS)."""
+        ui_popups.open_portfolio_popup(self)
+
+    def update_portfolio_table(self, acc=None):
+        """Cập nhật tách Tổng/Tiền/Giá trị CP (luôn) + nạp bảng danh mục (khi popup mở).
+
+        Dùng get_positions() KHÔNG lọc magic (thấy cả cổ mua ngoài bot).
+        """
+        try:
+            from core import portfolio
+            positions = self.connector.get_positions()
+            account_info = acc if isinstance(acc, dict) else self.connector.get_account_info()
+            summary = portfolio.portfolio_summary(positions, account_info)
+        except Exception as exc:
+            main_logger.debug("update_portfolio_table failed: %s", exc)
+            return
+
+        assets = summary["assets"]
+
+        # 1) Tách tài sản ở header chính (luôn cập nhật, kể cả khi popup đóng)
+        if getattr(self, "lbl_cash", None) is not None:
+            self.lbl_cash.configure(text=f"Tiền: {self._fmt_money(assets['cash'])}")
+        if getattr(self, "lbl_stock_value", None) is not None:
+            self.lbl_stock_value.configure(text=f"CP: {self._fmt_money(assets['stock_value'])}")
+        # Balances cổ phiếu không trả sẵn NAV -> dùng tổng tự tính KHI đang giữ CP.
+        # Không giữ CP (paper chưa khớp / TK phái sinh) -> giữ nguyên equity của broker.
+        if assets["stock_value"] > 0 and getattr(self, "lbl_equity", None) is not None:
+            self.lbl_equity.configure(text=self._fmt_money(assets["total"]))
+
+        # 2) Tách tài sản trong popup (nếu đang mở)
+        if getattr(self, "lbl_port_total", None) is not None:
+            self.lbl_port_total.configure(text=f"Tổng tài sản: {self._fmt_money(assets['total'])}")
+        if getattr(self, "lbl_port_cash", None) is not None:
+            self.lbl_port_cash.configure(text=f"Tiền: {self._fmt_money(assets['cash'])}")
+        if getattr(self, "lbl_port_stock", None) is not None:
+            self.lbl_port_stock.configure(text=f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}")
+
+        # 3) Bảng danh mục (chỉ khi popup đang mở -> tree_portfolio tồn tại)
+        tree = getattr(self, "tree_portfolio", None)
+        if tree is None:
+            return
+        try:
+            existing = set(tree.get_children(""))
+            seen = set()
+            for h in summary["holdings"]:
+                iid = h.symbol
+                seen.add(iid)
+                values = (
+                    h.symbol,
+                    self._fmt_qty(h.quantity),
+                    self._fmt_qty(h.sellable),
+                    self._fmt_qty(h.pending) if h.pending else "—",
+                    self._fmt_money(h.avg_cost),
+                    self._fmt_money(h.market_price),
+                    self._fmt_money(h.market_value),
+                    f"{self._fmt_money(h.pnl, signed=True)} ({h.pnl_pct:+.2f}%)",
+                    h.note,
+                )
+                if h.is_odd_lot:
+                    tag = "odd_lot"
+                elif h.pnl > 0:
+                    tag = "profit_row"
+                elif h.pnl < 0:
+                    tag = "loss_row"
+                else:
+                    tag = "flat_row"
+                if iid in existing:
+                    tree.item(iid, values=values, tags=(tag,))
+                else:
+                    tree.insert("", "end", iid=iid, values=values, tags=(tag,))
+            for iid in existing - seen:
+                tree.delete(iid)
+        except Exception as exc:
+            main_logger.debug("portfolio tree render failed: %s", exc)
+
     def _is_derivative_symbol(self, symbol):
         connector = getattr(self, "connector", None)
         if connector and hasattr(connector, "market_type_for_symbol"):
@@ -2594,6 +2768,9 @@ class BotUI(ctk.CTk):
             self.lbl_acc_info.configure(
                 text=f"ID: {acc['login']}  ·  {acc['server']}"
             )
+        # Danh mục CKCS + tách Tiền/CP/Tổng (read-only). Đặt sau khi set equity để
+        # ghi đè bằng tổng tự tính (balances cổ phiếu không trả sẵn NAV).
+        self.update_portfolio_table(acc)
         base_pnl = float(state.get("pnl_today", 0.0) or 0.0)
         pnl = base_pnl
         self.lbl_stats.configure(
@@ -4263,8 +4440,14 @@ class BotUI(ctk.CTk):
                 "Huy hen lenh", f"Huy lenh hen {item.get('symbol')} #{order_id[:8]}?", parent=self
             ):
                 return
+            # Huỷ + xoá khỏi bảng trong 1 lần bấm (trước đây phải bấm 2 lần: huỷ rồi mới xoá).
             pending_orders.cancel(order_id)
-            self.log_message(f"[PENDING] Cancelled local order {order_id[:8]}", target="manual")
+            pending_orders.delete_final(order_id)
+            try:
+                self.tree.delete(row_id)
+            except Exception:
+                pass
+            self.log_message(f"[PENDING] Cancelled + removed local order {order_id[:8]}", target="manual")
             return
 
         if row_id.startswith("ORDER:"):
