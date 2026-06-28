@@ -40,6 +40,7 @@ class HoldingRow:
     pnl: float               # market_value - cost_value
     pnl_pct: float           # pnl / cost_value * 100
     is_odd_lot: bool         # status == ODD_LOT hoặc KL không chia hết lô
+    odd_quantity: float = 0.0  # phần KL lẻ "kẹt" (= KL % lô) — bán qua app DNSE
     note: str = ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -86,6 +87,27 @@ def _is_odd_lot(quantity: float, status: Any) -> bool:
     return int(round(quantity)) % lot != 0
 
 
+def _odd_quantity(quantity: float, status: Any) -> float:
+    """Phần KL lẻ 'kẹt' (không tạo nổi 1 lô chẵn). VD lô 100: 150->50, 30->30, 200->0.
+
+    Nếu DNSE đánh status=ODD_LOT mà KL vẫn chia hết lô thì coi cả KL là lẻ.
+    """
+    lot = stock_rules._round_lot()
+    if lot <= 0:
+        return 0.0
+    remainder = float(int(round(quantity)) % lot)
+    if remainder == 0.0 and str(status or "").upper() == "ODD_LOT":
+        return float(quantity)
+    return remainder
+
+
+def _odd_note(odd_quantity: float) -> str:
+    q = int(round(odd_quantity or 0.0))
+    if q > 0:
+        return f"Lô lẻ {q:,} cp — bán qua app DNSE"
+    return ODD_LOT_NOTE
+
+
 def build_holding(position: Any) -> Optional[HoldingRow]:
     """Dựng 1 HoldingRow từ 1 position CKCS; trả None nếu không phải CKCS / KL<=0."""
     symbol = _symbol_of(position)
@@ -112,6 +134,7 @@ def build_holding(position: Any) -> Optional[HoldingRow]:
     pnl_pct = (pnl / cost_value * 100.0) if cost_value else 0.0
 
     odd = _is_odd_lot(quantity, raw.get("status"))
+    odd_qty = _odd_quantity(quantity, raw.get("status")) if odd else 0.0
     return HoldingRow(
         symbol=symbol,
         quantity=quantity,
@@ -124,7 +147,8 @@ def build_holding(position: Any) -> Optional[HoldingRow]:
         pnl=pnl,
         pnl_pct=pnl_pct,
         is_odd_lot=odd,
-        note=ODD_LOT_NOTE if odd else "",
+        odd_quantity=odd_qty,
+        note=_odd_note(odd_qty) if odd else "",
         raw=raw,
     )
 
@@ -143,6 +167,7 @@ def _merge_rows(rows: List[HoldingRow]) -> HoldingRow:
     pnl_pct = (pnl / cost_value * 100.0) if cost_value else 0.0
     # Lô lẻ nếu bất kỳ lô nào là ODD_LOT, hoặc TỔNG KL không chia hết lô.
     odd = any(r.is_odd_lot for r in rows) or _is_odd_lot(quantity, None)
+    odd_qty = _odd_quantity(quantity, "ODD_LOT" if odd else None) if odd else 0.0
     return HoldingRow(
         symbol=symbol,
         quantity=quantity,
@@ -155,7 +180,8 @@ def _merge_rows(rows: List[HoldingRow]) -> HoldingRow:
         pnl=pnl,
         pnl_pct=pnl_pct,
         is_odd_lot=odd,
-        note=ODD_LOT_NOTE if odd else "",
+        odd_quantity=odd_qty,
+        note=_odd_note(odd_qty) if odd else "",
         raw={"lots": [r.raw for r in rows]},
     )
 
@@ -178,6 +204,16 @@ def build_holdings(positions: Iterable[Any]) -> List[HoldingRow]:
 
 def total_stock_value(holdings: Iterable[HoldingRow]) -> float:
     return sum(h.market_value for h in holdings or [])
+
+
+def odd_lot_value(holdings: Iterable[HoldingRow]) -> float:
+    """Tổng GIÁ TRỊ phần KL lô lẻ 'kẹt' (= odd_quantity * giá TT) — cần ra app DNSE bán."""
+    return sum((h.odd_quantity or 0.0) * (h.market_price or 0.0) for h in holdings or [])
+
+
+def odd_lot_count(holdings: Iterable[HoldingRow]) -> int:
+    """Số mã đang có lô lẻ."""
+    return sum(1 for h in holdings or [] if (h.odd_quantity or 0.0) > 0)
 
 
 def extract_stock_cash(account_info: Any) -> float:
@@ -222,4 +258,7 @@ def portfolio_summary(positions: Iterable[Any], account_info: Any) -> Dict[str, 
     stock_value = total_stock_value(holdings)
     stock_cash = extract_stock_cash(account_info)
     assets = split_assets(stock_cash, stock_value)
+    # Tổng riêng phần lô lẻ (đã nằm trong stock_value, tách ra để hiển thị).
+    assets["odd_lot_value"] = odd_lot_value(holdings)
+    assets["odd_lot_count"] = odd_lot_count(holdings)
     return {"holdings": holdings, "assets": assets}

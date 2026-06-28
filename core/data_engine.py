@@ -194,6 +194,17 @@ class DataEngine:
 
         cache_ttl = float(getattr(config, "DNSE_OHLC_CACHE_TTL_SECONDS", 30.0) or 0.0)
         effective_cache_ttl = max(cache_ttl, float(seconds_per_bar))
+        # [24/7] Ngoài giờ giao dịch OHLC không đổi -> đóng băng cache để khỏi gọi API liên tục.
+        market_open = True
+        try:
+            from core.market_hours import is_symbol_trade_window_open
+            market_open = bool(is_symbol_trade_window_open(symbol)[0])
+        except Exception:
+            market_open = True
+        if not market_open:
+            closed_ttl = float(getattr(config, "DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS", 1800.0) or 0.0)
+            if closed_ttl > 0:
+                effective_cache_ttl = max(effective_cache_ttl, closed_ttl)
         inds_key = tuple(sorted(
             (
                 str(k),
@@ -204,7 +215,8 @@ class DataEngine:
             for k, v in (inds_config or {}).items()
             if isinstance(v, dict)
         ))
-        cache_bucket = int(to_ts / max(1, seconds_per_bar))
+        # Ngoài giờ: bucket cố định để cùng 1 key được dùng lại (cache đóng băng).
+        cache_bucket = -1 if not market_open else int(to_ts / max(1, seconds_per_bar))
         try:
             market_type = dnse_api.market_type_for_symbol(symbol)
         except Exception:

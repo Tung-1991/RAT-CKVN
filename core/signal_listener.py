@@ -73,6 +73,16 @@ class SignalListener:
         self.last_bot_log_time = {}
         self.last_telegram_signal_proposal_action = {}
 
+    def _auto_trade_for(self, symbol) -> bool:
+        """Cờ bật-bot theo nhóm mã. Tương thích ngược:
+        - callback mới: get_auto_trade(symbol) -> bool (gate riêng CKPS / CKCS)
+        - callback cũ:  get_auto_trade()       -> bool (1 cờ tổng)
+        """
+        try:
+            return bool(self.get_auto_trade(symbol))
+        except TypeError:
+            return bool(self.get_auto_trade())
+
     def start(self):
         if not self.running:
             self._prime_existing_signals()
@@ -372,7 +382,7 @@ class SignalListener:
             self._save_telegram_signal_phase(symbol, "")
             return
 
-        if not self.get_auto_trade():
+        if not self._auto_trade_for(symbol):
             try:
                 from telegram_notify.signal_bridge import maybe_send_signal_proposal
 

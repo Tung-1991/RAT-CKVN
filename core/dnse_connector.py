@@ -371,29 +371,43 @@ class DNSEConnector:
     ) -> Tuple[bool, Any, int, str]:
         if not self.is_connected and not self.connect():
             return False, None, 0, "NOT_CONNECTED"
+        max_429_retries = int(getattr(config, "DNSE_RATE_LIMIT_RETRIES", 1) or 0)
+        attempt = 0
         try:
-            self._rate_limit()
-            headers = self._build_headers(method, path, require_trading_token=require_trading_token)
-            started = time.perf_counter()
-            response = self.session.request(
-                method.upper(),
-                f"{self.base_url}{path}",
-                params=params,
-                json=json_payload,
-                headers=headers,
-                timeout=timeout,
-            )
-            self.last_latency_ms = (time.perf_counter() - started) * 1000.0
-            try:
-                data = response.json()
-            except ValueError:
-                data = {"text": response.text}
-            if 200 <= response.status_code < 300:
-                self._record_api_request(method, path, response.status_code, self.last_latency_ms)
-                return True, data, response.status_code, ""
-            message = data.get("message") if isinstance(data, dict) else str(data)
-            self._record_api_request(method, path, response.status_code, self.last_latency_ms, message or response.text)
-            return False, data, response.status_code, message or response.text
+            while True:
+                self._rate_limit()
+                headers = self._build_headers(method, path, require_trading_token=require_trading_token)
+                started = time.perf_counter()
+                response = self.session.request(
+                    method.upper(),
+                    f"{self.base_url}{path}",
+                    params=params,
+                    json=json_payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
+                self.last_latency_ms = (time.perf_counter() - started) * 1000.0
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {"text": response.text}
+                if 200 <= response.status_code < 300:
+                    self._record_api_request(method, path, response.status_code, self.last_latency_ms)
+                    return True, data, response.status_code, ""
+                # [24/7] Dính rate-limit (429): chờ theo Retry-After rồi thử lại tối đa N lần.
+                if response.status_code == 429 and attempt < max_429_retries:
+                    attempt += 1
+                    try:
+                        wait_s = float(response.headers.get("Retry-After", "") or 0.0)
+                    except (TypeError, ValueError):
+                        wait_s = 0.0
+                    wait_s = wait_s if wait_s > 0 else min(30.0, 2.0 ** attempt)
+                    logger.warning("DNSE %s %s rate-limited (429). Backoff %.1fs (lần %d).", method.upper(), path, wait_s, attempt)
+                    time.sleep(wait_s)
+                    continue
+                message = data.get("message") if isinstance(data, dict) else str(data)
+                self._record_api_request(method, path, response.status_code, self.last_latency_ms, message or response.text)
+                return False, data, response.status_code, message or response.text
         except Exception as exc:
             self._record_api_request(method, path, 0, 0.0, str(exc))
             logger.error("DNSE %s %s failed: %s", method.upper(), path, exc)

@@ -95,7 +95,10 @@ class BotUI(ctk.CTk):
         self.title("RAT6 CKVN - Master Control (Kaiser Edition)")
         self.geometry("1650x950")
 
-        self.var_auto_trade = tk.BooleanVar(value=False)
+        self.var_auto_trade = tk.BooleanVar(value=False)  # Cờ TỔNG (legacy) = OR(CKPS, CKCS)
+        # [2-BOT] Tách công tắc riêng: Phái sinh (VN30F/CKPS) và Cơ sở (CKCS).
+        self.var_bot_ckps = tk.BooleanVar(value=False)
+        self.var_bot_ckcs = tk.BooleanVar(value=False)
         self.var_assist_math_sl = tk.BooleanVar(value=False)
         self.var_assist_preset_tp = tk.BooleanVar(value=False)
         self.var_assist_dca = tk.BooleanVar(value=False)
@@ -118,6 +121,9 @@ class BotUI(ctk.CTk):
         self.var_manual_market = tk.BooleanVar(value=False)
         # Phiên đấu giá để HẸN khi đặt ngoài giờ: ATO (mở cửa) | ATC (đóng cửa).
         self.var_manual_schedule_session = tk.StringVar(value="ATO")
+        # [ORDER MODE 24/7] Chọn tay kiểu lệnh: NORMAL (liên tục) | ATO | ATC.
+        self.var_manual_order_mode = tk.StringVar(value="NORMAL")
+        self._auction_price_cache = {}  # {symbol: {"ts":.., "ato":.., "atc":..}}
         self.var_preview_trade_after_apply = tk.BooleanVar(value=False)
 
         self.tactic_states = {
@@ -246,7 +252,7 @@ class BotUI(ctk.CTk):
 
         self.signal_listener = SignalListener(
             trade_manager=self.trade_mgr,
-            get_auto_trade_cb=lambda: self.var_auto_trade.get(),
+            get_auto_trade_cb=lambda symbol=None: self._bot_enabled_for(symbol),
             get_preset_cb=lambda: getattr(config, "DEFAULT_PRESET", "SCALPING"),
             get_tsl_mode_cb=self.get_current_tactic_string,
             ui_heartbeat_cb=self.update_brain_heartbeat,
@@ -443,49 +449,101 @@ class BotUI(ctk.CTk):
             except Exception:
                 pass
 
+    def _bot_enabled_for(self, symbol=None):
+        """Cờ bật-bot theo nhóm mã. symbol=None -> cờ tổng (legacy)."""
+        if symbol:
+            from core import settlement
+            if settlement.is_cash_stock(symbol):
+                return bool(self.var_bot_ckcs.get())
+            return bool(self.var_bot_ckps.get())
+        return bool(self.var_auto_trade.get())
+
+    def _ensure_trading_otp(self):
+        """Hỏi & xác thực OTP DNSE (token 8h). True nếu OK / đã có token."""
+        import customtkinter
+        import os
+        from core.data_engine import dnse_api
+        dialog = customtkinter.CTkInputDialog(
+            text="Nhập mã OTP của DNSE (Trading Token có hiệu lực 8 tiếng):",
+            title="Xác thực OTP",
+        )
+        otp_code = dialog.get_input()
+        if not otp_code:
+            self.log_message("⚠ Đã huỷ nhập OTP. Bot chưa được bật.", target="bot", error=True)
+            return False
+        otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
+        if not dnse_api.verify_otp(otp_type, otp_code):
+            self.log_message("❌ Xác thực OTP DNSE thất bại. Không thể bật Bot.", target="bot", error=True)
+            return False
+        return True
+
+    def _refresh_bot_lights(self):
+        """Đồng bộ màu 2 đèn nhóm + đèn tổng (legacy) theo cờ hiện tại."""
+        ckps_on = bool(self.var_bot_ckps.get())
+        ckcs_on = bool(self.var_bot_ckcs.get())
+        for attr, on in (("ind_light_ckps", ckps_on), ("ind_light_ckcs", ckcs_on),
+                         ("ind_auto_light", ckps_on or ckcs_on)):
+            w = getattr(self, attr, None)
+            try:
+                if w is not None and w.winfo_exists():
+                    w.configure(fg_color=COL_GREEN if on else COL_RED)
+            except Exception:
+                pass
+
+    def _sync_bot_master_state(self):
+        """Master = OR(CKPS, CKCS); lưu live config + refresh đèn."""
+        master = bool(self.var_bot_ckps.get() or self.var_bot_ckcs.get())
+        self.var_auto_trade.set(master)
+        config.AUTO_TRADE_ENABLED = master
+        self._save_brain_live_config()
+        self._refresh_bot_lights()
+
+    def on_bot_group_toggle(self, group):
+        """Bật/tắt riêng 1 nhóm bot. group = 'CKPS' | 'CKCS'."""
+        group = str(group).upper()
+        var = self.var_bot_ckcs if group == "CKCS" else self.var_bot_ckps
+        other = self.var_bot_ckps if group == "CKCS" else self.var_bot_ckcs
+        label = "CƠ SỞ (CKCS)" if group == "CKCS" else "PHÁI SINH"
+        if var.get():
+            # Bật: chỉ hỏi OTP nếu chưa nhóm nào chạy (token chưa có).
+            if not other.get() and not self._ensure_trading_otp():
+                var.set(False)
+                return
+            self._sync_bot_master_state()
+            self.log_message(f"🤖 BOT {label} ĐÃ BẬT. Bot sẽ tự bắn lệnh nhóm này.", target="bot")
+        else:
+            self._sync_bot_master_state()
+            self.log_message(f"🛑 BOT {label} TẮT.", target="bot")
+
     def on_auto_trade_toggle(self):
+        """Công tắc TỔNG (legacy): bật/tắt cả 2 nhóm cùng lúc."""
         if self.var_auto_trade.get():
-            import customtkinter
-            dialog = customtkinter.CTkInputDialog(text="Nhập mã OTP của DNSE (Trading Token có hiệu lực 8 tiếng):", title="Xác thực OTP")
-            otp_code = dialog.get_input()
-            
-            if otp_code:
-                from core.data_engine import dnse_api
-                import os
-                otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
-                success = dnse_api.verify_otp(otp_type, otp_code)
-                if not success:
-                    self.log_message("❌ Xác thực OTP DNSE thất bại. Không thể bật Bot.", target="bot", error=True)
+            if not (self.var_bot_ckps.get() or self.var_bot_ckcs.get()):
+                if not self._ensure_trading_otp():
                     self.var_auto_trade.set(False)
                     return
-            else:
-                self.log_message("⚠ Đã huỷ nhập OTP. Bot chưa được bật.", target="bot", error=True)
-                self.var_auto_trade.set(False)
-                return
-                
-        config.AUTO_TRADE_ENABLED = self.var_auto_trade.get()
-        self._save_brain_live_config()
-
-        if self.var_auto_trade.get():
-            self.ind_auto_light.configure(fg_color="#4CAF50")
-            self.log_message(
-                "🤖 AUTO-TRADE DAEMON ĐÃ BẬT. Bot sẽ tự động bắn lệnh.", target="bot"
-            )
+            self.var_bot_ckps.set(True)
+            self.var_bot_ckcs.set(True)
+            config.AUTO_TRADE_ENABLED = True
+            self._save_brain_live_config()
+            self._refresh_bot_lights()
+            self.log_message("🤖 AUTO-TRADE DAEMON ĐÃ BẬT (cả 2 nhóm). Bot sẽ tự động bắn lệnh.", target="bot")
         else:
-            self.ind_auto_light.configure(fg_color="#F44336")
-            self.log_message(
-                "🛑 AUTO-TRADE DAEMON TẮT. Chuyển về chế độ bằng tay.",
-                target="bot",
-            )
+            self.var_bot_ckps.set(False)
+            self.var_bot_ckcs.set(False)
+            config.AUTO_TRADE_ENABLED = False
+            self._save_brain_live_config()
+            self._refresh_bot_lights()
+            self.log_message("🛑 AUTO-TRADE DAEMON TẮT (cả 2 nhóm). Chuyển về chế độ bằng tay.", target="bot")
 
     def set_auto_trade_enabled(self, enabled, reason=""):
         enabled = bool(enabled)
         self.var_auto_trade.set(enabled)
+        self.var_bot_ckps.set(enabled)
+        self.var_bot_ckcs.set(enabled)
         config.AUTO_TRADE_ENABLED = enabled
         self._save_brain_live_config()
-
-        if hasattr(self, "ind_auto_light") and self.ind_auto_light.winfo_exists():
-            self.ind_auto_light.configure(fg_color=COL_GREEN if enabled else COL_RED)
+        self._refresh_bot_lights()
 
         if enabled:
             self.log_message("AUTO-TRADE DAEMON ON. Bot can open new trades.", target="bot")
@@ -836,38 +894,54 @@ class BotUI(ctk.CTk):
             symbol = self.cbo_symbol.get()
             phase = market_session_phase(symbol)[0]
             market = bool(self.var_manual_market.get())
+            mode = self.var_manual_order_mode.get() if hasattr(self, "var_manual_order_mode") else "NORMAL"
             entry = self._safe_float(self.var_manual_entry.get() or 0.0)
-            if market:
-                if phase == "ATO":
-                    text, color = "→ Thị trường: gửi ATO (đấu giá mở cửa)", "#26C6DA"
-                elif phase == "ATC":
-                    text, color = "→ Thị trường: gửi ATC (đấu giá đóng cửa)", "#26C6DA"
-                elif phase == "OPEN":
-                    text, color = "→ Thị trường: khớp ngay mọi giá", "#81C784"
+            if mode in ("ATO", "ATC"):
+                if phase == mode:
+                    text, color = f"→ Gửi {mode} ngay (đấu giá)", "#26C6DA"
                 else:
-                    sess = self.var_manual_schedule_session.get()
-                    sess_lbl = "Mở cửa (ATO) sáng" if sess == "ATO" else "Đóng cửa (ATC) chiều"
-                    text, color = f"→ Hẹn phiên {sess_lbl}", "#FFD54F"
+                    ref = self._last_auction_price(symbol, mode)
+                    reftxt = f" · giá {mode} gần nhất @{ref:g}" if ref > 0 else ""
+                    text, color = f"→ Hẹn {mode} (cache bot){reftxt}", "#FFD54F"
             else:
                 price = entry if entry > 0 else float(getattr(self, "last_price_val", 0.0) or 0.0)
                 ptxt = f"@{price:g}" if price > 0 else ""
-                if phase == "OPEN":
+                if market and phase == "OPEN":
+                    text, color = "→ Thị trường: khớp ngay mọi giá", "#81C784"
+                elif phase == "OPEN":
                     text, color = f"→ LO {ptxt}: gửi ngay (phiên liên tục)", "#81C784"
-                elif phase in ("ATO", "ATC"):
-                    text, color = f"→ LO {ptxt}: hẹn tới phiên liên tục", "#FFD54F"
                 else:
-                    text, color = f"→ Ngoài giờ: hẹn lệnh LO {ptxt}", "#FFD54F"
+                    text, color = f"→ NORMAL: hẹn LO {ptxt} (cache bot) tới phiên liên tục", "#FFD54F"
             lbl.configure(text=text, text_color=color)
         except Exception:
             lbl.configure(text="", text_color="#81C784")
 
     def on_schedule_session_change(self, value):
-        """Nút gạt 'Hẹn phiên': ☀️ ATO -> ATO, 🌙 ATC -> ATC."""
-        self.var_manual_schedule_session.set("ATC" if "ATC" in str(value) else "ATO")
+        """Dropdown kiểu lệnh 24/7: ⚡ NORMAL | ☀️ ATO | 🌙 ATC."""
+        v = str(value).upper()
+        mode = "ATC" if "ATC" in v else ("ATO" if "ATO" in v else "NORMAL")
+        self.var_manual_order_mode.set(mode)
+        if mode in ("ATO", "ATC"):
+            self.var_manual_schedule_session.set(mode)
         self.refresh_order_status()
 
+    def _last_auction_price(self, symbol, kind):
+        """Giá ATO/ATC gần nhất = open/close nến NGÀY gần nhất. Cache ~5 phút."""
+        try:
+            cache = self._auction_price_cache.get(symbol) or {}
+            if (time.time() - float(cache.get("ts", 0.0))) > 300.0:
+                df = data_engine._fetch_bars(symbol, "1d", 2, {})
+                if df is not None and len(df) > 0:
+                    last = df.iloc[-1]
+                    cache = {"ts": time.time(), "ato": float(last.get("open", 0.0) or 0.0),
+                             "atc": float(last.get("close", 0.0) or 0.0)}
+                    self._auction_price_cache[symbol] = cache
+            return float(cache.get("ato" if kind == "ATO" else "atc", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
     def on_click_smart_order(self):
-        """Nút gộp: tự chọn LO/thị trường (theo tick) + gửi ngay/hẹn lệnh (theo phiên)."""
+        """Nút gộp: theo kiểu lệnh đã chọn (NORMAL/ATO/ATC) -> gửi ngay hoặc hẹn (cache bot)."""
         try:
             from core.market_hours import market_session_phase
             symbol = self.cbo_symbol.get()
@@ -875,29 +949,28 @@ class BotUI(ctk.CTk):
         except Exception:
             phase = ""
         market = bool(self.var_manual_market.get())
+        mode = self.var_manual_order_mode.get() if hasattr(self, "var_manual_order_mode") else "NORMAL"
 
-        if market:
-            # Lệnh thị trường: bỏ giá LO.
+        if mode in ("ATO", "ATC"):
+            # Lệnh đấu giá: không có giá LO. Gửi ngay nếu đang đúng phiên, không thì hẹn.
             self.var_manual_entry.set("")
-            if phase in ("ATO", "ATC"):
-                self.var_manual_trade_mode.set(phase)        # đang phiên đấu giá -> gửi luôn
-            elif phase == "OPEN":
-                self.var_manual_trade_mode.set("NORMAL")     # phiên liên tục -> MP
-            else:
-                # Ngoài giờ -> hẹn vào phiên đấu giá đã chọn (Mở cửa ATO / Đóng cửa ATC).
-                sess = self.var_manual_schedule_session.get()
-                self.var_manual_trade_mode.set(sess if sess in ("ATO", "ATC") else "ATO")
+            self.var_manual_trade_mode.set(mode)
+            self.var_manual_schedule_session.set(mode)
+            send_now = (phase == mode)
         else:
-            # LO: trống giá -> điền giá đang chạy để có mức đặt cụ thể.
-            if self._safe_float(self.var_manual_entry.get() or 0.0) <= 0:
-                live = float(getattr(self, "last_price_val", 0.0) or 0.0)
-                if live > 0:
-                    self.var_manual_entry.set(f"{live:g}")
+            # NORMAL = phiên liên tục.
             self.var_manual_trade_mode.set("NORMAL")
+            if market and phase == "OPEN":
+                self.var_manual_entry.set("")            # Thị trường: khớp ngay mọi giá
+                send_now = True
+            else:
+                # LO: cần giá cụ thể (trống -> điền giá đang chạy). Ngoài giờ -> hẹn LO (cache bot).
+                if self._safe_float(self.var_manual_entry.get() or 0.0) <= 0:
+                    live = float(getattr(self, "last_price_val", 0.0) or 0.0)
+                    if live > 0:
+                        self.var_manual_entry.set(f"{live:g}")
+                send_now = (phase == "OPEN")
 
-        has_lo = (not market) and self._safe_float(self.var_manual_entry.get() or 0.0) > 0
-        # Gửi NGAY khi đang trong phiên giao dịch; LO chỉ gửi ngay được ở phiên liên tục (OPEN).
-        send_now = phase in ("ATO", "OPEN", "ATC") and not (has_lo and phase != "OPEN")
         if send_now:
             self.on_click_trade()
         else:
@@ -1228,9 +1301,11 @@ class BotUI(ctk.CTk):
                         if is_derivative
                         else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
                     )
-                    self.volume_min = 1.0
+                    # CKCS (cơ sở) bước/min = lô chẵn 100; phái sinh theo LOT_STEP.
+                    _stock_lot = float(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+                    self.volume_min = 1.0 if is_derivative else _stock_lot
                     self.volume_max = config.MAX_LOT_SIZE if is_derivative else 1000000.0
-                    self.volume_step = getattr(config, "LOT_STEP", 1.0)
+                    self.volume_step = getattr(config, "LOT_STEP", 1.0) if is_derivative else _stock_lot
                     self.point = float(getattr(config, "DNSE_PRICE_POINT", 0.1) or 0.1)
             sym_info = MockSymInfo(self._is_derivative_symbol(symbol))
 
@@ -1459,6 +1534,16 @@ class BotUI(ctk.CTk):
             lot_size = max_lot_cap
             cap_note = f" | CAP={max_lot_cap:g}"
         lot_size = self._normalize_contracts(lot_size, vol_min, vol_max) if lot_size > 0 else 0.0
+
+        # [FORCE MIN LOT] CKCS: lô tính < tối thiểu -> ép lên 1 lô chẵn nếu bật trong safeguard.
+        if lot_size <= 0 and manual_lot <= 0 and settlement.is_cash_stock(symbol):
+            try:
+                _sg = (self.trade_mgr._get_brain_settings(symbol) or {}).get("bot_safeguard", {})
+            except Exception:
+                _sg = {}
+            if _sg.get("FORCE_MIN_LOT", False):
+                lot_size = float(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+                lot_source = "FORCE_MIN_LOT"
 
         commission = self.calculate_trade_fee(symbol, price, lot_size)
         spread_cost = spread_cost_per_lot * lot_size
@@ -2342,6 +2427,11 @@ class BotUI(ctk.CTk):
             self.lbl_port_cash.configure(text=f"Tiền: {self._fmt_money(assets['cash'])}")
         if getattr(self, "lbl_port_stock", None) is not None:
             self.lbl_port_stock.configure(text=f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}")
+        if getattr(self, "lbl_port_odd", None) is not None:
+            _odd_val = assets.get("odd_lot_value", 0.0)
+            _odd_n = assets.get("odd_lot_count", 0)
+            _odd_txt = f"Lô lẻ: {self._fmt_money(_odd_val)} ({_odd_n} mã)" if _odd_n else "Lô lẻ: 0"
+            self.lbl_port_odd.configure(text=_odd_txt)
 
         # 3) Bảng danh mục (chỉ khi popup đang mở -> tree_portfolio tồn tại)
         tree = getattr(self, "tree_portfolio", None)
@@ -2808,6 +2898,9 @@ class BotUI(ctk.CTk):
                             config.AUTO_TRADE_ENABLED = False
                             if hasattr(self, "var_auto_trade"):
                                 self.var_auto_trade.set(False)
+                                self.var_bot_ckps.set(False)
+                                self.var_bot_ckcs.set(False)
+                                self._refresh_bot_lights()
                             if not getattr(self, "_token_expired_alerted", False):
                                 self.log_message("⛔ TOKEN HẾT HẠN — đã TẮT AUTO_TRADE. Nhập lại OTP để chạy tiếp.", error=True, target="bot")
                                 self._token_expired_alerted = True

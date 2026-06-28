@@ -44,3 +44,21 @@ def test_none_resets_telegram_signal_phase(monkeypatch, tmp_path):
     listener._process_signal({"signal_id": "S1", "symbol": "ETHUSD", "action": "NONE", "signal_class": "ENTRY"})
 
     assert listener._load_telegram_signal_phases() == {}
+
+
+def test_auto_trade_gate_symbol_aware():
+    """Callback symbol-aware: gate riêng theo nhóm mã (CKPS vs CKCS)."""
+    # CKPS bật, CKCS tắt: VN30F1M -> True; cổ phiếu cơ sở (FPT) -> False.
+    flags = {"VN30F1M": True, "FPT": False}
+    listener = _listener()
+    listener.get_auto_trade = lambda symbol=None: bool(flags.get(str(symbol or "").upper(), False))
+    assert listener._auto_trade_for("VN30F1M") is True
+    assert listener._auto_trade_for("FPT") is False
+
+
+def test_auto_trade_gate_legacy_noarg():
+    """Callback cũ no-arg vẫn chạy (tương thích ngược)."""
+    listener = _listener()
+    listener.get_auto_trade = lambda: True
+    assert listener._auto_trade_for("VN30F1M") is True
+    assert listener._auto_trade_for("FPT") is True

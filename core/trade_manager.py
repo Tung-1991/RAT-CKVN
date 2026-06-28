@@ -781,9 +781,20 @@ class TradeManager:
                 symbol, risk_usd, sl_price, order_type, strict_fee_per_lot
             )
 
-            # Xử lý Strict Min Lot Rejection
+            # Xử lý Strict Min Lot Rejection / Force Min Lot
+            force_min_lot = safeguard_cfg.get("FORCE_MIN_LOT", False)
             if calc_lot is None or calc_lot == 0:
-                if strict_min_lot:
+                # [FORCE MIN LOT] CKCS: vol tính < 1 lô -> ép lên 1 lô chẵn (100 CP),
+                # chấp nhận rủi ro > mục tiêu %. CHỈ áp cho cổ phiếu cơ sở (phái sinh giữ nguyên).
+                if force_min_lot and settlement.is_cash_stock(symbol):
+                    calc_lot = float(stock_rules._round_lot())
+                    if not safe_sl:
+                        safe_sl = sl_price
+                    self.log(
+                        f"[FORCE MIN LOT] {symbol}: vol tính < tối thiểu → ép lên {calc_lot:g} CP (1 lô). Rủi ro > mục tiêu %.",
+                        target="bot",
+                    )
+                elif strict_min_lot:
                     return "SAFEGUARD_FAIL|Strict Min Lot|Từ chối do Vol tính toán < Min Lot (Rủi ro cao)"
                 else:
                     return "ERR_LOT_CALC_FAILED"

@@ -1101,18 +1101,40 @@ def open_bot_setting_popup(app):
     f_auto = ctk.CTkFrame(tab_core, fg_color="transparent")
     f_auto.pack(fill="x", pady=10)
     ctk.CTkLabel(
-        f_auto, text="Tự động bóp cò khi Brain có tín hiệu:", text_color="gray"
+        f_auto, text="Tự động bóp cò khi Brain có tín hiệu (bật riêng từng nhóm):", text_color="gray"
     ).pack()
+    # [2-BOT] Hai công tắc riêng: Phái sinh (CKPS) | Cơ sở (CKCS).
+    f_grp = ctk.CTkFrame(f_auto, fg_color="transparent")
+    f_grp.pack(pady=5)
+    ctk.CTkSwitch(
+        f_grp,
+        text="BOT PHÁI SINH (VN30F)",
+        variable=app.var_bot_ckps,
+        font=("Roboto", 14, "bold"),
+        progress_color=COL_GREEN,
+        fg_color=COL_RED,
+        command=lambda: app.on_bot_group_toggle("CKPS"),
+    ).pack(side="left", padx=12)
+    ctk.CTkSwitch(
+        f_grp,
+        text="BOT CƠ SỞ (CKCS)",
+        variable=app.var_bot_ckcs,
+        font=("Roboto", 14, "bold"),
+        progress_color=COL_GREEN,
+        fg_color=COL_RED,
+        command=lambda: app.on_bot_group_toggle("CKCS"),
+    ).pack(side="left", padx=12)
+    # Công tắc TỔNG (legacy) — bật/tắt cả 2 nhóm cùng lúc.
     sw_auto = ctk.CTkSwitch(
         f_auto,
-        text="AUTO-TRADING DAEMON",
+        text="TẤT CẢ (AUTO-TRADING DAEMON)",
         variable=app.var_auto_trade,
-        font=("Roboto", 14, "bold"),
+        font=("Roboto", 12, "bold"),
         progress_color=COL_GREEN,
         fg_color=COL_RED,
         command=app.on_auto_trade_toggle,
     )
-    sw_auto.pack(pady=5)
+    sw_auto.pack(pady=(8, 5))
     ctk.CTkFrame(tab_core, height=2, fg_color="#333").pack(fill="x", padx=30, pady=5)
     # Watchlist (Đã chuyển lên đầu)
     ctk.CTkLabel(
@@ -1481,6 +1503,15 @@ def open_bot_setting_popup(app):
         variable=var_gl_reject_lot,
         font=("Roboto", 11),
     ).grid(row=2, column=2, columnspan=2, sticky="w", padx=10, pady=2)
+    # [CKCS] Ép lên 1 lô chẵn khi lô tính theo rủi ro < tối thiểu (thay vì bỏ lệnh).
+    var_force_min_lot = ctk.BooleanVar(value=safe_cfg.get("FORCE_MIN_LOT", False))
+    ctk.CTkCheckBox(
+        f_sg_content,
+        text="Ép lô tối thiểu CKCS (100 CP)",
+        variable=var_force_min_lot,
+        text_color="#FFB300",
+        font=("Roboto", 11, "bold"),
+    ).grid(row=2, column=4, columnspan=2, sticky="w", padx=10, pady=2)
 
     # --- [NEW V5.2] GLOBAL BRAKE MODE ---
     ctk.CTkLabel(f_sg_content, text="Global Brake Mode:").grid(
@@ -1669,6 +1700,7 @@ def open_bot_setting_popup(app):
                     "BOT_USE_RR_TP": var_bot_use_rr_tp.get(),
                     "BOT_TP_RR_RATIO": float(e_bot_tp_rr.get()),
                     "STRICT_MIN_LOT": var_strict_min_lot.get(),
+                    "FORCE_MIN_LOT": var_force_min_lot.get(),
                     "POST_CLOSE_COOLDOWN": int(e_post_close.get()),
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
@@ -4205,6 +4237,11 @@ def open_portfolio_popup(app):
         f_sum, text="Cổ phiếu: --", font=("Roboto", 14, "bold"), text_color="#FFCC80",
     )
     app.lbl_port_stock.pack(side="left", padx=12)
+    # Tổng riêng phần lô lẻ (cần ra app DNSE bán).
+    app.lbl_port_odd = ctk.CTkLabel(
+        f_sum, text="Lô lẻ: --", font=("Roboto", 14, "bold"), text_color="#FFD7A0",
+    )
+    app.lbl_port_odd.pack(side="left", padx=12)
     ctk.CTkButton(
         f_sum, text="⟳ Làm mới", width=100, height=26,
         command=app.update_portfolio_table,
@@ -4221,6 +4258,7 @@ def open_portfolio_popup(app):
         app.lbl_port_total = None
         app.lbl_port_cash = None
         app.lbl_port_stock = None
+        app.lbl_port_odd = None
         try:
             top.destroy()
         except Exception:

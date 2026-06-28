@@ -40,6 +40,10 @@ WEEKEND_OPEN_HOUR = 8 # Mở cửa 8:45 (tính 8)
 LOOP_SLEEP_SECONDS = 0.25
 DNSE_TICK_CACHE_TTL_SECONDS = float(os.getenv("DNSE_TICK_CACHE_TTL_SECONDS", "2.0"))
 DNSE_OHLC_CACHE_TTL_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_SECONDS", "30.0"))
+# [24/7] Ngoài giờ giao dịch: đóng băng cache OHLC lâu hơn để khỏi spam API (giây). 0 = tắt.
+DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS", "1800.0"))
+# [24/7] Số lần thử lại khi dính rate-limit 429 (backoff theo Retry-After / luỹ thừa 2). 0 = không retry.
+DNSE_RATE_LIMIT_RETRIES = int(os.getenv("DNSE_RATE_LIMIT_RETRIES", "1"))
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
 DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
 
@@ -222,6 +226,8 @@ BOT_SAFEGUARD = {
     "MAX_OPEN_POSITIONS": 3,
     "MAX_TRADES_PER_DAY": 30,
     "MAX_LOSING_STREAK": 3,
+    # [CKCS] Bật: lô CKCS tính theo rủi ro < 1 lô -> ép lên 1 lô chẵn (100 CP), chấp nhận rủi ro > mục tiêu %. Tắt = bỏ lệnh.
+    "FORCE_MIN_LOT": False,
     "LOSS_COUNT_MODE": "TOTAL",
     "COOLDOWN_MINUTES": 1,
     "NUM_H1_BARS": 100,

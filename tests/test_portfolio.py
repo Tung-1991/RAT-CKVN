@@ -61,7 +61,9 @@ def test_odd_lot_by_status(monkeypatch):
     monkeypatch.setattr(config, "STOCK_ROUND_LOT", 100)
     [row] = p.build_holdings([_pos("FPT", 100, cost=120000, market=130000, status="ODD_LOT")])
     assert row.is_odd_lot is True
-    assert row.note == p.ODD_LOT_NOTE
+    # status=ODD_LOT nhưng KL chia hết lô -> coi cả KL là lẻ.
+    assert row.odd_quantity == 100
+    assert "Lô lẻ" in row.note
 
 
 def test_odd_lot_by_non_multiple_of_lot(monkeypatch):
@@ -70,6 +72,29 @@ def test_odd_lot_by_non_multiple_of_lot(monkeypatch):
     # 37 cổ (vd cổ tức) -> lô lẻ dù status không phải ODD_LOT
     [row] = p.build_holdings([_pos("MBB", 37, cost=20000, market=21000)])
     assert row.is_odd_lot is True
+    assert row.odd_quantity == 37
+
+
+def test_odd_quantity_remainder_only(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    monkeypatch.setattr(config, "STOCK_ROUND_LOT", 100)
+    # 150 cổ = 100 lô chẵn + 50 lô lẻ -> chỉ 50 là phần kẹt.
+    [row] = p.build_holdings([_pos("SSI", 150, cost=20000, market=22000)])
+    assert row.is_odd_lot is True
+    assert row.odd_quantity == 50
+
+
+def test_odd_lot_value_subtotal(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    monkeypatch.setattr(config, "STOCK_ROUND_LOT", 100)
+    positions = [
+        _pos("SSI", 150, cost=20000, market=22000),  # lẻ 50 * 22000 = 1,100,000
+        _pos("VNM", 200, cost=60000, market=62000),  # lô chẵn -> 0
+        _pos("MBB", 30, cost=20000, market=21000),   # lẻ 30 * 21000 = 630,000
+    ]
+    summary = p.portfolio_summary(positions, {"cash_available": 0})
+    assert summary["assets"]["odd_lot_count"] == 2
+    assert summary["assets"]["odd_lot_value"] == 50 * 22000 + 30 * 21000
 
 
 def test_multiple_symbols_sorted_desc(monkeypatch):

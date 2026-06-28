@@ -273,10 +273,17 @@ def setup_left_panel(app, parent):
     setting_label(5, "BOT")
     f_bot_row = setting_row(5)
     stretch_columns(f_bot_row, (20, 112, 120))
-    app.ind_auto_light = ctk.CTkFrame(
-        f_bot_row, width=14, height=14, corner_radius=7, fg_color=COL_RED
-    )
-    app.ind_auto_light.grid(row=0, column=0, padx=(0, 6))
+    # [2-BOT] Hai đèn riêng: PS = Phái sinh (CKPS), CS = Cơ sở (CKCS).
+    f_lights = ctk.CTkFrame(f_bot_row, fg_color="transparent")
+    f_lights.grid(row=0, column=0, padx=(0, 6))
+    ctk.CTkLabel(f_lights, text="PS", font=("Roboto", 8, "bold"), text_color="gray").grid(row=0, column=0, padx=(0, 1))
+    app.ind_light_ckps = ctk.CTkFrame(f_lights, width=12, height=12, corner_radius=6, fg_color=COL_RED)
+    app.ind_light_ckps.grid(row=0, column=1, padx=(0, 5))
+    ctk.CTkLabel(f_lights, text="CS", font=("Roboto", 8, "bold"), text_color="gray").grid(row=0, column=2, padx=(0, 1))
+    app.ind_light_ckcs = ctk.CTkFrame(f_lights, width=12, height=12, corner_radius=6, fg_color=COL_RED)
+    app.ind_light_ckcs.grid(row=0, column=3)
+    # Đèn tổng (legacy) — giữ widget cho code cũ tham chiếu, không hiển thị.
+    app.ind_auto_light = ctk.CTkFrame(f_lights, width=1, height=1, corner_radius=1, fg_color=COL_RED)
     ctk.CTkButton(
         f_bot_row,
         text="\u2699 BOT",
@@ -457,7 +464,7 @@ def setup_left_panel(app, parent):
         # [GỘP NÚT] Bên trái giá: dropdown Hẹn phiên ATO/ATC, giữ layout gọn như bản cũ.
         app.cbo_schedule_session = ctk.CTkOptionMenu(
             app.frame_trade_mode,
-            values=["☀️ ATO", "🌙 ATC"],
+            values=["⚡ NORMAL", "☀️ ATO", "🌙 ATC"],
             width=104,
             height=26,
             font=("Roboto", 11, "bold"),
@@ -465,7 +472,7 @@ def setup_left_panel(app, parent):
             button_color="#006064",
             command=app.on_schedule_session_change,
         )
-        app.cbo_schedule_session.set("☀️ ATO")
+        app.cbo_schedule_session.set("⚡ NORMAL")
         app.cbo_schedule_session.pack(fill="x", padx=4, pady=4)
     else:
         # Kiểu lệnh cũ: NORMAL (liên tục) | ATO (mở cửa) | ATC (đóng cửa).
