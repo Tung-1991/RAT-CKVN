@@ -216,33 +216,49 @@ def odd_lot_count(holdings: Iterable[HoldingRow]) -> int:
     return sum(1 for h in holdings or [] if (h.odd_quantity or 0.0) > 0)
 
 
-def extract_stock_cash(account_info: Any) -> float:
-    """Bóc tiền mặt phần cổ phiếu từ get_account_info()/balances.
-
-    Chấp nhận: dict get_account_info (có ['raw']['stock']), dict balances thô
-    (có key 'stock'), hoặc trực tiếp khối 'stock'. Ưu tiên availableCash, fallback totalCash.
-    """
+def _stock_block(account_info: Any):
+    """Tìm khối 'stock' trong account_info (real balances). None nếu paper/dict phẳng."""
     if not isinstance(account_info, dict):
-        return 0.0
-    stock = None
+        return None
     raw = account_info.get("raw")
     if isinstance(raw, dict) and isinstance(raw.get("stock"), dict):
-        stock = raw["stock"]
-    elif isinstance(account_info.get("stock"), dict):
-        stock = account_info["stock"]
-    elif "availableCash" in account_info or "totalCash" in account_info:
-        stock = account_info
+        return raw["stock"]
+    if isinstance(account_info.get("stock"), dict):
+        return account_info["stock"]
+    if "availableCash" in account_info or "totalCash" in account_info:
+        return account_info
+    return None
+
+
+def extract_stock_account(account_info: Any) -> Dict[str, float]:
+    """Bóc đủ số ví CƠ SỞ theo nghiệp vụ:
+    - total_cash: tiền mặt thật (totalCash)
+    - available_cash: sức mua (availableCash = tiền + vay được)
+    - debt: nợ vay margin (totalDebt)
+    - dividend: cổ tức sắp về (cashDividendReceiving)
+    Paper/dict phẳng: tiền = cash_available/balance; nợ & cổ tức = 0.
+    """
+    stock = _stock_block(account_info)
     if isinstance(stock, dict):
-        cash = stock.get("availableCash")
-        if cash is None:
-            cash = stock.get("totalCash")
-        if cash is not None:
-            return _to_float(cash, 0.0)
-    # Fallback: get_account_info đã chuẩn hoá (real) hoặc PAPER trả dict phẳng.
-    flat = account_info.get("cash_available")
-    if not flat:
-        flat = account_info.get("balance")
-    return _to_float(flat, 0.0)
+        total_cash = _to_float(stock.get("totalCash"), 0.0)
+        available = _to_float(stock.get("availableCash"), total_cash)
+        if total_cash <= 0:
+            total_cash = available
+        return {
+            "total_cash": total_cash,
+            "available_cash": available or total_cash,
+            "debt": _to_float(stock.get("totalDebt"), 0.0),
+            "dividend": _to_float(stock.get("cashDividendReceiving"), 0.0),
+        }
+    flat = 0.0
+    if isinstance(account_info, dict):
+        flat = _to_float(account_info.get("cash_available"), 0.0) or _to_float(account_info.get("balance"), 0.0)
+    return {"total_cash": flat, "available_cash": flat, "debt": 0.0, "dividend": 0.0}
+
+
+def extract_stock_cash(account_info: Any) -> float:
+    """(Giữ tương thích) Tiền khả dụng ví cổ phiếu = sức mua (availableCash)."""
+    return extract_stock_account(account_info)["available_cash"]
 
 
 def split_assets(stock_cash: float, stock_value: float) -> Dict[str, float]:
@@ -256,9 +272,17 @@ def portfolio_summary(positions: Iterable[Any], account_info: Any) -> Dict[str, 
     """Gói cho UI: danh mục + tách tài sản trong 1 lần gọi."""
     holdings = build_holdings(positions)
     stock_value = total_stock_value(holdings)
-    stock_cash = extract_stock_cash(account_info)
-    assets = split_assets(stock_cash, stock_value)
-    # Tổng riêng phần lô lẻ (đã nằm trong stock_value, tách ra để hiển thị).
-    assets["odd_lot_value"] = odd_lot_value(holdings)
-    assets["odd_lot_count"] = odd_lot_count(holdings)
+    acct = extract_stock_account(account_info)
+    total_cash = acct["total_cash"]
+    debt = acct["debt"]
+    assets = {
+        "cash": total_cash,                       # tiền mặt thật
+        "available_cash": acct["available_cash"],  # sức mua (tiền + vay được)
+        "stock_value": stock_value,
+        "debt": debt,                              # nợ vay margin
+        "dividend": acct["dividend"],              # cổ tức sắp về
+        "total": total_cash + stock_value - debt,  # NAV đúng = tiền + CP − nợ
+        "odd_lot_value": odd_lot_value(holdings),
+        "odd_lot_count": odd_lot_count(holdings),
+    }
     return {"holdings": holdings, "assets": assets}

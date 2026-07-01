@@ -23,6 +23,8 @@ DEFAULT_SYMBOL = "VN30F1M"
 BOT_ACTIVE_SYMBOLS = ["VN30F1M"]
 CKPS_SYMBOLS = [s.strip().upper() for s in os.getenv("DNSE_CKPS_WATCHLIST", "VN30F1M").split(",") if s.strip()]
 CKCS_WATCHLIST = [s.strip().upper() for s in os.getenv("DNSE_CKCS_WATCHLIST", "").split(",") if s.strip()]
+# Mã hợp đồng phái sinh THẬT (vd 41I1G6000, đổi theo tháng đáo hạn) — để settlement biết KHÔNG phải CKCS.
+DERIVATIVE_REAL_SYMBOLS = [s.strip().upper() for s in os.getenv("DNSE_DERIVATIVE_REAL_SYMBOLS", "").split(",") if s.strip()]
 DNSE_CUSTODY_CODE = os.getenv("DNSE_CUSTODY_CODE", "")
 DNSE_STOCK_ACCOUNT_NO = os.getenv("DNSE_STOCK_ACCOUNT_NO", "")
 DNSE_DERIVATIVE_ACCOUNT_NO = os.getenv("DNSE_DERIVATIVE_ACCOUNT_NO", "")
@@ -46,6 +48,8 @@ DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_CLOSED
 DNSE_RATE_LIMIT_RETRIES = int(os.getenv("DNSE_RATE_LIMIT_RETRIES", "1"))
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
 DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
+# Cache gói phí/loan-package (giây) — phí ít đổi trong ngày nên TTL dài.
+DNSE_FEE_CACHE_TTL_SECONDS = float(os.getenv("DNSE_FEE_CACHE_TTL_SECONDS", "3600.0"))
 
 # --- Market-data WebSocket streaming (giảm tải REST để add nhiều mã không bị BAN) ---
 # Bật WS để stream giá thay vì poll REST. Khi tắt (mặc định) hệ thống dùng REST + cache.
@@ -98,6 +102,8 @@ UNIFIED_ORDER_BUTTON = True
 
 # --- Ràng buộc CKCS (cổ phiếu cơ sở) ---
 STOCK_ROUND_LOT = 100  # lệnh thường phải là bội số 100 CP (lô chẵn)
+# CKCS không đòn bẩy: giá trị 1 lệnh ≤ % NAV (chống dồn quá nhiều vốn vào 1 mã do SL hẹp -> lot khổng lồ). 0 = tắt.
+STOCK_MAX_ORDER_NAV_PCT = 20.0
 STOCK_DEFAULT_EXCHANGE = "HOSE"  # CKCS hiện (FPT,SSI,VCB,CTG,BID,MBB) đều HOSE
 STOCK_EXCHANGE_BANDS = {"HOSE": 0.07, "HNX": 0.10, "UPCOM": 0.15}  # biên độ trần/sàn theo sàn
 # map mã->sàn override (env "DNSE_STOCK_EXCHANGE_MAP" dạng "SHS:HNX,ABC:UPCOM"); để trống là đủ
@@ -114,6 +120,9 @@ DNSE_TAX_RATE = 0.0
 DNSE_STOCK_BROKER_FEE_RATE = 0.0
 DNSE_STOCK_TAX_RATE = 0.0
 PAPER_TRADING = os.getenv("PAPER_TRADING", "True").strip().lower() in ("1", "true", "yes", "on")
+# ⚠️ BẢO MẬT: lưu trading-token xuống đĩa để restart không phải OTP lại. Token = quyền đặt lệnh thật,
+# ai có file cũng giao dịch được tài khoản. Mặc định TẮT. Chỉ bật nếu máy của riêng mày + chấp nhận rủi ro.
+PERSIST_TRADING_TOKEN = os.getenv("PERSIST_TRADING_TOKEN", "False").strip().lower() in ("1", "true", "yes", "on")
 PAPER_INITIAL_BALANCE = float(os.getenv("PAPER_INITIAL_BALANCE", "100000000.0"))
 PAPER_FEE_PER_CONTRACT = DNSE_BROKER_FEE_PER_CONTRACT
 PAPER_SPREAD_POINTS = 0.0
@@ -228,6 +237,8 @@ BOT_SAFEGUARD = {
     "MAX_LOSING_STREAK": 3,
     # [CKCS] Bật: lô CKCS tính theo rủi ro < 1 lô -> ép lên 1 lô chẵn (100 CP), chấp nhận rủi ro > mục tiêu %. Tắt = bỏ lệnh.
     "FORCE_MIN_LOT": False,
+    # [CKCS] Cap giá trị 1 lệnh cổ phiếu cơ sở ≤ % NAV (0 = tắt). Chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã.
+    "STOCK_MAX_ORDER_NAV_PCT": STOCK_MAX_ORDER_NAV_PCT,
     "LOSS_COUNT_MODE": "TOTAL",
     "COOLDOWN_MINUTES": 1,
     "NUM_H1_BARS": 100,

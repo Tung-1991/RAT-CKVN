@@ -23,7 +23,7 @@ from core.signal_listener import SignalListener
 from core.data_engine import data_engine
 from core.money import format_vnd, money_unit_note
 from core.position_classifier import is_bot_position, is_manual_position
-from core import margin_rules, pending_orders, settlement
+from core import margin_rules, pending_orders, settlement, stock_rules
 from signals.signal_generator import signal_generator
 import traceback
 
@@ -459,10 +459,25 @@ class BotUI(ctk.CTk):
         return bool(self.var_auto_trade.get())
 
     def _ensure_trading_otp(self):
-        """Hỏi & xác thực OTP DNSE (token 8h). True nếu OK / đã có token."""
+        """Hỏi & xác thực OTP DNSE (token 8h). True nếu OK / đã có token.
+
+        PAPER mode: KHÔNG cần OTP (lệnh route sang paper broker, không gọi DNSE đặt lệnh)
+        -> bỏ qua, cho bật bot test luôn.
+        """
         import customtkinter
         import os
-        from core.data_engine import dnse_api
+        # [FIX] OTP phải set token lên CHÍNH connector đặt lệnh (self.connector),
+        # KHÔNG phải dnse_api (data_engine chỉ lo market-data, không cần token).
+        if bool(getattr(config, "PAPER_TRADING", True)):
+            self.log_message("📝 PAPER mode: bỏ qua OTP, bật bot bằng tiền ảo.", target="bot")
+            return True
+        # Đã có trading-token còn hiệu lực -> khỏi hỏi lại (vd vừa xác thực ở ⚙ ADVANCED).
+        try:
+            if self.connector.has_trading_token():
+                self.log_message("✅ Đã có trading-token, bật bot luôn (không cần OTP lại).", target="bot")
+                return True
+        except Exception:
+            pass
         dialog = customtkinter.CTkInputDialog(
             text="Nhập mã OTP của DNSE (Trading Token có hiệu lực 8 tiếng):",
             title="Xác thực OTP",
@@ -472,7 +487,7 @@ class BotUI(ctk.CTk):
             self.log_message("⚠ Đã huỷ nhập OTP. Bot chưa được bật.", target="bot", error=True)
             return False
         otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
-        if not dnse_api.verify_otp(otp_type, otp_code):
+        if not self.connector.verify_otp(otp_type, otp_code):
             self.log_message("❌ Xác thực OTP DNSE thất bại. Không thể bật Bot.", target="bot", error=True)
             return False
         return True
@@ -719,8 +734,18 @@ class BotUI(ctk.CTk):
             env_utils.update_env({"PAPER_TRADING": "True" if config.PAPER_TRADING else "False"})
         except Exception as exc:
             self.log_message(f"Lưu PAPER_TRADING vào .env lỗi: {exc}", error=True, target="bot")
-        # Trigger reset connector / UI state if needed
         self._save_brain_live_config()
+        # [AUTO-APPLY] Áp dụng NGAY không cần restart: xoá cache tài khoản + kết nối lại + đọc lại số dư.
+        try:
+            if getattr(self, "connector", None) is not None:
+                self.connector.reset_session_caches()
+                if not config.PAPER_TRADING:
+                    self.connector.connect()  # đảm bảo kết nối REAL
+                self.update_portfolio_table()  # refresh tổng tài sản ngay
+            tip = "" if config.PAPER_TRADING else " — nhớ OTP để đặt lệnh thật (⚙ ADVANCED → Gửi OTP email)."
+            self.log_message(f"✅ Đã áp dụng {value} ngay (không cần restart){tip}", target="bot")
+        except Exception as exc:
+            self.log_message(f"Áp dụng {value} lỗi: {exc} — nếu số dư chưa đúng thì restart app.", error=True, target="bot")
 
     def on_market_type_change(self, value):
         if str(value or "").upper() in ("CK CƠ SỞ", "CK CO SO", "CKCS"):
@@ -812,7 +837,7 @@ class BotUI(ctk.CTk):
         if value in ("ATO", "ATC"):
             try:
                 from core.market_hours import market_session_phase
-                sym = self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else getattr(config, "SYMBOL", "")
+                sym = self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else getattr(config, "DEFAULT_SYMBOL", "")
                 phase, _ = market_session_phase(sym)
             except Exception:
                 phase = ""
@@ -1315,8 +1340,8 @@ class BotUI(ctk.CTk):
         manual_entry = self._safe_float(self.var_manual_entry.get() if hasattr(self, "var_manual_entry") else 0.0)
         price = manual_entry if manual_entry > 0 else float(tick.ask if direction == "BUY" else tick.bid)
         c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
-        vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 0.01)) or 0.01)
-        vol_max = float(getattr(sym_info, "volume_max", getattr(config, "MAX_LOT_SIZE", 100.0)) or 100.0)
+        vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 1.0)) or getattr(config, "MIN_LOT_SIZE", 1.0))
+        vol_max = float(getattr(sym_info, "volume_max", getattr(config, "MAX_LOT_SIZE", 200.0)) or getattr(config, "MAX_LOT_SIZE", 200.0))
         vol_step = float(getattr(sym_info, "volume_step", getattr(config, "LOT_STEP", 0.01)) or 0.01)
         point = float(getattr(sym_info, "point", 0.00001) or 0.00001)
 
@@ -1535,14 +1560,35 @@ class BotUI(ctk.CTk):
             cap_note = f" | CAP={max_lot_cap:g}"
         lot_size = self._normalize_contracts(lot_size, vol_min, vol_max) if lot_size > 0 else 0.0
 
-        # [FORCE MIN LOT] CKCS: lô tính < tối thiểu -> ép lên 1 lô chẵn nếu bật trong safeguard.
+        # [NAV CAP] CKCS không đòn bẩy: giá trị 1 lệnh ≤ % NAV (chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã).
+        ckcs_cap_lot = None
+        if manual_lot <= 0 and settlement.is_cash_stock(symbol):
+            _nav_pct = float((brain.get("bot_safeguard", {}) or {}).get(
+                "STOCK_MAX_ORDER_NAV_PCT", getattr(config, "STOCK_MAX_ORDER_NAV_PCT", 20.0)) or 0.0)
+            if _nav_pct > 0:
+                _cap_value = equity * (_nav_pct / 100.0)
+                # [CASH CAP] notional CKCS không vượt tiền mặt khả dụng (chừa ~1% phí).
+                _cash = float((account or {}).get("cash_available", 0.0) or (account or {}).get("stock_cash", 0.0) or 0.0)
+                _cap_src = "NAV_CAP"
+                if _cash > 0 and _cash * 0.99 < _cap_value:
+                    _cap_value = _cash * 0.99
+                    _cap_src = "CASH_CAP"
+                ckcs_cap_lot = stock_rules.max_shares_for_value(
+                    _cap_value, price, c_size, getattr(config, "STOCK_ROUND_LOT", 100)
+                )
+                if lot_size > ckcs_cap_lot:
+                    lot_size = float(ckcs_cap_lot)
+                    lot_source = _cap_src
+
+        # [FORCE MIN LOT] CKCS: lô tính < tối thiểu -> ép lên 1 lô chẵn nếu bật (và NAV đủ 1 lô).
         if lot_size <= 0 and manual_lot <= 0 and settlement.is_cash_stock(symbol):
             try:
                 _sg = (self.trade_mgr._get_brain_settings(symbol) or {}).get("bot_safeguard", {})
             except Exception:
                 _sg = {}
-            if _sg.get("FORCE_MIN_LOT", False):
-                lot_size = float(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+            _round = float(getattr(config, "STOCK_ROUND_LOT", 100) or 100)
+            if _sg.get("FORCE_MIN_LOT", False) and (ckcs_cap_lot is None or ckcs_cap_lot >= _round):
+                lot_size = _round
                 lot_source = "FORCE_MIN_LOT"
 
         commission = self.calculate_trade_fee(symbol, price, lot_size)
@@ -2424,7 +2470,12 @@ class BotUI(ctk.CTk):
         if getattr(self, "lbl_port_total", None) is not None:
             self.lbl_port_total.configure(text=f"Tổng tài sản: {self._fmt_money(assets['total'])}")
         if getattr(self, "lbl_port_cash", None) is not None:
-            self.lbl_port_cash.configure(text=f"Tiền: {self._fmt_money(assets['cash'])}")
+            self.lbl_port_cash.configure(text=f"Tiền mặt: {self._fmt_money(assets['cash'])}")
+        # Sức mua: chỉ hiện khi khác tiền mặt (có vay margin) -> đỡ rối cho cash-only.
+        if getattr(self, "lbl_port_avail", None) is not None:
+            _avail = assets.get("available_cash", assets.get("cash", 0.0))
+            _txt = f"Sức mua: {self._fmt_money(_avail)}" if _avail > assets.get("cash", 0.0) + 1 else ""
+            self.lbl_port_avail.configure(text=_txt)
         if getattr(self, "lbl_port_stock", None) is not None:
             self.lbl_port_stock.configure(text=f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}")
         if getattr(self, "lbl_port_odd", None) is not None:
@@ -2432,6 +2483,13 @@ class BotUI(ctk.CTk):
             _odd_n = assets.get("odd_lot_count", 0)
             _odd_txt = f"Lô lẻ: {self._fmt_money(_odd_val)} ({_odd_n} mã)" if _odd_n else "Lô lẻ: 0"
             self.lbl_port_odd.configure(text=_odd_txt)
+        # Nợ vay & cổ tức sắp về: chỉ hiện khi > 0.
+        if getattr(self, "lbl_port_debt", None) is not None:
+            _debt = assets.get("debt", 0.0)
+            self.lbl_port_debt.configure(text=f"Nợ vay: {self._fmt_money(_debt)}" if _debt > 0 else "")
+        if getattr(self, "lbl_port_dividend", None) is not None:
+            _div = assets.get("dividend", 0.0)
+            self.lbl_port_dividend.configure(text=f"Cổ tức sắp về: {self._fmt_money(_div)}" if _div > 0 else "")
 
         # 3) Bảng danh mục (chỉ khi popup đang mở -> tree_portfolio tồn tại)
         tree = getattr(self, "tree_portfolio", None)
@@ -2855,9 +2913,16 @@ class BotUI(ctk.CTk):
             self.lbl_equity.configure(text=self._fmt_money(acc["equity"]))
             if hasattr(self, "lbl_money_unit_note"):
                 self.lbl_money_unit_note.configure(text=money_unit_note())
-            self.lbl_acc_info.configure(
-                text=f"ID: {acc['login']}  ·  {acc['server']}"
-            )
+            # Dòng nhỏ: rõ đang xem ví CƠ SỞ (tiền) hay PHÁI SINH (ký quỹ) theo mã đang chọn.
+            _sym_cur = self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else ""
+            if _sym_cur and not settlement.is_cash_stock(_sym_cur):
+                _rtt = acc.get("rtt")
+                _rtt_txt = f" · RTT {float(_rtt):.0f}%" if _rtt not in (None, "") else ""
+                # Ký quỹ THẬT của ví phái sinh (remainSecure); 0 = chưa chuyển tiền -> chưa đánh được.
+                _wallet = f"PHÁI SINH · KQ {self._fmt_money(acc.get('deriv_avail', 0.0))}{_rtt_txt}"
+            else:
+                _wallet = f"CƠ SỞ · Tiền {self._fmt_money(acc.get('stock_cash', acc.get('cash_available', acc.get('balance', 0.0))))}"
+            self.lbl_acc_info.configure(text=f"ID: {acc['login']}  ·  {_wallet}")
         # Danh mục CKCS + tách Tiền/CP/Tổng (read-only). Đặt sau khi set equity để
         # ghi đè bằng tổng tự tính (balances cổ phiếu không trả sẵn NAV).
         self.update_portfolio_table(acc)
@@ -2919,7 +2984,6 @@ class BotUI(ctk.CTk):
         # Cổ phiếu (CKCS) KHÔNG bán khống: khóa nút SELL khi không giữ CK đã về.
         if hasattr(self, "btn_dir_sell"):
             try:
-                from core import settlement
                 if settlement.is_cash_stock(sym):
                     rows = [{
                         "symbol": getattr(p, "symbol", ""),
@@ -3150,6 +3214,7 @@ class BotUI(ctk.CTk):
             # Spread chỉ hợp lệ khi có cả bid/ask dương và không bị cross (thị trường đang mở).
             bid_v = float(getattr(tick, "bid", 0.0) or 0.0)
             ask_v = float(getattr(tick, "ask", 0.0) or 0.0)
+            spread_cost = 0.0  # mặc định 0 khi không có giá (đóng cửa/chờ giá) — tránh UnboundLocalError dưới.
             if bid_v <= 0 or ask_v <= 0 or ask_v < bid_v:
                 spread_part = "Spread: chờ giá"
             else:
@@ -3182,8 +3247,8 @@ class BotUI(ctk.CTk):
                 self.lbl_prev_sl.configure(text=f"{p_sl:.2f}", text_color=COL_RED)
                 loss_dist = abs(entry_calc_price - p_sl)
                 loss_val = loss_dist * f_lot * c_size
-                loss_pct = (loss_val / balance) * 100
-                loss_pct_txt = f"{loss_pct:.4f}%" if 0 < abs(loss_pct) < 0.01 else f"{loss_pct:.2f}%"
+                loss_pct = (loss_val / balance) * 100 if balance > 0 else 0.0
+                loss_pct_txt = "--%" if balance <= 0 else (f"{loss_pct:.4f}%" if 0 < abs(loss_pct) < 0.01 else f"{loss_pct:.2f}%")
                 self.lbl_prev_risk.configure(
                     text=f"-{self._fmt_money(loss_val)} ({loss_pct_txt})", text_color=COL_RED
                 )
@@ -3201,8 +3266,8 @@ class BotUI(ctk.CTk):
                 self.lbl_prev_tp.configure(text=f"{p_tp:.2f}", text_color=COL_GREEN)
                 prof_dist = abs(p_tp - entry_calc_price)
                 prof_val = prof_dist * f_lot * c_size
-                prof_pct = (prof_val / balance) * 100
-                prof_pct_txt = f"{prof_pct:.4f}%" if 0 < abs(prof_pct) < 0.01 else f"{prof_pct:.2f}%"
+                prof_pct = (prof_val / balance) * 100 if balance > 0 else 0.0
+                prof_pct_txt = "--%" if balance <= 0 else (f"{prof_pct:.4f}%" if 0 < abs(prof_pct) < 0.01 else f"{prof_pct:.2f}%")
                 self.lbl_prev_rew.configure(
                     text=f"+{self._fmt_money(prof_val)} ({prof_pct_txt})", text_color=COL_GREEN
                 )
@@ -3574,7 +3639,6 @@ class BotUI(ctk.CTk):
             # CKCS đã khớp -> nền CAM; cột STT ghi thêm CHỜ VỀ/ĐÃ VỀ (T+2). CKPS giữ xanh/đỏ.
             tag_to_apply = "buy_row" if is_buy else "sell_row"
             try:
-                from core import settlement
                 if settlement.is_cash_stock(p.symbol):
                     tag_to_apply = "matched_stock"
                     _settle = (getattr(p, "raw", {}) or {}).get("settle_date")

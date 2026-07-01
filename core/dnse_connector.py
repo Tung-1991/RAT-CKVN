@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import logging
 import os
 import time
@@ -265,6 +266,7 @@ class DNSEConnector:
             "last_error": "",
             "last_latency_ms": 0.0,
         }
+        self._load_token_from_disk()  # opt-in: nạp token đã lưu (nếu còn hiệu lực) để khỏi OTP lại sau restart
 
     @property
     def _is_connected(self) -> bool:
@@ -303,6 +305,55 @@ class DNSEConnector:
 
     def reset_paper(self, balance: Optional[float] = None) -> Dict[str, Any]:
         return self._paper().reset(balance)
+
+    def reset_session_caches(self):
+        """Xoá cache tài khoản/vị thế — gọi khi đổi PAPER<->REAL để lần đọc sau lấy số liệu mới
+        (không cần restart app). Token + market-data cache giữ nguyên."""
+        self._account_cache = None
+        self._account_cache_ts = 0.0
+        self._positions_cache = []
+        self._positions_cache_ts = 0.0
+
+    # ---- Lưu/nạp trading-token qua restart (opt-in, PERSIST_TRADING_TOKEN) ----
+    def _token_file(self) -> Optional[str]:
+        acc = str(self.account_no or "").strip()
+        return os.path.join("data", acc, "trading_token.json") if acc else None
+
+    def _save_token_to_disk(self):
+        if not bool(getattr(config, "PERSIST_TRADING_TOKEN", False)):
+            return
+        path = self._token_file()
+        if not path or not self.trading_token:
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "trading_token": self.trading_token,
+                    "expires_at": self.trading_token_expires_at,
+                    "persistent": self.trading_token_persistent,
+                }, f)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Lưu trading-token lỗi: %s", exc)
+
+    def _load_token_from_disk(self):
+        if not bool(getattr(config, "PERSIST_TRADING_TOKEN", False)):
+            return
+        path = self._token_file()
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            token = str(data.get("trading_token") or "")
+            exp = float(data.get("expires_at") or 0.0)
+            if token and time.time() < exp:
+                self.trading_token = token
+                self.trading_token_expires_at = exp
+                self.trading_token_persistent = bool(data.get("persistent", False))
+                logger.info("Đã nạp trading-token đã lưu (còn hiệu lực).")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Nạp trading-token lỗi: %s", exc)
 
     def _account_pending_info(self, reason: str = "") -> Dict[str, Any]:
         pending_balance = float(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0))
@@ -451,6 +502,7 @@ class DNSEConnector:
         else:
             self.trading_token_expires_at = time.time() + (ttl_hours * 3600)
             logger.info("DNSE trading token ready (~%.0fh, %s).", ttl_hours, self.otp_type)
+        self._save_token_to_disk()  # opt-in: lưu để restart khỏi OTP lại
         return True
 
     def get_account_info(self) -> Optional[Dict[str, Any]]:
@@ -481,11 +533,19 @@ class DNSEConnector:
             payload = payload[0] if payload else {}
         if not isinstance(payload, dict):
             payload = {}
-        balance = _to_float(_deep_first_value(payload, ("balance", "cashBalance", "totalAsset", "netAssetValue", "nav")), 0.0)
+        # [FIX] Response DNSE /balances có 2 khối: "stock" (totalCash/availableCash) và
+        # "derivative" (remainSecure). KHÔNG có key top-level "balance"/"nav" -> trước đây ra 0.
+        stock_blk = payload.get("stock") if isinstance(payload.get("stock"), dict) else {}
+        deriv_blk = payload.get("derivative") if isinstance(payload.get("derivative"), dict) else {}
+        stock_total = _to_float(stock_blk.get("totalCash"), 0.0)
+        stock_avail = _to_float(stock_blk.get("availableCash"), stock_total)
+        deriv_avail = _to_float(deriv_blk.get("remainSecure"), 0.0)
+        legacy_bal = _to_float(_deep_first_value(payload, ("balance", "cashBalance", "totalAsset", "netAssetValue", "nav")), 0.0)
+        balance = stock_total or deriv_avail or legacy_bal
         equity = _to_float(_deep_first_value(payload, ("equity", "netAssetValue", "nav", "totalAsset"), balance), balance)
-        margin = _to_float(_deep_first_value(payload, ("margin", "marginValue", "derivativeMargin")), 0.0)
-        cash_available = _to_float(_deep_first_value(payload, ("cashAvailable", "cash_available", "cashBalanceAvailable", "availableCash")), 0.0)
-        buying_power = _to_float(_deep_first_value(payload, ("buyingPower", "buying_power", "purchasingPower")), 0.0)
+        margin = _to_float(_deep_first_value(payload, ("margin", "marginValue", "derivativeMargin", "usedSecure")), 0.0)
+        cash_available = _to_float(_deep_first_value(payload, ("cashAvailable", "cash_available", "cashBalanceAvailable", "availableCash")), 0.0) or stock_avail or deriv_avail
+        buying_power = _to_float(_deep_first_value(payload, ("buyingPower", "buying_power", "purchasingPower")), 0.0) or stock_avail or deriv_avail
         available_balance = _to_float(_deep_first_value(payload, ("freeMargin", "availableBalance", "available_balance")), 0.0)
         free_margin = available_balance or cash_available or buying_power or (equity - margin)
         margin_debt = _to_float(_deep_first_value(payload, ("marginDebt", "margin_debt", "loan", "loanValue", "debt", "debtValue")), margin)
@@ -508,6 +568,9 @@ class DNSEConnector:
             "rtt": rtt,
             "margin_call_level": margin_call_level,
             "margin_force_level": margin_force_level,
+            # Tách bạch 2 ví để UI hiện đúng (không gán nhầm tiền cơ sở thành ký quỹ phái sinh).
+            "stock_cash": stock_avail or stock_total,
+            "deriv_avail": deriv_avail,
             "raw": data,
         }
         self._account_cache = dict(info)

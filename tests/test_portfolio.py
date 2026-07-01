@@ -145,6 +145,35 @@ def test_extract_stock_cash_from_account_info():
     assert p.extract_stock_cash(info) == 300_000_000
 
 
+def test_extract_stock_account_full_fields():
+    info = {"raw": {"stock": {
+        "totalCash": 320_000_000, "availableCash": 350_000_000,
+        "totalDebt": 30_000_000, "cashDividendReceiving": 2_000_000,
+    }}}
+    a = p.extract_stock_account(info)
+    assert a["total_cash"] == 320_000_000      # tiền mặt thật
+    assert a["available_cash"] == 350_000_000  # sức mua > tiền (có vay)
+    assert a["debt"] == 30_000_000             # nợ vay
+    assert a["dividend"] == 2_000_000          # cổ tức sắp về
+
+
+def test_portfolio_summary_nav_minus_debt(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    monkeypatch.setattr(config, "STOCK_ROUND_LOT", 100)
+    account = {"raw": {"stock": {
+        "totalCash": 10_000_000, "availableCash": 10_000_000,
+        "totalDebt": 3_000_000, "cashDividendReceiving": 500_000,
+    }}}
+    positions = [_pos("CTG", 100, cost=30000, market=33000)]  # CP = 3.3tr
+    s = p.portfolio_summary(positions, account)
+    a = s["assets"]
+    # NAV = tiền mặt + CP − nợ = 10tr + 3.3tr − 3tr = 10.3tr
+    assert a["total"] == 10_000_000 + 100 * 33000 - 3_000_000
+    assert a["cash"] == 10_000_000
+    assert a["debt"] == 3_000_000
+    assert a["dividend"] == 500_000
+
+
 def test_extract_stock_cash_fallback_total_cash():
     info = {"raw": {"stock": {"totalCash": 250_000_000}}}
     assert p.extract_stock_cash(info) == 250_000_000

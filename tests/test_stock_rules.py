@@ -17,6 +17,20 @@ def test_round_lot_down_uses_config_default(monkeypatch):
     assert stock_rules.round_lot_down(199) == 100
 
 
+def test_max_shares_for_value():
+    # cap 20tr, giá 33.65, point_value 1000 -> 20.000.000/33.650 = 594 -> 500 CP (lô 100)
+    assert stock_rules.max_shares_for_value(20_000_000, 33.65, 1000, 100) == 500
+    # đúng kịch bản lỗi: nếu KHÔNG cap, risk-size ra 5900; cap 20%NAV(100m)=20tr -> 500
+    assert stock_rules.max_shares_for_value(20_000_000, 33.65, 1000, 100) < 5900
+    # NAV nhỏ: cap 2tr, giá 33.65 -> 59 cp -> < 1 lô -> 0
+    assert stock_rules.max_shares_for_value(2_000_000, 33.65, 1000, 100) == 0
+    # đủ nhiều lô
+    assert stock_rules.max_shares_for_value(50_000_000, 33.65, 1000, 100) == 1400
+    # dữ liệu xấu -> 0
+    assert stock_rules.max_shares_for_value(0, 33.65, 1000, 100) == 0
+    assert stock_rules.max_shares_for_value(20_000_000, 0, 1000, 100) == 0
+
+
 def test_resolve_band_prefers_dnse_ceiling_floor():
     fl, ce = stock_rules.resolve_band(reference=100.0, ceiling=107.0, floor=93.0, band_pct=0.07)
     assert (fl, ce) == (93.0, 107.0)

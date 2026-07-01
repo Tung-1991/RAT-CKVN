@@ -743,13 +743,13 @@ class TradeManager:
         strict_min_lot = safeguard_cfg.get("STRICT_MIN_LOT", False)
 
         vol_min = (
-            sym_info.volume_min if sym_info else getattr(config, "MIN_LOT_SIZE", 0.01)
+            sym_info.volume_min if sym_info else getattr(config, "MIN_LOT_SIZE", 1.0)
         )
         vol_max = (
             sym_info.volume_max if sym_info else getattr(config, "MAX_LOT_SIZE", 200.0)
         )
         vol_step = (
-            sym_info.volume_step if sym_info else getattr(config, "LOT_STEP", 0.01)
+            sym_info.volume_step if sym_info else getattr(config, "LOT_STEP", 1.0)
         )
 
         if parent_pos and signal_class in ["DCA", "PCA"]:
@@ -806,6 +806,32 @@ class TradeManager:
         max_lot_cap = float(sym_cfgs.get("max_lot_cap", 0.0))
         if max_lot_cap > 0:
             lot_size = min(lot_size, max_lot_cap)
+
+        # [NAV CAP] CKCS không đòn bẩy: giá trị 1 lệnh ≤ % NAV (chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã).
+        if settlement.is_cash_stock(symbol):
+            nav_pct = float(safeguard_cfg.get("STOCK_MAX_ORDER_NAV_PCT",
+                            getattr(config, "STOCK_MAX_ORDER_NAV_PCT", 20.0)) or 0.0)
+            if nav_pct > 0:
+                nav = float((acc_info or {}).get("equity", 0.0) or 0.0)
+                c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
+                cap_value = nav * (nav_pct / 100.0)
+                # [CASH CAP] Không đòn bẩy: notional KHÔNG vượt tiền mặt khả dụng (chừa ~1% phí).
+                _cash = float((acc_info or {}).get("cash_available", 0.0) or (acc_info or {}).get("stock_cash", 0.0) or 0.0)
+                _capped_by = "NAV"
+                if _cash > 0 and _cash * 0.99 < cap_value:
+                    cap_value = _cash * 0.99
+                    _capped_by = "TIỀN MẶT"
+                cap_lot = stock_rules.max_shares_for_value(
+                    cap_value, current_price, c_size, stock_rules._round_lot()
+                )
+                if cap_lot <= 0:
+                    return f"SAFEGUARD_FAIL|CKCS_CAP_TOO_SMALL|{symbol}: không đủ {_capped_by} cho 1 lô."
+                if lot_size > cap_lot:
+                    self.log(
+                        f"[{_capped_by} CAP] {symbol}: giảm {lot_size:g}→{cap_lot:g} CP.",
+                        target="bot",
+                    )
+                    lot_size = cap_lot
 
         # [T+2] CKCS SELL: không bán/đóng quá số cổ phiếu ĐÃ VỀ (tránh connector từ chối,
         # message khó hiểu). Đã có _stock_long_only_guard chặn khi =0 ở trên; đây chỉ cắt bớt.
@@ -1362,8 +1388,8 @@ class TradeManager:
             if tp and tp >= price:
                 return "TELEGRAM_FAIL|BAD_TP|SELL cần TP thấp hơn giá hiện tại"
 
-        vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 0.01)) or 0.01)
-        vol_max = float(getattr(sym_info, "volume_max", getattr(config, "MAX_LOT_SIZE", 200.0)) or 200.0)
+        vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 1.0)) or getattr(config, "MIN_LOT_SIZE", 1.0))
+        vol_max = float(getattr(sym_info, "volume_max", getattr(config, "MAX_LOT_SIZE", 200.0)) or getattr(config, "MAX_LOT_SIZE", 200.0))
         vol_step = float(getattr(sym_info, "volume_step", getattr(config, "LOT_STEP", 0.01)) or 0.01)
         if lot < vol_min or lot > vol_max:
             return f"TELEGRAM_FAIL|BAD_LOT|Lot ngoài biên {vol_min}-{vol_max}"

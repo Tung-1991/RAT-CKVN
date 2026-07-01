@@ -1477,6 +1477,13 @@ def open_bot_setting_popup(app):
     e_gl_min_sl = ctk.CTkEntry(f_sg_content, width=60, justify="center")
     e_gl_min_sl.insert(0, str(safe_cfg.get("MIN_SL_POINTS", 0)))
     e_gl_min_sl.grid(row=1, column=4, sticky="w", padx=5, pady=5)
+    # [CKCS] Cap giá trị 1 lệnh cổ phiếu cơ sở theo % NAV (0 = tắt). Chống SL hẹp -> lot khổng lồ.
+    ctk.CTkLabel(f_sg_content, text="Cap %NAV/mã CKCS:", text_color="#FFB300").grid(
+        row=1, column=5, sticky="w", padx=(10, 2), pady=5
+    )
+    e_nav_cap = ctk.CTkEntry(f_sg_content, width=55, justify="center")
+    e_nav_cap.insert(0, str(safe_cfg.get("STOCK_MAX_ORDER_NAV_PCT", getattr(config, "STOCK_MAX_ORDER_NAV_PCT", 20.0))))
+    e_nav_cap.grid(row=1, column=6, sticky="w", padx=2, pady=5)
     # Dòng TP & Safeguard bổ sung
     var_bot_use_swing_tp = ctk.BooleanVar(value=safe_cfg.get("BOT_USE_SWING_TP", False))
     var_bot_use_rr_tp = ctk.BooleanVar(value=safe_cfg.get("BOT_USE_RR_TP", True))
@@ -1701,6 +1708,7 @@ def open_bot_setting_popup(app):
                     "BOT_TP_RR_RATIO": float(e_bot_tp_rr.get()),
                     "STRICT_MIN_LOT": var_strict_min_lot.get(),
                     "FORCE_MIN_LOT": var_force_min_lot.get(),
+                    "STOCK_MAX_ORDER_NAV_PCT": float(e_nav_cap.get() or 0.0),
                     "POST_CLOSE_COOLDOWN": int(e_post_close.get()),
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
@@ -2296,7 +2304,8 @@ def open_advanced_tools_popup(app):
 
     def _refresh_token_status():
         try:
-            ok = dnse_api.has_trading_token()
+            # [FIX] Token nằm trên connector đặt lệnh (app.connector), không phải dnse_api.
+            ok = app.connector.has_trading_token()
         except Exception:
             ok = False
         if lbl_otp_status.winfo_exists():
@@ -2310,7 +2319,7 @@ def open_advanced_tools_popup(app):
 
         def _w():
             try:
-                ok = dnse_api.send_email_otp()
+                ok = app.connector.send_email_otp()
             except Exception as exc:  # noqa: BLE001
                 app.after(0, lambda: _set_otp_msg(f"Lỗi gửi OTP: {exc}", "#E57373"))
                 return
@@ -2331,7 +2340,7 @@ def open_advanced_tools_popup(app):
 
         def _w():
             try:
-                ok = dnse_api.verify_otp(otp_type, code)
+                ok = app.connector.verify_otp(otp_type, code)
             except Exception as exc:  # noqa: BLE001
                 app.after(0, lambda: _set_otp_msg(f"Lỗi xác thực: {exc}", "#E57373"))
                 return
@@ -2349,7 +2358,31 @@ def open_advanced_tools_popup(app):
     ctk.CTkButton(f_otp_row, text="Xác thực", width=110, fg_color="#2E7D32", command=_verify_otp).pack(side="left")
 
     lbl_otp_msg.pack(anchor="w", padx=12, pady=(4, 2))
-    lbl_otp_status.pack(anchor="w", padx=12, pady=(0, 10))
+    lbl_otp_status.pack(anchor="w", padx=12, pady=(0, 4))
+
+    # [opt-in] Lưu token qua restart — cảnh báo bảo mật.
+    var_persist_token = ctk.BooleanVar(value=bool(getattr(config, "PERSIST_TRADING_TOKEN", False)))
+
+    def _toggle_persist():
+        from core import env_utils
+        on = bool(var_persist_token.get())
+        config.PERSIST_TRADING_TOKEN = on
+        try:
+            env_utils.update_env({"PERSIST_TRADING_TOKEN": "True" if on else "False"})
+        except Exception:
+            pass
+        # Bật + đang có token -> lưu ngay; tắt -> không xoá file cũ ở đây (an toàn, để user tự dọn).
+        if on:
+            try:
+                app.connector._save_token_to_disk()
+            except Exception:
+                pass
+
+    ctk.CTkCheckBox(
+        f_otp_row.master, text="Lưu token qua restart (⚠ rủi ro: ai có file cũng đặt lệnh được)",
+        variable=var_persist_token, command=_toggle_persist,
+        text_color="#FFB74D", font=("Roboto", 11),
+    ).pack(anchor="w", padx=12, pady=(0, 10))
     _refresh_token_status()
 
 
@@ -4230,9 +4263,14 @@ def open_portfolio_popup(app):
     )
     app.lbl_port_total.pack(side="left", padx=12, pady=8)
     app.lbl_port_cash = ctk.CTkLabel(
-        f_sum, text="Tiền: --", font=("Roboto", 14, "bold"), text_color="#90CAF9",
+        f_sum, text="Tiền mặt: --", font=("Roboto", 14, "bold"), text_color="#90CAF9",
     )
     app.lbl_port_cash.pack(side="left", padx=12)
+    # Sức mua = tiền + vay được (chỉ hiện khi khác tiền mặt -> có margin).
+    app.lbl_port_avail = ctk.CTkLabel(
+        f_sum, text="", font=("Roboto", 14, "bold"), text_color="#80DEEA",
+    )
+    app.lbl_port_avail.pack(side="left", padx=12)
     app.lbl_port_stock = ctk.CTkLabel(
         f_sum, text="Cổ phiếu: --", font=("Roboto", 14, "bold"), text_color="#FFCC80",
     )
@@ -4242,6 +4280,15 @@ def open_portfolio_popup(app):
         f_sum, text="Lô lẻ: --", font=("Roboto", 14, "bold"), text_color="#FFD7A0",
     )
     app.lbl_port_odd.pack(side="left", padx=12)
+    # Nợ vay & cổ tức sắp về — chỉ hiện khi > 0 (đỡ rối với tài khoản cash-only).
+    app.lbl_port_debt = ctk.CTkLabel(
+        f_sum, text="", font=("Roboto", 14, "bold"), text_color="#EF9A9A",
+    )
+    app.lbl_port_debt.pack(side="left", padx=12)
+    app.lbl_port_dividend = ctk.CTkLabel(
+        f_sum, text="", font=("Roboto", 14, "bold"), text_color="#A5D6A7",
+    )
+    app.lbl_port_dividend.pack(side="left", padx=12)
     ctk.CTkButton(
         f_sum, text="⟳ Làm mới", width=100, height=26,
         command=app.update_portfolio_table,
@@ -4257,8 +4304,11 @@ def open_portfolio_popup(app):
         app.tree_portfolio = None
         app.lbl_port_total = None
         app.lbl_port_cash = None
+        app.lbl_port_avail = None
         app.lbl_port_stock = None
         app.lbl_port_odd = None
+        app.lbl_port_debt = None
+        app.lbl_port_dividend = None
         try:
             top.destroy()
         except Exception:
