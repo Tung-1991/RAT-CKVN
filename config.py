@@ -229,6 +229,8 @@ BOT_SAFEGUARD = {
     # Kiểu khớp lệnh của bot: NORMAL = luôn khớp liên tục (LO/MOK);
     # AUTO = trong phiên ATO/ATC thì đặt lệnh ATO/ATC, ngoài phiên thì liên tục.
     "BOT_ORDER_MODE": "NORMAL",
+    # Kiểu lệnh VÀO của bot phiên liên tục: MARKET (khớp ngay mọi giá) | LO (đặt limit tại giá hiện tại, không đuổi giá).
+    "BOT_ENTRY_ORDER_TYPE": "MARKET",
     # Đóng vị thế bot ở phiên ATC cuối ngày (tránh giữ qua đêm).
     "BOT_ATC_EXIT": False,
     "PENDING_ORDER_EXPIRE_HOURS": PENDING_ORDER_EXPIRE_HOURS,

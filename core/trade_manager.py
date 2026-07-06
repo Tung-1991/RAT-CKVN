@@ -900,8 +900,16 @@ class TradeManager:
         # AUTO: trong phiên ATO/ATC thì đặt orderType ATO/ATC, ngoài phiên -> None (LO/MOK).
         from core.market_hours import resolve_order_kind
         order_kind = resolve_order_kind(symbol, safeguard_cfg.get("BOT_ORDER_MODE", "NORMAL"))
+        # [BOT ENTRY ORDER] MARKET (mặc định, khớp ngay mọi giá) | LO (đặt limit tại giá hiện tại,
+        # không đuổi giá; hết phiên tự hủy). Chỉ áp khi KHÔNG phải phiên đấu giá (order_kind None).
+        _entry_ord = str(safeguard_cfg.get("BOT_ENTRY_ORDER_TYPE",
+                         getattr(config, "BOT_ENTRY_ORDER_TYPE", "MARKET"))).upper()
+        _lo_price = current_price if (_entry_ord == "LO" and not order_kind and current_price > 0) else 0.0
+        if _lo_price > 0:
+            self.log(f"[LO] {symbol}: đặt limit @{_lo_price:g} (không đuổi giá market).", target="bot")
         result = self.connector.place_order(
-            symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment, order_kind=order_kind
+            symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment,
+            order_kind=order_kind, price=_lo_price,
         )
 
         if self._order_ok(result):

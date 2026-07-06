@@ -1544,6 +1544,11 @@ def open_bot_setting_popup(app):
     ctk.CTkCheckBox(
         f_sg_content, text="Đóng vị thế phiên ATC (cuối ngày)", variable=var_bot_atc_exit, font=("Roboto", 11),
     ).grid(row=4, column=2, columnspan=2, sticky="w", padx=10, pady=(10, 0))
+    # [BOT LO] Kiểu lệnh vào: MARKET (khớp ngay) | LO (đặt limit tại giá hiện tại, không đuổi giá).
+    ctk.CTkLabel(f_sg_content, text="Kiểu lệnh vào:").grid(row=4, column=4, sticky="w", padx=10, pady=(10, 0))
+    cbo_bot_entry_order = ctk.CTkOptionMenu(f_sg_content, values=["MARKET", "LO"], width=100)
+    cbo_bot_entry_order.set(str(safe_cfg.get("BOT_ENTRY_ORDER_TYPE", "MARKET")).upper())
+    cbo_bot_entry_order.grid(row=4, column=5, sticky="w", padx=10, pady=(10, 0))
     ctk.CTkLabel(
         f_sg_content,
         text="AUTO: trong phiên ATO/ATC bot đặt lệnh ATO/ATC, ngoài phiên thì khớp liên tục (LO/MOK).",
@@ -1722,6 +1727,7 @@ def open_bot_setting_popup(app):
                     "REJECT_ON_MAX_LOT": var_gl_reject_lot.get(),
                     "GLOBAL_BRAKE_MODE": cbo_brake_mode.get(),
                     "BOT_ORDER_MODE": cbo_bot_order_mode.get(),
+                    "BOT_ENTRY_ORDER_TYPE": cbo_bot_entry_order.get(),
                     "BOT_ATC_EXIT": var_bot_atc_exit.get(),
                     "PENDING_ORDER_EXPIRE_HOURS": float(e_pending_expire.get()),
                 }
