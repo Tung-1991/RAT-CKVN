@@ -241,6 +241,11 @@ BOT_SAFEGUARD = {
     "FORCE_MIN_LOT": False,
     # [CKCS] Cap giá trị 1 lệnh cổ phiếu cơ sở ≤ % NAV (0 = tắt). Chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã.
     "STOCK_MAX_ORDER_NAV_PCT": STOCK_MAX_ORDER_NAV_PCT,
+    # [RISK GATE] Trần %NAV mất nếu dính SL cho 1 lệnh (0 = tắt). Van đo TIỀN-MẤT (các van khác đo SIZE).
+    # PS trần cao vì floor 1 HĐ (NAV nhỏ + SL rộng -> risk% lớn bất khả kháng).
+    # Vượt trần: bot/telegram chặn cứng; manual hiện popup xác nhận.
+    "RISK_GATE_MAX_PCT_PS": 10.0,
+    "RISK_GATE_MAX_PCT_CS": 3.0,
     "LOSS_COUNT_MODE": "TOTAL",
     "COOLDOWN_MINUTES": 1,
     "NUM_H1_BARS": 100,
@@ -256,7 +261,8 @@ BOT_SAFEGUARD = {
     "MANUAL_SIGNAL_LOG_ENABLE": False,
     "BOT_USE_TP": True,
     "BOT_TP_RR_RATIO": 1.5,  # [NEW] Rầu thưởng khi dùng TP theo R (fallback nếu không dùng SwingPoint)
-    "STRICT_MIN_LOT": False,  # [NEW V4.4] Chặn Lot < Min_Vol
+    "STRICT_MIN_LOT": False,  # [NEW V4.4] Chặn Lot < Min_Vol. LƯU Ý: van này gần như không kích hoạt được
+    # (calculate_lot_size luôn clamp qty >= volume_min nên không trả 0) — RISK_GATE_MAX_PCT_* kế nhiệm vai trò này.
     "POST_CLOSE_COOLDOWN": 0,  # [NEW V4.4] Thời gian nghỉ nến sau SL (Giây)
     "CLOSE_ON_REVERSE_MIN_TIME": 180,  # [NEW V4.4] Min Hold Time cho REVERSE_CLOSE
     "DCA_PCA_COOLDOWN_SECONDS": 300,  # [NEW V4.4] Khoảng nghỉ giữa 2 lần nhồi (Giây)

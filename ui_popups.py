@@ -1554,6 +1554,21 @@ def open_bot_setting_popup(app):
         text="AUTO: trong phiên ATO/ATC bot đặt lệnh ATO/ATC, ngoài phiên thì khớp liên tục (LO/MOK).",
         font=("Arial", 10, "italic"), text_color="#90A4AE", justify="left", wraplength=560,
     ).grid(row=5, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 4))
+    # [RISK GATE] Trần %NAV mất-nếu-dính-SL cho 1 lệnh (0 = tắt). Bot/telegram chặn cứng,
+    # manual hỏi xác nhận. Dùng chung cho cả bot lẫn manual — chỉ 2 con số này, không option khác.
+    ctk.CTkLabel(
+        f_sg_content, text="RISK GATE %NAV/lệnh (0=tắt) — PS:", text_color="#FFB300",
+        font=("Roboto", 11, "bold"),
+    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 5))
+    e_risk_gate_ps = ctk.CTkEntry(f_sg_content, width=55, justify="center")
+    e_risk_gate_ps.insert(0, str(safe_cfg.get("RISK_GATE_MAX_PCT_PS", getattr(config, "BOT_SAFEGUARD", {}).get("RISK_GATE_MAX_PCT_PS", 10.0))))
+    e_risk_gate_ps.grid(row=6, column=2, sticky="w", padx=2, pady=(6, 5))
+    ctk.CTkLabel(f_sg_content, text="CS:", text_color="#FFB300", font=("Roboto", 11, "bold")).grid(
+        row=6, column=3, sticky="e", padx=(10, 2), pady=(6, 5)
+    )
+    e_risk_gate_cs = ctk.CTkEntry(f_sg_content, width=55, justify="center")
+    e_risk_gate_cs.insert(0, str(safe_cfg.get("RISK_GATE_MAX_PCT_CS", getattr(config, "BOT_SAFEGUARD", {}).get("RISK_GATE_MAX_PCT_CS", 3.0))))
+    e_risk_gate_cs.grid(row=6, column=4, sticky="w", padx=2, pady=(6, 5))
 
     # --- [GROUP 3: 🛡️ ĐIỀU KIỆN VẬN HÀNH (OPERATIONAL)] ---
     f_op = ctk.CTkFrame(f_safety, border_width=1, border_color="#2196F3")
@@ -1714,6 +1729,8 @@ def open_bot_setting_popup(app):
                     "STRICT_MIN_LOT": var_strict_min_lot.get(),
                     "FORCE_MIN_LOT": var_force_min_lot.get(),
                     "STOCK_MAX_ORDER_NAV_PCT": float(e_nav_cap.get() or 0.0),
+                    "RISK_GATE_MAX_PCT_PS": float(e_risk_gate_ps.get() or 0.0),
+                    "RISK_GATE_MAX_PCT_CS": float(e_risk_gate_cs.get() or 0.0),
                     "POST_CLOSE_COOLDOWN": int(e_post_close.get()),
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
@@ -2513,7 +2530,8 @@ def open_preset_config_popup(app):
     e_sl.insert(0, str(data.get("SL_PERCENT", 0.5)))
     e_sl.pack()
     lbl_h_sl = ctk.CTkLabel(
-        body, text="~ Price: 0.00", text_color="#CFD8DC", font=("Roboto", 11)
+        body, text="~ Price: 0.00", text_color="#CFD8DC", font=("Roboto", 11),
+        wraplength=460,
     )
     lbl_h_sl.pack(pady=(0, 5))
     ctk.CTkLabel(body, text="Take Profit (RR):").pack()
@@ -2668,10 +2686,48 @@ def open_preset_config_popup(app):
             lbl_h_risk.configure(
                 text=f"(~ Mất ${risk_usd:.2f} nếu dính SL)", text_color="#EF5350"
             )
-            lbl_h_sl.configure(
-                text=f"(~ Đặt SL quanh {cp * (1 - s / 100):.2f} cho BUY)",
-                text_color="#CFD8DC",
-            )
+            # [SANDBOX-FETCH] Hint SL theo đúng mode đang chọn (không chỉ Percent)
+            mode_disp = str(var_manual_sl_mode.get() or "Percent")
+            if mode_disp == "Percent":
+                lbl_h_sl.configure(
+                    text=f"(~ Đặt SL quanh {cp * (1 - s / 100):.2f} cho BUY)",
+                    text_color="#CFD8DC",
+                )
+            else:
+                grp = str(var_manual_sl_group.get() or "G2")
+                ctx = {}
+                try:
+                    _sym = str(app.cbo_symbol.get() or "").strip()
+                    _ctxs = getattr(app, "latest_market_context", {}) or {}
+                    ctx = _ctxs.get(_sym) or _ctxs.get(_sym.upper()) or {}
+                except Exception:
+                    ctx = {}
+                if "DYNAMIC" in grp:
+                    grp = "G1" if str(ctx.get("market_mode", "ANY")).upper() in ("TREND", "BREAKOUT") else "G2"
+                atr_v = float(ctx.get(f"atr_{grp}", 0) or 0)
+                sw_lo = float(ctx.get(f"swing_low_{grp}", 0) or 0)
+                if atr_v > 0 and sw_lo > 0:
+                    try:
+                        mult = float(var_manual_sl_buffer.get() or 0.2)
+                    except Exception:
+                        mult = 0.2
+                    _sl_est = sw_lo - atr_v * mult
+                    if cp > 0 and _sl_est >= cp:
+                        # Swing nằm trên giá hiện tại -> BUY sẽ fallback Percent (wrong-side guard)
+                        lbl_h_sl.configure(
+                            text=f"(⚠ {mode_disp} {grp}: SL ~ {_sl_est:.2f} ≥ giá {cp:.2f} — swing sai phía, lệnh BUY sẽ dùng Percent {s:g}%)",
+                            text_color="#EF5350",
+                        )
+                    else:
+                        lbl_h_sl.configure(
+                            text=f"({mode_disp} {grp}: SL ~ {_sl_est:.2f} cho BUY, swing±ATR)",
+                            text_color="#FFB74D",
+                        )
+                else:
+                    lbl_h_sl.configure(
+                        text=f"({mode_disp}: SL theo swing±ATR — chưa có data, tạm fallback {s:g}%)",
+                        text_color="#FFB74D",
+                    )
             lbl_h_tp.configure(
                 text=f"(~ Lãi ${risk_usd * t:.2f} nếu chạm TP)", text_color="#66BB6A"
             )
@@ -2680,6 +2736,8 @@ def open_preset_config_popup(app):
     e_risk.bind("<KeyRelease>", live)
     e_sl.bind("<KeyRelease>", live)
     e_tp.bind("<KeyRelease>", live)
+    var_manual_sl_mode.trace_add("write", lambda *a: live())
+    var_manual_sl_group.trace_add("write", lambda *a: live())
     live()
 
     def save_preset():

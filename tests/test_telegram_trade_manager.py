@@ -81,7 +81,9 @@ def _manager(monkeypatch):
         "risk_tsl": {"bot_tsl": "BE+STEP_R+SWING"},
         "dca_config": {"ENABLED": True},
         "pca_config": {"ENABLED": False},
-        "bot_safeguard": {"CLOSE_ON_REVERSE": True},
+        # RISK_GATE tắt (0): fixture equity 1000 tí hon so với contract_size 100k —
+        # các test này kiểm tra tactic/checklist, không kiểm tra van risk.
+        "bot_safeguard": {"CLOSE_ON_REVERSE": True, "RISK_GATE_MAX_PCT_PS": 0.0, "RISK_GATE_MAX_PCT_CS": 0.0},
         "entry_exit": {"enabled": True, "active_tactics": ["FALLBACK_R"], "exit_tactic": "AUTO"},
     }
     mgr.log = lambda *args, **kwargs: None

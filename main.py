@@ -149,6 +149,10 @@ class BotUI(ctk.CTk):
         self.tsl_states_map = {}
         self.last_price_val = 0.0
         self.latest_market_context = {}
+        # [SANDBOX-FETCH] Fetch context on-demand cho symbol dashboard (mirror ui_bot_strategy)
+        self.ctx_fetch_lock = threading.Lock()
+        self.ctx_fetch_inflight = set()
+        self.ctx_fetch_last = {}
         self.latest_entry_exit_decisions = {}
         self.group_status_tracker = {}
         self.manual_preview_models = {}
@@ -1277,7 +1281,11 @@ class BotUI(ctk.CTk):
             if atr_val > 0 and swing_low > 0 and swing_high > 0:
                 buffer = atr_val * sl_mult
                 sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
-                return sl_price, abs(price - sl_price), f"SANDBOX:{sandbox_group}", False
+                # [WRONG-SIDE GUARD] Swing nằm sai phía so với giá (vd giá đã thủng đáy swing)
+                # -> SL vô nghĩa + distance hẹp giả làm lot phồng -> coi như thiếu data, về Percent.
+                _side_ok = sl_price < price if direction == "BUY" else sl_price > price
+                if _side_ok:
+                    return sl_price, abs(price - sl_price), f"SANDBOX:{sandbox_group}", False
             sl_mode = "PERCENT"
 
         if sl_mode in ("SWING_REJECTION", "SWING_STRUCTURE"):
@@ -1290,12 +1298,108 @@ class BotUI(ctk.CTk):
                 sl_mult = self._safe_float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)), 0.2)
                 buffer = atr_val * sl_mult
                 sl_price = swing_low - buffer if direction == "BUY" else swing_high + buffer
-                return sl_price, abs(price - sl_price), f"SWING:{sl_group}", False
+                # [WRONG-SIDE GUARD] Swing sai phía -> báo missing để caller fallback Percent.
+                _side_ok = sl_price < price if direction == "BUY" else sl_price > price
+                if _side_ok:
+                    return sl_price, abs(price - sl_price), f"SWING:{sl_group}", False
             return 0.0, 0.0, f"{sl_mode}:MISSING", True
 
         sl_dist = price * (float(params.get("SL_PERCENT", 0.5) or 0.5) / 100.0)
         sl_price = price - sl_dist if direction == "BUY" else price + sl_dist
         return sl_price, sl_dist, f"PERCENT:{float(params.get('SL_PERCENT', 0.5) or 0.5):g}%", False
+
+    # --- [SANDBOX-FETCH] On-demand context cho mã dashboard (CKCS không nằm trong BOT_ACTIVE_SYMBOLS) ---
+
+    def _manual_context_ready(self, params, context):
+        """True nếu context đã đủ key kỹ thuật (atr/swing theo group) cho SL/TP mode của preset."""
+        params = params or {}
+        context = context or {}
+        tech_modes = ("SANDBOX", "SWING_REJECTION", "SWING_STRUCTURE", "FIB", "PULLBACK")
+        needed = set()
+        sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
+        tp_mode = self._manual_rule_mode(params, "MANUAL_TP_MODE", "USE_SWING_TP", "RR")
+        if sl_mode in tech_modes:
+            key = "MANUAL_SL_GROUP" if "MANUAL_SL_GROUP" in params else "MANUAL_SWING_SL_GROUP"
+            needed.add(self._resolve_manual_preset_group(params, key, context))
+        if tp_mode in tech_modes:
+            key = "MANUAL_TP_GROUP" if "MANUAL_TP_GROUP" in params else "MANUAL_SWING_TP_GROUP"
+            needed.add(self._resolve_manual_preset_group(params, key, context))
+        if not needed:
+            return True
+        for g in needed:
+            if not (
+                self._safe_float(context.get(f"atr_{g}", 0.0)) > 0
+                and self._safe_float(context.get(f"swing_low_{g}", 0.0)) > 0
+                and self._safe_float(context.get(f"swing_high_{g}", 0.0)) > 0
+            ):
+                return False
+        return True
+
+    def _schedule_symbol_context_fetch(self, symbol):
+        sym_raw = str(symbol or "").strip()
+        if not sym_raw:
+            return
+        sym_up = sym_raw.upper()
+        now = time.time()
+        with self.ctx_fetch_lock:
+            if sym_up in self.ctx_fetch_inflight:
+                return
+            if now - self.ctx_fetch_last.get(sym_up, 0) < 15:
+                return
+            self.ctx_fetch_last[sym_up] = now
+            self.ctx_fetch_inflight.add(sym_up)
+        threading.Thread(
+            target=self._fetch_symbol_context_worker, args=(sym_raw,), daemon=True
+        ).start()
+
+    def _fetch_symbol_context_worker(self, symbol):
+        sym_up = str(symbol).strip().upper()
+        try:
+            from core.data_engine import data_engine
+            from signals.signal_generator import signal_generator
+
+            dfs, context = data_engine.fetch_data_v4(symbol)
+            if dfs is None or context is None:
+                return
+            signal = signal_generator.generate_signal_v4(dfs, context, symbol=symbol)
+            context["latest_signal"] = signal
+            context["timestamp"] = time.time()
+            context["preview_fallback"] = True
+            try:
+                self.after(0, lambda s=symbol, c=context: self._store_symbol_context(s, c))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            with self.ctx_fetch_lock:
+                self.ctx_fetch_inflight.discard(sym_up)
+
+    def _store_symbol_context(self, symbol, context):
+        try:
+            sym_raw = str(symbol or "").strip()
+            sym_up = sym_raw.upper()
+            contexts = self.latest_market_context
+            if not isinstance(contexts, dict):
+                contexts = {}
+                self.latest_market_context = contexts
+            # MERGE vào dict đang có (giữ bid/ask/current_price từ bg_update_loop);
+            # alias cả key raw + upper về CÙNG một dict object (bg loop dùng key as-is,
+            # ui_bot_strategy lưu theo .upper()).
+            merged = contexts.get(sym_raw) or contexts.get(sym_up) or {}
+            merged.update(context or {})
+            contexts[sym_raw] = merged
+            if sym_up != sym_raw:
+                contexts[sym_up] = merged
+        except Exception:
+            pass
+
+    def _ctx_fetch_pending(self, symbol):
+        sym_up = str(symbol or "").strip().upper()
+        with self.ctx_fetch_lock:
+            return sym_up in self.ctx_fetch_inflight or (
+                time.time() - self.ctx_fetch_last.get(sym_up, 0) < 15
+            )
 
     def _resolve_manual_setup_preview(self, symbol, direction, preset_name, context):
         params = config.PRESETS.get(
@@ -1381,9 +1485,15 @@ class BotUI(ctk.CTk):
             sandbox_low = self._safe_float(context.get(f"swing_low_{sandbox_group}", 0.0))
             sandbox_high = self._safe_float(context.get(f"swing_high_{sandbox_group}", 0.0))
             sandbox_mult = self._safe_float(risk_tsl.get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)), 0.2)
+            _sandbox_sl = None
             if sandbox_atr > 0 and sandbox_low > 0 and sandbox_high > 0:
                 buffer = sandbox_atr * sandbox_mult
-                sl_price = sandbox_low - buffer if direction == "BUY" else sandbox_high + buffer
+                _sandbox_sl = sandbox_low - buffer if direction == "BUY" else sandbox_high + buffer
+                # [WRONG-SIDE GUARD] Swing sai phía so với giá -> bỏ, về Percent.
+                if not (_sandbox_sl < price if direction == "BUY" else _sandbox_sl > price):
+                    _sandbox_sl = None
+            if _sandbox_sl is not None:
+                sl_price = _sandbox_sl
                 sl_source = f"SANDBOX:{sandbox_group}"
                 sl_group = sandbox_group
                 atr_val = sandbox_atr
@@ -1900,7 +2010,12 @@ class BotUI(ctk.CTk):
         sl_source = str(setup.get("sl_source", "") or "").upper()
         tp_source = str(setup.get("tp_source", "") or "").upper()
         if sl_mode not in ("", "PERCENT") and sl_source == "PERCENT":
-            notes.append(self._make_preview_chip("SL Fallback", "Missing rule data, using Percent", "warn"))
+            _detail = (
+                "Đang tải data…"
+                if self._ctx_fetch_pending(str(setup.get("symbol", "") or ""))
+                else "Missing rule data, using Percent"
+            )
+            notes.append(self._make_preview_chip("SL Fallback", _detail, "warn"))
         if tp_mode not in ("", "RR") and (tp_source == "RR" or tp_source.endswith("R")):
             notes.append(self._make_preview_chip("Exit Fallback", "Missing target data, using RR", "warn"))
         return notes
@@ -2850,6 +2965,15 @@ class BotUI(ctk.CTk):
 
         sym_ctx = self.latest_market_context.get(sym, {})
 
+        # [SANDBOX-FETCH] Preset cần data kỹ thuật (Sandbox/Swing/FIB/Pullback) mà context
+        # thiếu atr/swing -> fetch nến on-demand (thread nền, throttle 15s/mã).
+        try:
+            _params_active = config.PRESETS.get(preset, {})
+            if sym and not self._manual_context_ready(_params_active, sym_ctx):
+                self._schedule_symbol_context_fetch(sym)
+        except Exception:
+            pass
+
         if sym_ctx:
             # 1. Đọc khung thời gian Ngài đang chọn xem trên Dashboard
             selected_tf = getattr(
@@ -3134,7 +3258,25 @@ class BotUI(ctk.CTk):
                 tp_label = f"{tp_r_display}R"
                 swing_tp_missing = False
 
-            self.lbl_head_sl.configure(text=f"STOPLOSS ({sl_label.split(':', 1)[0]})")
+            # [SANDBOX-FETCH] Preset đòi SL kỹ thuật mà đang phải fallback Percent -> báo rõ (màu cam)
+            _req_sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
+            _sl_head = sl_label.split(":", 1)[0]
+            _sl_fallback = (
+                msl <= 0
+                and _req_sl_mode in ("SANDBOX", "SWING_REJECTION", "SWING_STRUCTURE")
+                and _sl_head == "PERCENT"
+            )
+            if _sl_fallback:
+                if self._manual_context_ready(params, sym_ctx):
+                    # Data đủ mà vẫn fallback -> swing nằm sai phía so với giá
+                    _state = "SL swing sai phía → Percent"
+                elif self._ctx_fetch_pending(sym):
+                    _state = "đang tải data…"
+                else:
+                    _state = "thiếu data → Percent"
+                self.lbl_head_sl.configure(text=f"STOPLOSS ({_req_sl_mode}: {_state})", text_color=COL_WARN)
+            else:
+                self.lbl_head_sl.configure(text=f"STOPLOSS ({_sl_head})", text_color=COL_RED)
             self.lbl_head_tp.configure(text=f"TARGET ({tp_label})")
             try:
                 from core.entry_exit_engine import evaluate_entry_exit, format_decision
@@ -3770,7 +3912,7 @@ class BotUI(ctk.CTk):
             self.log_message("LO chi gui trong phien OPEN; dung LIMIT ORDER de cache toi phien.", error=True, target="manual")
             return
 
-        def run_trade_thread():
+        def run_trade_thread(risk_gate_ack=False):
             result = self.trade_mgr.execute_manual_trade(
                 d,
                 p,
@@ -3785,7 +3927,24 @@ class BotUI(ctk.CTk):
                 order_kind=order_kind,
                 manual_entry_price=me,
                 entry_exit_tactic=self.get_current_entry_exit_tactic_string(),
+                risk_gate_ack=risk_gate_ack,
             )
+            # [RISK GATE] Vượt trần %NAV -> hỏi user trên Tk main thread rồi gọi lại với ack.
+            # Con số user xác nhận = con số code thực thi vừa tính (không dùng preview).
+            if str(result).startswith("RISK_GATE_CONFIRM"):
+                parts = str(result).split("|", 3)
+                gate_msg = parts[3] if len(parts) > 3 else str(result)
+
+                def _ask_risk_gate():
+                    if messagebox.askyesno(
+                        "Xác nhận RISK", f"{gate_msg}\n\nVẫn vào lệnh?", parent=self
+                    ):
+                        threading.Thread(target=lambda: run_trade_thread(risk_gate_ack=True)).start()
+                    else:
+                        self.log_message("Đã hủy lệnh theo RISK GATE.", target="manual")
+
+                self.after(0, _ask_risk_gate)
+                return
             if "SUCCESS" not in result:
                 self.log_message(f"❌ THẤT BẠI: {result}", error=True)
 

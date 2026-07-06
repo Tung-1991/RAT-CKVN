@@ -837,7 +837,7 @@ def setup_right_panel(app, parent):
     app.tree.bind("<Button-3>", app.on_tree_right_click)
 
     # 3. LOGGING CONSOLE (2 TAB: MANUAL & BOT)
-    f_log = ctk.CTkFrame(parent, height=350, fg_color="#1e1e1e")
+    f_log = ctk.CTkFrame(parent, height=370, fg_color="#1e1e1e")
     f_log.pack(fill="x", pady=(10, 0))
     f_log.pack_propagate(False)
 
@@ -861,7 +861,7 @@ def setup_right_panel(app, parent):
     # Tabview chứa 2 tab Log
     log_tabview = ctk.CTkTabview(
         f_log,
-        height=300,
+        height=320,
         fg_color="#121212",
         segmented_button_fg_color="#2b2b2b",
         segmented_button_selected_color="#1565C0",

@@ -8,7 +8,7 @@ import math
 import threading
 from types import SimpleNamespace
 import config
-from core import margin_rules, settlement, stock_rules
+from core import margin_rules, risk_gate, settlement, stock_rules
 from core.data_engine import data_engine
 from core.storage_manager import (
     load_state,
@@ -783,6 +783,10 @@ class TradeManager:
             )
 
             # Xử lý Strict Min Lot Rejection / Force Min Lot
+            # LƯU Ý: nhánh calc_lot == 0 gần như không xảy ra — calculate_lot_size
+            # (dnse_connector) luôn clamp qty >= volume_min nên chỉ trả None khi SL
+            # distance = 0. Van "risk quá to so với lô tối thiểu" giờ do RISK GATE
+            # (core/risk_gate.evaluate) đảm nhiệm ở cuối hàm. Giữ nguyên block này (lego).
             force_min_lot = safeguard_cfg.get("FORCE_MIN_LOT", False)
             if calc_lot is None or calc_lot == 0:
                 # [FORCE MIN LOT] CKCS: vol tính < 1 lô -> ép lên 1 lô chẵn (100 CP),
@@ -808,31 +812,14 @@ class TradeManager:
         if max_lot_cap > 0:
             lot_size = min(lot_size, max_lot_cap)
 
-        # [NAV CAP] CKCS không đòn bẩy: giá trị 1 lệnh ≤ % NAV (chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã).
-        if settlement.is_cash_stock(symbol):
-            nav_pct = float(safeguard_cfg.get("STOCK_MAX_ORDER_NAV_PCT",
-                            getattr(config, "STOCK_MAX_ORDER_NAV_PCT", 20.0)) or 0.0)
-            if nav_pct > 0:
-                nav = float((acc_info or {}).get("equity", 0.0) or 0.0)
-                c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
-                cap_value = nav * (nav_pct / 100.0)
-                # [CASH CAP] Không đòn bẩy: notional KHÔNG vượt tiền mặt khả dụng (chừa ~1% phí).
-                _cash = float((acc_info or {}).get("cash_available", 0.0) or (acc_info or {}).get("stock_cash", 0.0) or 0.0)
-                _capped_by = "NAV"
-                if _cash > 0 and _cash * 0.99 < cap_value:
-                    cap_value = _cash * 0.99
-                    _capped_by = "TIỀN MẶT"
-                cap_lot = stock_rules.max_shares_for_value(
-                    cap_value, current_price, c_size, stock_rules._round_lot()
-                )
-                if cap_lot <= 0:
-                    return f"SAFEGUARD_FAIL|CKCS_CAP_TOO_SMALL|{symbol}: không đủ {_capped_by} cho 1 lô."
-                if lot_size > cap_lot:
-                    self.log(
-                        f"[{_capped_by} CAP] {symbol}: giảm {lot_size:g}→{cap_lot:g} CP.",
-                        target="bot",
-                    )
-                    lot_size = cap_lot
+        # [NAV CAP] CKCS: logic gom về core/risk_gate.apply_stock_caps (dùng chung bot + manual).
+        _capped = risk_gate.apply_stock_caps(
+            symbol, lot_size, current_price, acc_info, sym_info, safeguard_cfg,
+            log=self.log, log_target="bot",
+        )
+        if _capped["error"]:
+            return _capped["error"]
+        lot_size = _capped["lot"]
 
         # [T+2] CKCS SELL: không bán/đóng quá số cổ phiếu ĐÃ VỀ (tránh connector từ chối,
         # message khó hiểu). Đã có _stock_long_only_guard chặn khi =0 ở trên; đây chỉ cắt bớt.
@@ -896,6 +883,16 @@ class TradeManager:
                 )
             else:
                 tp_price = 0.0
+
+        # [RISK GATE] Đo tiền-mất-nếu-SL trên lot + SL CUỐI CÙNG (sau DCA/PCA gán SL cha).
+        _gate = risk_gate.evaluate(
+            symbol, current_price, sl_price, lot_size,
+            float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0),
+            float(acc_info.get("equity", 0.0) or 0.0),
+            risk_gate.settings_from_brain(brain), source="BOT",
+        )
+        if _gate["action"] != "OK":
+            return f"SAFEGUARD_FAIL|RISK_GATE|{_gate['msg']}"
 
         comment = f"[BOT]_AUTO_{signal_class}"
         # AUTO: trong phiên ATO/ATC thì đặt orderType ATO/ATC, ngoài phiên -> None (LO/MOK).
@@ -1076,6 +1073,7 @@ class TradeManager:
         order_kind=None,
         manual_entry_price=0.0,
         entry_exit_tactic="OFF",
+        risk_gate_ack=False,  # True = user đã xác nhận popup RISK GATE, cho qua CONFIRM
     ):
         config.SYMBOL = symbol
         acc_info = self.connector.get_account_info()
@@ -1139,12 +1137,17 @@ class TradeManager:
             sl_val = context.get(f"swing_low_{sl_group}")
             atr_val = context.get(f"atr_{sl_group}", context.get("atr_entry"))
 
+            _sandbox_ok = False
             if sh and sl_val and atr_val:
                 sl_mult = float(risk_tsl.get("sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)) or 0.2)
                 buffer = float(atr_val) * sl_mult
                 sl_price = (float(sl_val) - buffer) if direction == "BUY" else (float(sh) + buffer)
                 sl_distance = abs(price - sl_price)
-            else:
+                # [WRONG-SIDE GUARD] Swing sai phía (vd giá đã thủng đáy swing): SL nằm trên
+                # giá BUY -> distance hẹp giả -> lot phồng + SL kích hoạt ngay khi khớp
+                # (CKCS T+2 chưa bán được). Coi như thiếu data -> fallback Percent.
+                _sandbox_ok = sl_price < price if direction == "BUY" else sl_price > price
+            if not _sandbox_ok:
                 sl_distance = price * (params.get("SL_PERCENT", 0.5) / 100.0)
                 sl_price = price - sl_distance if direction == "BUY" else price + sl_distance
         elif sl_mode in ("SWING", "SWING_REJECTION", "SWING_RETEST", "SWING_STRUCTURE", "SWING_STRUCT") and context:
@@ -1218,6 +1221,16 @@ class TradeManager:
         if max_lot_cap > 0:
             lot_size = min(lot_size, max_lot_cap)
 
+        # [NAV CAP] CKCS: áp cùng logic với bot (core/risk_gate) — vá lỗ hổng đường manual
+        # không cap, làm số thực đặt khớp với số preview đã cap trên UI.
+        _capped = risk_gate.apply_stock_caps(
+            symbol, lot_size, price, acc_info, sym_info,
+            brain.get("bot_safeguard", {}), log=self.log, log_target=None,
+        )
+        if _capped["error"]:
+            return _capped["error"]
+        lot_size = _capped["lot"]
+
         use_swing_tp = params.get("USE_SWING_TP", False)
 
         if manual_tp > 0:
@@ -1278,6 +1291,19 @@ class TradeManager:
                 ]
                 return "SAFEGUARD_FAIL|MANUAL_MARGIN|" + " | ".join(fail_msgs or ["margin guard failed"])
             margin_tag = "[MARGIN][MANUAL]"
+
+        # [RISK GATE] Van cuối trước khi đặt lệnh (sau margin — không bao giờ confirm-rồi-mới-block).
+        # Vượt trần: trả RISK_GATE_CONFIRM để UI hỏi user; gọi lại với risk_gate_ack=True để vào.
+        _gate = risk_gate.evaluate(
+            symbol, price, sl_price, lot_size,
+            float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0),
+            float((acc_info or {}).get("equity", 0.0) or 0.0),
+            risk_gate.settings_from_brain(brain), source="MANUAL",
+        )
+        if _gate["action"] == "CONFIRM" and not risk_gate_ack:
+            return f"RISK_GATE_CONFIRM|{_gate['risk_pct']:.1f}|{_gate['est_loss']:.0f}|{_gate['msg']}"
+        if _gate["action"] != "OK" and risk_gate_ack:
+            self.log(f"[RISK GATE] user override: {_gate['msg']}")
 
         import core.storage_manager as storage_manager
 
@@ -1412,6 +1438,17 @@ class TradeManager:
             fail_reasons = [c.get("msg", "") for c in res.get("checks", []) if c.get("status") == "FAIL"]
             if not bypass_checklist:
                 return f"TELEGRAM_FAIL|CHECKLIST|{' | '.join(fail_reasons) or 'Checklist fail'}"
+
+        # [RISK GATE] Telegram không có người bấm popup -> vượt trần là chặn cứng.
+        _gate = risk_gate.evaluate(
+            symbol, price, sl, lot,
+            float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0),
+            float((acc_info or {}).get("equity", 0.0) or 0.0),
+            risk_gate.settings_from_brain(self._get_brain_settings(symbol)),
+            source="TELEGRAM",
+        )
+        if _gate["action"] != "OK":
+            return f"TELEGRAM_FAIL|RISK_GATE|{_gate['msg']}"
 
         import core.storage_manager as storage_manager
 
