@@ -248,7 +248,8 @@ BOT_SAFEGUARD = {
     "CHECK_PING": True,
     "MAX_PING_MS": 150,
     "CHECK_SPREAD": True,
-    "MAX_SPREAD_POINTS": 150,
+    # Spread DNSE = khoảng giá ask-bid (điểm PS / nghìn VND CS); 5 là rất rộng, chỉ chặn bất thường.
+    "MAX_SPREAD_POINTS": 5,
     "DAEMON_LOOP_DELAY": 15.0,
     "DCA_PCA_SCAN_INTERVAL": 2.0,
     "LOG_COOLDOWN_MINUTES": 60.0,

@@ -53,10 +53,10 @@ class ChecklistManager:
             try:
                 max_spread = config.MAX_SPREAD_POINTS
             except AttributeError:
-                max_spread = 50
+                max_spread = 5
 
             # Format tin nhắn hiển thị chi tiết
-            spread_msg = f"Ping {ping_ms:.0f}ms (Max {max_ping}) | Spr {spread_points:.0f} (Max {max_spread})"
+            spread_msg = f"Ping {ping_ms:.0f}ms (Max {max_ping}) | Spr {spread_points:.2f} (Max {max_spread})"
 
             if spread_points > max_spread:
                 if strict_mode:
@@ -199,7 +199,8 @@ class ChecklistManager:
         check_ping = safeguard_cfg.get("CHECK_PING", True)
         max_ping = int(safeguard_cfg.get("MAX_PING_MS", 150))
         check_spread = safeguard_cfg.get("CHECK_SPREAD", True)
-        max_spread = int(safeguard_cfg.get("MAX_SPREAD_POINTS", 150))
+        # Spread DNSE = khoảng giá (điểm PS / nghìn VND CS), không phải points MT5 -> ngưỡng thang nhỏ.
+        max_spread = float(safeguard_cfg.get("MAX_SPREAD_POINTS", 5))
 
         # [NEW] Đọc cấu hình riêng lẻ của từng cặp tiền (nếu có)
         import json, os
@@ -316,7 +317,7 @@ class ChecklistManager:
                     {
                         "name": "Spread",
                         "status": "FAIL",
-                        "msg": f"Spread {spread_points:.0f} vượt mức {max_spread}",
+                        "msg": f"Spread {spread_points:.2f} vượt mức {max_spread}",
                     }
                 )
                 all_passed = False

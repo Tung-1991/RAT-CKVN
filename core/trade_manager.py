@@ -730,8 +730,9 @@ class TradeManager:
                     .get(acc_type, {})
                     .get("COMMISSION_PER_LOT", 7.0),
                 )
+            # sym_info.spread từ DNSE đã là khoảng giá (ask-bid), KHÔNG nhân thêm point.
             spread_cost = (
-                sym_info.spread * sym_info.point * sym_info.trade_contract_size
+                sym_info.spread * sym_info.trade_contract_size
                 if sym_info
                 else 0.0
             )
@@ -1574,8 +1575,9 @@ class TradeManager:
                 symbol,
                 getattr(config, "ACCOUNT_TYPES_CONFIG", {}).get(acc_type, {}).get("COMMISSION_PER_LOT", 7.0),
             )
+            # sym_info.spread từ DNSE đã là khoảng giá (ask-bid), KHÔNG nhân thêm point.
             strict_fee_per_lot = comm_rate + (
-                sym_info.spread * sym_info.point * sym_info.trade_contract_size if sym_info else 0.0
+                sym_info.spread * sym_info.trade_contract_size if sym_info else 0.0
             )
 
         sym_cfgs = brain.get("symbol_configs", {}).get(symbol, {}) or {}
@@ -2655,8 +2657,9 @@ class TradeManager:
                 fee_protect = bool(tsl_cfg.get("BE_CASH_FEE_PROTECT", True))
                 total_fee = 0.0
                 if fee_protect:
+                    # spread đã là khoảng giá (ask-bid), KHÔNG nhân thêm point.
                     total_fee = abs(getattr(pos, "commission", 0.0)) + (
-                        sym_info.spread * point * pos.volume * sym_info.trade_contract_size
+                        sym_info.spread * pos.volume * sym_info.trade_contract_size
                     )
 
                 if profit_usd >= trigger_usd:

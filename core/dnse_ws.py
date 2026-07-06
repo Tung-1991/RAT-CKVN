@@ -316,9 +316,15 @@ class DNSEMarketWS:
                 tick["bid"] = bid
             if ask is not None:
                 tick["ask"] = ask
+            if bid is not None and ask is not None:
+                tick["synthetic_quote"] = False  # đã có sổ lệnh thật đủ 2 phía
             if "last" in tick:
-                tick.setdefault("bid", tick["last"])
-                tick.setdefault("ask", tick["last"])
+                if "bid" not in tick:
+                    tick["bid"] = tick["last"]
+                    tick["synthetic_quote"] = True
+                if "ask" not in tick:
+                    tick["ask"] = tick["last"]
+                    tick["synthetic_quote"] = True
             if "bid" in tick and "ask" in tick:
                 tick["spread"] = round(float(tick["ask"]) - float(tick["bid"]), 2)
             tick["timestamp"] = now

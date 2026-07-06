@@ -1602,12 +1602,12 @@ def open_bot_setting_popup(app):
     var_check_spread = ctk.BooleanVar(value=safe_cfg.get("CHECK_SPREAD", True))
     ctk.CTkCheckBox(
         f_op_content,
-        text="Spread (pts):",
+        text="Spread (điểm giá):",
         variable=var_check_spread,
         font=("Roboto", 11),
     ).grid(row=2, column=2, sticky="w", padx=10, pady=5)
     e_max_spread = ctk.CTkEntry(f_op_content, width=60, justify="center")
-    e_max_spread.insert(0, str(safe_cfg.get("MAX_SPREAD_POINTS", 50)))
+    e_max_spread.insert(0, str(safe_cfg.get("MAX_SPREAD_POINTS", 5)))
     e_max_spread.grid(row=2, column=3, sticky="w", padx=5, pady=5)
     ctk.CTkLabel(f_op_content, text="Nghỉ sau đóng (s):", text_color="#FFB300").grid(
         row=3, column=0, sticky="w", padx=10, pady=5
@@ -1704,7 +1704,7 @@ def open_bot_setting_popup(app):
                     "CHECK_PING": var_check_ping.get(),
                     "MAX_PING_MS": int(e_max_ping.get()),
                     "CHECK_SPREAD": var_check_spread.get(),
-                    "MAX_SPREAD_POINTS": int(e_max_spread.get()),
+                    "MAX_SPREAD_POINTS": float(e_max_spread.get()),
                     "DAEMON_LOOP_DELAY": float(e_daemon_loop.get()),
                     "DCA_PCA_SCAN_INTERVAL": float(e_scan_delay.get()),
                     "LOG_COOLDOWN_MINUTES": float(e_log_cooldown.get()),

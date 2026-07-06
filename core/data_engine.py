@@ -493,12 +493,16 @@ class DataEngine:
                     tick_data["ask"] = float(offers[0].get("price", 0))
                 tick_data["quote_time"] = quote.get("time", "")
             
-            # 3. Fallback: nếu thiếu bid/ask thì dùng last price
+            # 3. Fallback: nếu thiếu bid/ask thì dùng last price.
+            # Đánh dấu synthetic_quote để UI biết spread=0 là giả (ngoài giờ/nghỉ trưa),
+            # tránh hiển thị "Spread: 0.00" như thể sổ lệnh đang khớp sát.
             if "last" in tick_data:
                 if "bid" not in tick_data:
                     tick_data["bid"] = tick_data["last"]
+                    tick_data["synthetic_quote"] = True
                 if "ask" not in tick_data:
                     tick_data["ask"] = tick_data["last"]
+                    tick_data["synthetic_quote"] = True
             
             # 4. Tính spread
             if "bid" in tick_data and "ask" in tick_data:

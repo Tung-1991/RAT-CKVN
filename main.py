@@ -2775,18 +2775,21 @@ class BotUI(ctk.CTk):
                                 "ask": ask_val,
                                 "current_price": last_val or ask_val or bid_val,
                                 "spread": float(tick_data.get("spread", max(0.0, ask_val - bid_val)) or 0.0),
+                                "synthetic_quote": bool(tick_data.get("synthetic_quote", False)),
                                 "tick_timestamp": tick_data.get("timestamp", time.time()),
                             }
                         )
 
                         class LiveTick:
-                            def __init__(self, bid, ask):
+                            def __init__(self, bid, ask, synthetic=False):
                                 self.bid = bid
                                 self.ask = ask
+                                self.synthetic = synthetic
 
-                        tick = LiveTick(bid_val, ask_val)
-                except Exception:
+                        tick = LiveTick(bid_val, ask_val, bool(tick_data.get("synthetic_quote", False)))
+                except Exception as e:
                     tick = None
+                    logger.error(f"[TICK_ERROR] {sym}: {e}", exc_info=True)
                 magics = storage_manager.get_magic_numbers()
                 
                 pos = [
@@ -3018,11 +3021,14 @@ class BotUI(ctk.CTk):
         if tick is None and sym_ctx and ("current_price" in sym_ctx or "bid" in sym_ctx):
             bid_val = float(sym_ctx.get("bid", sym_ctx.get("current_price", 0)))
             ask_val = float(sym_ctx.get("ask", sym_ctx.get("current_price", 0)))
+            # Không có bid/ask thật trong context -> quote dựng từ current_price = synthetic.
+            synthetic_val = bool(sym_ctx.get("synthetic_quote", False)) or "bid" not in sym_ctx or "ask" not in sym_ctx
             class MockTick:
-                def __init__(self, b, a):
+                def __init__(self, b, a, synthetic=False):
                     self.bid = b
                     self.ask = a
-            tick = MockTick(bid_val, ask_val)
+                    self.synthetic = synthetic
+            tick = MockTick(bid_val, ask_val, synthetic_val)
 
         if tick:
             cur_price = tick.ask if d == "BUY" else tick.bid
@@ -3207,19 +3213,22 @@ class BotUI(ctk.CTk):
                     text_color="white" if mlot == 0 else "#FFD700",
                 )
 
-            # Hiển thị spread + phí giao dịch (đơn vị thống nhất = nghìn VND, ÷1000).
+            # Hiển thị spread (theo đơn vị giá bảng điện) + phí giao dịch (nghìn VND).
             from core.money import format_money_k
             comm_total = self.calculate_trade_fee(sym, entry_calc_price, f_lot)
 
-            # Spread chỉ hợp lệ khi có cả bid/ask dương và không bị cross (thị trường đang mở).
+            # Spread chỉ hợp lệ khi có bid/ask THẬT (không phải fallback từ giá khớp),
+            # dương và không bị cross (thị trường đang mở).
             bid_v = float(getattr(tick, "bid", 0.0) or 0.0)
             ask_v = float(getattr(tick, "ask", 0.0) or 0.0)
-            spread_cost = 0.0  # mặc định 0 khi không có giá (đóng cửa/chờ giá) — tránh UnboundLocalError dưới.
-            if bid_v <= 0 or ask_v <= 0 or ask_v < bid_v:
+            spread_cost = 0.0  # tổng VND cho cả vị thế preview; 0 khi chưa có giá
+            if bid_v <= 0 or ask_v <= 0 or ask_v < bid_v or bool(getattr(tick, "synthetic", False)):
                 spread_part = "Spread: chờ giá"
             else:
-                spread_cost = (ask_v - bid_v) * f_lot * c_size
-                spread_part = f"Spread: {format_money_k(spread_cost)}"
+                # ask-bid đã là đơn vị giá: điểm (phái sinh) / nghìn VND (cổ phiếu).
+                spread = ask_v - bid_v
+                spread_part = f"Spread: {spread:.2f}"
+                spread_cost = spread * f_lot * c_size  # quy ra VND: × khối lượng × giá trị 1 đơn vị giá
 
             # Phí: luôn lấy giá trị tính được gần nhất (fallback profile), không treo "chờ DNSE".
             fee_part = f"Phí GD: {format_money_k(abs(comm_total))}"
@@ -3502,7 +3511,6 @@ class BotUI(ctk.CTk):
             ticket_str = str(p.ticket)
             current_tickets_on_chart.append(ticket_str)
 
-            p_tick = None
             try:
                 p_sym_info = self.connector.get_symbol_info(p.symbol) if self.connector else None
             except Exception:
@@ -3511,7 +3519,17 @@ class BotUI(ctk.CTk):
             p_unit = self._quantity_unit(p.symbol)
             swap_val = getattr(p, "swap", 0.0)
 
-            current_spread = (p_tick.ask - p_tick.bid) if p_tick else 0.0
+            # Spread hiện tại của mã (tick cache 2s/WS) — chỉ tính khi có sổ lệnh thật.
+            current_spread = 0.0
+            try:
+                p_tick_data = data_engine.fetch_realtime_tick(p.symbol)
+            except Exception:
+                p_tick_data = None
+            if p_tick_data and not p_tick_data.get("synthetic_quote"):
+                p_bid = float(p_tick_data.get("bid", 0.0) or 0.0)
+                p_ask = float(p_tick_data.get("ask", 0.0) or 0.0)
+                if p_bid > 0 and p_ask >= p_bid:
+                    current_spread = p_ask - p_bid
             spread_cost_usd = current_spread * p.volume * p_c_size
             comm_total_usd = self.calculate_trade_fee(p.symbol, p.price_current or p.price_open, p.volume)
 
