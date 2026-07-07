@@ -68,3 +68,49 @@ def format_money_k(value: float | int | None, max_decimals: int = 2) -> str:
 
 def parse_money_unit_label(label: str | None) -> str:
     return normalize_money_unit(label)
+
+
+# [UNIT VND] Trong config/logic, unit tiền lưu là "USD" (di sản MT5) nhưng nghĩa thật là
+# VND (đồng nguyên con). UI hiển thị "VND" cho khỏi nhầm; khi LƯU phải map ngược về "USD"
+# để không đụng các so sánh == "USD" trong trade_manager và settings cũ đã lưu.
+def unit_to_display(value: str | None) -> str:
+    v = str(value or "USD").strip()
+    return "VND" if v.upper() == "USD" else v
+
+
+def unit_from_display(value: str | None) -> str:
+    v = str(value or "VND").strip()
+    return "USD" if v.upper() == "VND" else v
+
+
+# [MONEY INPUT /1000] Ô nhập tiền trên UI tính bằng NGHÌN VND (khớp dashboard);
+# file settings vẫn lưu đồng nguyên con. Chỉ scale khi unit là tiền (USD/VND);
+# unit khác (R, %Equity, PERCENT, POINT, ATR) giữ nguyên số.
+MONEY_INPUT_SCALE = 1000.0
+_MONEY_UNITS = ("USD", "VND")
+
+
+def _is_money_unit(unit: str | None) -> bool:
+    return str(unit or "").strip().upper() in _MONEY_UNITS
+
+
+def money_input_to_display(value, unit: str | None) -> str:
+    """Giá trị lưu (đồng) -> chuỗi hiện trên ô nhập (nghìn VND nếu unit là tiền)."""
+    try:
+        v = float(value or 0.0)
+    except (TypeError, ValueError):
+        v = 0.0
+    if _is_money_unit(unit):
+        v = v / MONEY_INPUT_SCALE
+    return f"{v:g}"
+
+
+def money_input_from_display(value, unit: str | None) -> float:
+    """Ô nhập (nghìn VND nếu unit là tiền) -> giá trị lưu (đồng)."""
+    try:
+        v = float(value or 0.0)
+    except (TypeError, ValueError):
+        v = 0.0
+    if _is_money_unit(unit):
+        v = v * MONEY_INPUT_SCALE
+    return v

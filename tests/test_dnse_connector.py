@@ -81,19 +81,31 @@ def test_verify_otp_sets_token_and_expiry():
 
 
 def test_trading_token_ttl_by_otp_type(monkeypatch):
-    monkeypatch.setattr(config, "DNSE_TOKEN_TTL_HOURS", {"email_otp": 0.0, "smart_otp": 8.0})
-    # email OTP -> token KHÔNG tự hết
+    monkeypatch.setattr(config, "DNSE_TOKEN_TTL_HOURS", {"email_otp": 8.0, "smart_otp": 8.0})
+    # email OTP -> ~8h theo tài liệu DNSE
     conn = _connector(FakeSession([FakeResponse(200, {"trading-token": "tok"})]))
     conn.otp_type = "email_otp"
     assert conn.verify_otp("email_otp", "123456") is True
-    assert conn.trading_token_persistent is True
-    assert conn.trading_token_seconds_left() > 1_000_000
+    assert conn.trading_token_persistent is False
+    assert 7.5 * 3600 < conn.trading_token_seconds_left() <= 8 * 3600
     # smart OTP -> ~8h
     conn2 = _connector(FakeSession([FakeResponse(200, {"trading-token": "tok2"})]))
     conn2.otp_type = "smart_otp"
     assert conn2.verify_otp("smart_otp", "123456") is True
     assert conn2.trading_token_persistent is False
     assert 7.5 * 3600 < conn2.trading_token_seconds_left() <= 8 * 3600
+
+
+def test_401_invalid_token_clears_cached_token(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession([FakeResponse(401, {"message": "Token is invalid"})])
+    conn = _connector(session)
+    conn.trading_token = "stale"
+    conn.trading_token_expires_at = time.time() + 3600
+
+    assert conn.get_orders(symbol="VN30F1M") == []
+    assert conn.trading_token is None
+    assert conn.trading_token_seconds_left() == 0.0
 
 
 def test_send_order_builds_derivative_payload_and_uses_trading_token(monkeypatch):

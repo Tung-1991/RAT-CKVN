@@ -30,6 +30,7 @@ PREVIOUS_RESPONSE_LIMIT = 60000
 WORKBOOK_LIMIT_ROWS = 80
 DEFAULT_MAX_OUTPUT_TOKENS = 8000
 WORKBOOK_CELL_LIMIT = 6000
+SCAN_SUMMARY_LIMIT = 40000
 # Fallback nếu config.py thiếu catalog (giữ api_client tự chạy được).
 _FALLBACK_PROVIDERS = {
     "openai": {
@@ -109,6 +110,7 @@ DEFAULT_API_SETTINGS = {
     "technical_settings_limit": TECHNICAL_SETTINGS_LIMIT,
     "previous_response_limit": PREVIOUS_RESPONSE_LIMIT,
     "workbook_limit_rows": WORKBOOK_LIMIT_ROWS,
+    "scan_summary_limit": SCAN_SUMMARY_LIMIT,
     "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
 }
 
@@ -370,6 +372,11 @@ def load_api_settings():
         min_value=1,
         max_value=10000,
     )
+    settings["scan_summary_limit"] = _safe_int(
+        settings.get("scan_summary_limit"),
+        SCAN_SUMMARY_LIMIT,
+        min_value=1000,
+    )
     settings["max_output_tokens"] = _safe_int(
         settings.get("max_output_tokens"),
         DEFAULT_MAX_OUTPUT_TOKENS,
@@ -435,6 +442,11 @@ def load_api_settings_from_dict(data):
             WORKBOOK_LIMIT_ROWS,
             min_value=1,
             max_value=10000,
+        ),
+        "scan_summary_limit": _safe_int(
+            data.get("scan_summary_limit"),
+            SCAN_SUMMARY_LIMIT,
+            min_value=1000,
         ),
         "max_output_tokens": _safe_int(
             data.get("max_output_tokens"),
@@ -518,6 +530,10 @@ def build_api_sections(include_previous_response=False):
         ("advisor_export.xlsx", _workbook_text(limit_rows=settings["workbook_limit_rows"])),
         ("user_context.md", _read_text(paths.user_context_path(), limit=settings["user_context_limit"])),
     ]
+    # [SCAN SNAPSHOT] Dữ liệu quét watchlist tích lũy (chỉ khi kho có dữ liệu)
+    scan_text = _read_text(paths.scan_summary_path(), limit=settings.get("scan_summary_limit", SCAN_SUMMARY_LIMIT))
+    if scan_text.strip():
+        sections.append(("scan_summary.md", scan_text))
     if include_previous_response:
         sections.append(
             (

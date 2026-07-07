@@ -2311,8 +2311,11 @@ class BotUI(ctk.CTk):
             target="manual",
         )
         if self.var_preview_trade_after_apply.get():
-            self.log_message("[PREVIEW] Trade after Apply is ON. Sending NORMAL manual order.", target="manual")
-            self.on_click_trade()
+            self.log_message(
+                "[PREVIEW] Trade after Apply is ON. Sending via unified order flow.",
+                target="manual",
+            )
+            self.on_click_smart_order()
 
     # ==========================================
     # CÁC HÀM MỞ POPUP & GIAO DIỆN PHỤ

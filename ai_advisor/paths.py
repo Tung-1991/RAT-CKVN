@@ -93,6 +93,18 @@ def user_context_history_path():
     return os.path.join(history_root(), f"user_context_{timestamp_name()}.md")
 
 
+def scan_cache_path():
+    return os.path.join(account_dir(), "scan_snapshot_cache.json")
+
+
+def scan_summary_path():
+    return os.path.join(advisor_root(), "scan_summary.md")
+
+
+def scan_report_path():
+    return os.path.join(advisor_root(), "scan_report.md")
+
+
 def ensure_advisor_dirs():
     os.makedirs(advisor_root(), exist_ok=True)
     os.makedirs(history_root(), exist_ok=True)

@@ -9,6 +9,12 @@ import os
 import threading
 import time
 import config
+from core.money import (
+    money_input_from_display,
+    money_input_to_display,
+    unit_from_display,
+    unit_to_display,
+)
 from tkinter import messagebox, filedialog
 from ui_indicators_config import open_indicator_config_popup
 
@@ -1488,30 +1494,35 @@ class BotStrategyUI(ctk.CTkToplevel):
         rev_profit_unit = safe_cfg.get("REV_CLOSE_MIN_PROFIT_UNIT", "USD")
         rev_profit_value = float(safe_cfg.get("REV_CLOSE_MIN_PROFIT", 0.0) or 0.0)
         if rev_profit_unit in ("%R", "PERCENT_R"):
-            rev_profit_value = rev_profit_value / 100.0
-        self.var_rev_profit = ctk.StringVar(value=str(rev_profit_value))
+            _rev_profit_str = str(rev_profit_value / 100.0)
+        else:
+            # Tiền hiện theo nghìn VND (khớp dashboard); unit R/%Equity giữ nguyên
+            _rev_profit_str = money_input_to_display(rev_profit_value, rev_profit_unit)
+        self.var_rev_profit = ctk.StringVar(value=_rev_profit_str)
         ctk.CTkEntry(
             f_rev_time, textvariable=self.var_rev_profit, width=50, justify="center"
         ).grid(row=1, column=1, padx=(0, 5), pady=3, sticky="w")
         self.cbo_rev_profit_unit = ctk.CTkOptionMenu(
-            f_rev_time, values=["USD", "R", "%Equity"], width=85
+            f_rev_time, values=["VND", "R", "%Equity"], width=85
         )
-        self.cbo_rev_profit_unit.set("R" if rev_profit_unit in ("%R", "PERCENT_R") else rev_profit_unit)
+        self.cbo_rev_profit_unit.set("R" if rev_profit_unit in ("%R", "PERCENT_R") else unit_to_display(rev_profit_unit))
         self.cbo_rev_profit_unit.grid(row=1, column=2, padx=(0, 10), pady=3, sticky="w")
 
         ctk.CTkLabel(f_rev_time, text="Max Loss:").grid(row=1, column=3, padx=(0, 5), pady=3, sticky="w")
         rev_loss_unit = safe_cfg.get("REV_CLOSE_MAX_LOSS_UNIT", "USD")
         rev_loss_value = float(safe_cfg.get("REV_CLOSE_MAX_LOSS", 0.0) or 0.0)
         if rev_loss_unit in ("%R", "PERCENT_R"):
-            rev_loss_value = rev_loss_value / 100.0
-        self.var_rev_loss = ctk.StringVar(value=str(rev_loss_value))
+            _rev_loss_str = str(rev_loss_value / 100.0)
+        else:
+            _rev_loss_str = money_input_to_display(rev_loss_value, rev_loss_unit)
+        self.var_rev_loss = ctk.StringVar(value=_rev_loss_str)
         ctk.CTkEntry(
             f_rev_time, textvariable=self.var_rev_loss, width=50, justify="center"
         ).grid(row=1, column=4, padx=(0, 5), pady=3, sticky="w")
         self.cbo_rev_loss_unit = ctk.CTkOptionMenu(
-            f_rev_time, values=["USD", "R", "%Equity"], width=85
+            f_rev_time, values=["VND", "R", "%Equity"], width=85
         )
-        self.cbo_rev_loss_unit.set("R" if rev_loss_unit in ("%R", "PERCENT_R") else rev_loss_unit)
+        self.cbo_rev_loss_unit.set("R" if rev_loss_unit in ("%R", "PERCENT_R") else unit_to_display(rev_loss_unit))
         self.cbo_rev_loss_unit.grid(row=1, column=5, padx=(0, 5), pady=3, sticky="w")
 
         ctk.CTkLabel(f_rev_time, text="Confirm(s):").grid(row=2, column=0, padx=(0, 5), pady=3, sticky="w")
@@ -2100,10 +2111,10 @@ class BotStrategyUI(ctk.CTkToplevel):
                     "REV_CONFIRM_SCANS": self.temp_rev_confirm_scans,
                     "CLOSE_ON_REVERSE_USE_PNL": self.var_close_rev_pnl.get(),
                     "REV_CLOSE_ON_NONE": self.var_rev_none.get(),
-                    "REV_CLOSE_MIN_PROFIT": float(self.var_rev_profit.get() or 0.0),
-                    "REV_CLOSE_MIN_PROFIT_UNIT": self.cbo_rev_profit_unit.get(),
-                    "REV_CLOSE_MAX_LOSS": float(self.var_rev_loss.get() or 0.0),
-                    "REV_CLOSE_MAX_LOSS_UNIT": self.cbo_rev_loss_unit.get(),
+                    "REV_CLOSE_MIN_PROFIT": money_input_from_display(self.var_rev_profit.get(), self.cbo_rev_profit_unit.get()),
+                    "REV_CLOSE_MIN_PROFIT_UNIT": unit_from_display(self.cbo_rev_profit_unit.get()),
+                    "REV_CLOSE_MAX_LOSS": money_input_from_display(self.var_rev_loss.get(), self.cbo_rev_loss_unit.get()),
+                    "REV_CLOSE_MAX_LOSS_UNIT": unit_from_display(self.cbo_rev_loss_unit.get()),
                 }
                 default_exit = output_data.get("entry_exit", {}).get("default_exit", {})
                 output_data["bot_safeguard"]["BOT_USE_RR_TP"] = bool(default_exit.get("use_rr_tp", True))
@@ -2139,10 +2150,10 @@ class BotStrategyUI(ctk.CTkToplevel):
             existing_data["bot_safeguard"]["REV_CONFIRM_SCANS"] = self.temp_rev_confirm_scans
             existing_data["bot_safeguard"]["CLOSE_ON_REVERSE_USE_PNL"] = self.var_close_rev_pnl.get()
             existing_data["bot_safeguard"]["REV_CLOSE_ON_NONE"] = self.var_rev_none.get()
-            existing_data["bot_safeguard"]["REV_CLOSE_MIN_PROFIT"] = float(self.var_rev_profit.get() or 0.0)
-            existing_data["bot_safeguard"]["REV_CLOSE_MIN_PROFIT_UNIT"] = self.cbo_rev_profit_unit.get()
-            existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS"] = float(self.var_rev_loss.get() or 0.0)
-            existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS_UNIT"] = self.cbo_rev_loss_unit.get()
+            existing_data["bot_safeguard"]["REV_CLOSE_MIN_PROFIT"] = money_input_from_display(self.var_rev_profit.get(), self.cbo_rev_profit_unit.get())
+            existing_data["bot_safeguard"]["REV_CLOSE_MIN_PROFIT_UNIT"] = unit_from_display(self.cbo_rev_profit_unit.get())
+            existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS"] = money_input_from_display(self.var_rev_loss.get(), self.cbo_rev_loss_unit.get())
+            existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS_UNIT"] = unit_from_display(self.cbo_rev_loss_unit.get())
             default_exit = output_data.get("entry_exit", {}).get("default_exit", {})
             existing_data["bot_safeguard"]["BOT_USE_RR_TP"] = bool(default_exit.get("use_rr_tp", True))
             existing_data["bot_safeguard"]["BOT_TP_RR_RATIO"] = float(default_exit.get("tp_rr_ratio", 1.5))

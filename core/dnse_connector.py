@@ -319,6 +319,23 @@ class DNSEConnector:
         acc = str(self.account_no or "").strip()
         return os.path.join("data", acc, "trading_token.json") if acc else None
 
+    def _configured_token_ttl_seconds(self) -> float:
+        ttl_map = getattr(config, "DNSE_TOKEN_TTL_HOURS", {}) or {}
+        ttl_hours = float(ttl_map.get(self.otp_type, 8.0) or 0.0)
+        return max(0.0, ttl_hours * 3600.0)
+
+    def _clear_trading_token(self, remove_file: bool = False):
+        self.trading_token = None
+        self.trading_token_expires_at = 0.0
+        self.trading_token_persistent = False
+        if remove_file:
+            path = self._token_file()
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    logger.warning("Xoa trading-token cache loi: %s", exc)
+
     def _save_token_to_disk(self):
         if not bool(getattr(config, "PERSIST_TRADING_TOKEN", False)):
             return
@@ -330,6 +347,8 @@ class DNSEConnector:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "trading_token": self.trading_token,
+                    "otp_type": self.otp_type,
+                    "saved_at": time.time(),
                     "expires_at": self.trading_token_expires_at,
                     "persistent": self.trading_token_persistent,
                 }, f)
@@ -347,10 +366,14 @@ class DNSEConnector:
                 data = json.load(f)
             token = str(data.get("trading_token") or "")
             exp = float(data.get("expires_at") or 0.0)
+            ttl_seconds = self._configured_token_ttl_seconds()
+            if ttl_seconds > 0 and exp > time.time() + ttl_seconds + 300.0:
+                logger.info("Bo qua trading-token cache cu co han vuot TTL DNSE.")
+                return
             if token and time.time() < exp:
                 self.trading_token = token
                 self.trading_token_expires_at = exp
-                self.trading_token_persistent = bool(data.get("persistent", False))
+                self.trading_token_persistent = bool(data.get("persistent", False)) and ttl_seconds <= 0
                 logger.info("Đã nạp trading-token đã lưu (còn hiệu lực).")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Nạp trading-token lỗi: %s", exc)
@@ -457,6 +480,8 @@ class DNSEConnector:
                     time.sleep(wait_s)
                     continue
                 message = data.get("message") if isinstance(data, dict) else str(data)
+                if response.status_code == 401 and "token is invalid" in str(message or data).lower():
+                    self._clear_trading_token(remove_file=True)
                 self._record_api_request(method, path, response.status_code, self.last_latency_ms, message or response.text)
                 return False, data, response.status_code, message or response.text
         except Exception as exc:
@@ -492,15 +517,15 @@ class DNSEConnector:
             logger.error("DNSE OTP verification did not return trading token: %s", data)
             return False
         self.trading_token = str(token)
-        # Thời hạn theo loại OTP: email = không tự hết (đặt mốc xa ~10 năm); smart = ~8h.
-        ttl_map = getattr(config, "DNSE_TOKEN_TTL_HOURS", {}) or {}
-        ttl_hours = float(ttl_map.get(self.otp_type, 8.0))
+        # DNSE docs: trading-token is valid for about 8 hours.
+        ttl_seconds = self._configured_token_ttl_seconds()
+        ttl_hours = ttl_seconds / 3600.0
         self.trading_token_persistent = ttl_hours <= 0
         if self.trading_token_persistent:
             self.trading_token_expires_at = time.time() + (10 * 365 * 24 * 3600)
             logger.info("DNSE trading token ready (%s — không tự hết hạn).", self.otp_type)
         else:
-            self.trading_token_expires_at = time.time() + (ttl_hours * 3600)
+            self.trading_token_expires_at = time.time() + ttl_seconds
             logger.info("DNSE trading token ready (~%.0fh, %s).", ttl_hours, self.otp_type)
         self._save_token_to_disk()  # opt-in: lưu để restart khỏi OTP lại
         return True

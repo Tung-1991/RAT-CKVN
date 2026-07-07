@@ -20,6 +20,7 @@ Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa
 - user_context.md: ghi chú thủ công của operator.
 - technical_settings.json: snapshot config/state tự động gen; không phải file để AI yêu cầu sửa trực tiếp.
 - advisor_export.xlsx: workbook evidence tự động gen theo số ngày export.
+- scan_summary.md / scan_report.md: dữ liệu quét watchlist tích lũy theo ngày (giá, volume vs avg20, indicator thô, tín hiệu daemon bắn ra) — nguồn để xếp hạng mã nên mua/tránh/chốt.
 - advisor_response.md: câu trả lời mới nhất của AI sau khi gọi API.
 
 ## Quy tắc dùng web

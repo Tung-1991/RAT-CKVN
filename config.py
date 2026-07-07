@@ -28,9 +28,8 @@ DERIVATIVE_REAL_SYMBOLS = [s.strip().upper() for s in os.getenv("DNSE_DERIVATIVE
 DNSE_CUSTODY_CODE = os.getenv("DNSE_CUSTODY_CODE", "")
 DNSE_STOCK_ACCOUNT_NO = os.getenv("DNSE_STOCK_ACCOUNT_NO", "")
 DNSE_DERIVATIVE_ACCOUNT_NO = os.getenv("DNSE_DERIVATIVE_ACCOUNT_NO", "")
-# Thời hạn trading-token theo loại OTP (giờ). 0 = KHÔNG tự hết (email OTP sống tới khi logout).
-# smart OTP của DNSE hết ~8h. Chỉnh được nếu sàn đổi luật.
-DNSE_TOKEN_TTL_HOURS = {"email_otp": 0.0, "smart_otp": 8.0}
+# Thời hạn trading-token theo tài liệu DNSE: cả Email OTP và Smart OTP đều ~8 giờ.
+DNSE_TOKEN_TTL_HOURS = {"email_otp": 8.0, "smart_otp": 8.0}
 CRYPTO_SYMBOLS = []
 WEEKDAY_ONLY_SYMBOLS = ["VN30F1M"]
 MARKET_HOURS_UTC_OFFSET = 7 # Giờ VN
@@ -588,3 +587,9 @@ AI_ADVISOR_PROVIDERS = {
         },
     },
 }
+
+# --- Scan Snapshot (kho lưu kết quả quét của daemon cho AI Advisor) ---
+# Daemon quét mỗi vòng nhưng chỉ LƯU mẫu định kỳ; tín hiệu BUY/SELL thì ghi ngay.
+SCAN_SNAPSHOT_ENABLED = os.getenv("SCAN_SNAPSHOT_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+SCAN_SNAPSHOT_INTERVAL_MINUTES = float(os.getenv("SCAN_SNAPSHOT_INTERVAL_MINUTES", "15"))
+SCAN_SNAPSHOT_RETENTION_DAYS = int(os.getenv("SCAN_SNAPSHOT_RETENTION_DAYS", "10"))

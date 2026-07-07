@@ -7,7 +7,8 @@ Thứ tự đọc package:
 2. user_context.md để hiểu câu hỏi/mục tiêu hiện tại của operator.
 3. technical_settings.json để đọc config hiện tại, runtime snapshot, advisor_guide và state module.
 4. advisor_export.xlsx để lấy trade evidence, summary, events, config snapshots và config changes.
-5. previous_advisor_response.md nếu có: chỉ dùng để đối chiếu, không coi là sự thật nếu dữ liệu hiện tại chưa xác nhận.
+5. scan_summary.md nếu có: dữ liệu quét tích lũy của watchlist (giá, volume, indicator, tín hiệu theo ngày) — làm theo khối CHỈ DẪN CHO AI nhúng ngay đầu file đó.
+6. previous_advisor_response.md nếu có: chỉ dùng để đối chiếu, không coi là sự thật nếu dữ liệu hiện tại chưa xác nhận.
 
 Quy tắc web bắt buộc:
 - Nếu web_search được bật, bắt buộc kiểm tra bối cảnh thị trường mới cho symbol active hoặc symbol có trade trong export.
@@ -48,6 +49,11 @@ Format bắt buộc:
 ## Hành động đề xuất
 - 2-4 hành động operator nên kiểm tra thủ công.
 - Không yêu cầu bot tự sửa config, không đề xuất đặt lệnh tự động.
+
+## Watchlist xếp hạng (chỉ khi package có scan_summary.md)
+- Nghiên cứu từng mã bằng web_search: ngành, khối ngoại, tin tức, dòng tiền ngành.
+- Volume là trọng số cao nhất; đối chiếu ratio so với avg20 và xu hướng 5 ngày trong scan_summary.md.
+- Xếp mã vào 3 nhóm MUA MỚI / TRÁNH / CHỐT LỜI theo tầm nhìn nắm giữ 3-10 phiên (T+2), mỗi mã 1-2 câu lý do.
 
 ## Độ tin cậy / Thiếu dữ liệu
 - Nêu confidence tổng thể và dữ liệu thiếu quan trọng.

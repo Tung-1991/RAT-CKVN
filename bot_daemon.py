@@ -264,6 +264,20 @@ class StandaloneBotDaemon:
                 self.dca_pca_interval = live_cfg.get("bot_safeguard", {}).get(
                     "DCA_PCA_SCAN_INTERVAL", 2
                 )
+                # [SCAN SNAPSHOT] Toggle + interval live từ brain_settings (UI ghi), fallback env/config
+                self._scan_snapshot_enabled = bool(
+                    live_cfg.get(
+                        "SCAN_SNAPSHOT_ENABLED",
+                        getattr(config, "SCAN_SNAPSHOT_ENABLED", False),
+                    )
+                )
+                if "SCAN_SNAPSHOT_INTERVAL_MINUTES" in live_cfg:
+                    try:
+                        config.SCAN_SNAPSHOT_INTERVAL_MINUTES = float(
+                            live_cfg.get("SCAN_SNAPSHOT_INTERVAL_MINUTES")
+                        )
+                    except Exception:
+                        pass
                 for _ttl_key in (
                     "DNSE_TICK_CACHE_TTL_SECONDS",
                     "DNSE_OHLC_CACHE_TTL_SECONDS",
@@ -326,6 +340,14 @@ class StandaloneBotDaemon:
             self.heartbeat_contexts[sym] = context.copy()
             self.heartbeat_contexts[sym].update({"timestamp": time.time()})
 
+            # [SCAN SNAPSHOT] Lưu kết quả quét vào kho cho AI Advisor (opt-in, lỗi lưu trữ không được gãy scan)
+            if getattr(self, "_scan_snapshot_enabled", False):
+                try:
+                    from ai_advisor.scan_cache import recorder as _scan_recorder
+                    _scan_recorder.maybe_record(sym, dfs, context, signal)
+                except Exception as e:
+                    logger.debug(f"scan_cache maybe_record lỗi ({sym}): {e}")
+
             if not is_open:
                 signal_debug_state[sym] = f"[PAUSE/PREVIEW] {closed_reason}"
                 continue
@@ -356,6 +378,14 @@ class StandaloneBotDaemon:
                 )
 
         self._write_signal_debugger(signal_debug_state)
+
+        # [SCAN SNAPSHOT] Ghi đĩa 1 lần cuối vòng quét (chỉ khi có thay đổi)
+        if getattr(self, "_scan_snapshot_enabled", False):
+            try:
+                from ai_advisor.scan_cache import recorder as _scan_recorder
+                _scan_recorder.flush()
+            except Exception as e:
+                logger.debug(f"scan_cache flush lỗi: {e}")
 
     def _scan_dca_pca(self):
         # [NEW V4.4] Bỏ get brain global, dời xuống từng vòng lặp Symbol để lấy config riêng

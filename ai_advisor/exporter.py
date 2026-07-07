@@ -174,6 +174,16 @@ def generate_advisor_package(
         ensure_advisor_response_template()
         ensure_advisor_api_files()
         tech_path, snapshot_id = write_technical_settings(reason=reason)
+        # [SCAN SNAPSHOT] Render kho quét watchlist thành summary/report (nếu có dữ liệu)
+        try:
+            from ai_advisor import scan_report
+            scan_files = scan_report.export_scan_files()
+            if scan_files:
+                result["scan_summary"] = scan_files["summary"]
+                result["scan_report"] = scan_files["report"]
+                result["scan_symbols"] = scan_files["symbols"]
+        except Exception as scan_exc:
+            result["warnings"].append(f"scan report failed: {scan_exc}")
         history.ensure_config_snapshot(reason=reason)
         synced = history.sync_from_master_csv()
         open_count = history.refresh_open_trades(connector=connector, state=state, market_contexts=market_contexts)

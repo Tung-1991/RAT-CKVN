@@ -16,6 +16,13 @@ import csv
 import os
 import json
 
+from core.money import (
+    money_input_from_display,
+    money_input_to_display,
+    unit_from_display,
+    unit_to_display,
+)
+
 
 def _build_watch_symbols():
     symbols = []
@@ -137,6 +144,93 @@ def open_advisor_popup(app):
         checkbox_width=18,
         checkbox_height=18,
     ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 4))
+
+    # --- [SCAN SNAPSHOT] Kho lưu kết quả quét watchlist cho AI Advisor ---
+    var_scan_snapshot = tk.BooleanVar(value=bool(getattr(config, "SCAN_SNAPSHOT_ENABLED", False)))
+
+    def _save_scan_snapshot():
+        try:
+            enabled = bool(var_scan_snapshot.get())
+            try:
+                interval = max(1.0, float(e_scan_interval.get() or 15))
+            except ValueError:
+                interval = 15.0
+            from core import env_utils
+            env_utils.update_env({
+                "SCAN_SNAPSHOT_ENABLED": "true" if enabled else "false",
+                "SCAN_SNAPSHOT_INTERVAL_MINUTES": str(interval),
+            })
+            config.SCAN_SNAPSHOT_ENABLED = enabled
+            config.SCAN_SNAPSHOT_INTERVAL_MINUTES = interval
+            # Ghi vào brain_settings để daemon (process riêng) nhận live không cần restart
+            import core.storage_manager as storage_manager
+            cfg_path = storage_manager.BRAIN_SETTINGS_FILE
+            data = {}
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            data["SCAN_SNAPSHOT_ENABLED"] = enabled
+            data["SCAN_SNAPSHOT_INTERVAL_MINUTES"] = interval
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+            storage_manager.invalidate_settings_cache()
+            if hasattr(app, "_set_advisor_status"):
+                app._set_advisor_status(f"Scan snapshot: {'ON' if enabled else 'OFF'} ({interval:g} phút/mẫu)")
+        except Exception as exc:  # noqa: BLE001
+            if hasattr(app, "_set_advisor_status"):
+                app._set_advisor_status(f"Lỗi lưu scan snapshot: {exc}")
+
+    ctk.CTkCheckBox(
+        settings,
+        text="Lưu kho quét watchlist cho AI (daemon ghi snapshot)",
+        variable=var_scan_snapshot,
+        command=_save_scan_snapshot,
+        font=("Roboto", 12, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 4))
+
+    ctk.CTkLabel(settings, text="Chu kỳ lưu mẫu (phút)", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=6, column=0, sticky="w", pady=6)
+    scan_interval_row = ctk.CTkFrame(settings, fg_color="transparent")
+    scan_interval_row.grid(row=6, column=1, sticky="e", pady=6)
+    e_scan_interval = ctk.CTkEntry(scan_interval_row, width=70, height=28)
+    e_scan_interval.insert(0, f"{getattr(config, 'SCAN_SNAPSHOT_INTERVAL_MINUTES', 15):g}")
+    e_scan_interval.pack(side="left")
+    ctk.CTkButton(scan_interval_row, text="Lưu", width=50, height=28, fg_color="#424242", hover_color="#616161", command=_save_scan_snapshot).pack(side="left", padx=(6, 0))
+
+    lbl_scan_status = ctk.CTkLabel(settings, text="Kho quét: —", font=("Roboto", 11), text_color="#B0BEC5", anchor="w")
+    lbl_scan_status.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 2))
+    ctk.CTkLabel(
+        settings,
+        text="Snapshot EOD chốt sau 14:45 — đặt 'Giờ cố định' gửi API sau mốc đó (vd 15:05).",
+        font=("Roboto", 10),
+        text_color="#FBC02D",
+        anchor="w",
+    ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
+    def _refresh_scan_status():
+        try:
+            if not lbl_scan_status.winfo_exists():
+                return
+            from ai_advisor import scan_cache
+            cache = scan_cache.load_cache()
+            syms = cache.get("symbols", {})
+            if syms:
+                total_signals = sum(
+                    len(day.get("signals", []))
+                    for node in syms.values()
+                    for day in node.get("days", {}).values()
+                )
+                lbl_scan_status.configure(
+                    text=f"Kho quét: {len(syms)} mã | {total_signals} tín hiệu | cập nhật {cache.get('updated_at') or '—'}"
+                )
+            else:
+                lbl_scan_status.configure(text="Kho quét: trống (bật switch + daemon chạy trong phiên)")
+            top.after(2000, _refresh_scan_status)
+        except Exception:
+            pass
+
+    _refresh_scan_status()
 
     api_hint = ctk.CTkFrame(tab_run, fg_color="#252526", corner_radius=6)
     api_hint.pack(fill="x", padx=10, pady=(8, 2))
@@ -966,21 +1060,21 @@ def open_symbol_config_popup(app, symbol, on_change=None):
         row=6, column=0, sticky="w", pady=10
     )
     e_wm_trigger = ctk.CTkEntry(f_grid, width=100, justify="center")
-    e_wm_trigger.insert(0, str(sym_cfg.get("watermark_trigger", 0.0)))
+    e_wm_trigger.insert(0, money_input_to_display(sym_cfg.get("watermark_trigger", 0.0), sym_cfg.get("watermark_trigger_unit", "USD")))
     e_wm_trigger.grid(row=6, column=1, sticky="e", pady=10)
-    cbo_wm_trigger_unit = ctk.CTkOptionMenu(f_grid, values=["USD", "%Equity"], width=90)
-    cbo_wm_trigger_unit.set(sym_cfg.get("watermark_trigger_unit", "USD"))
+    cbo_wm_trigger_unit = ctk.CTkOptionMenu(f_grid, values=["VND", "%Equity"], width=90)
+    cbo_wm_trigger_unit.set(unit_to_display(sym_cfg.get("watermark_trigger_unit", "USD")))
     cbo_wm_trigger_unit.grid(row=6, column=2, sticky="w", padx=(8, 0), pady=10)
     ctk.CTkLabel(f_grid, text="Watermark Sụt giảm:", text_color="#00C853").grid(
         row=7, column=0, sticky="w", pady=10
     )
     e_wm_drawdown = ctk.CTkEntry(f_grid, width=100, justify="center")
-    e_wm_drawdown.insert(0, str(sym_cfg.get("watermark_drawdown", 0.0)))
+    e_wm_drawdown.insert(0, money_input_to_display(sym_cfg.get("watermark_drawdown", 0.0), sym_cfg.get("watermark_drawdown_unit", "USD")))
     e_wm_drawdown.grid(row=7, column=1, sticky="e", pady=10)
     cbo_wm_drawdown_unit = ctk.CTkOptionMenu(
-        f_grid, values=["USD", "%Equity"], width=90
+        f_grid, values=["VND", "%Equity"], width=90
     )
-    cbo_wm_drawdown_unit.set(sym_cfg.get("watermark_drawdown_unit", "USD"))
+    cbo_wm_drawdown_unit.set(unit_to_display(sym_cfg.get("watermark_drawdown_unit", "USD")))
     cbo_wm_drawdown_unit.grid(row=7, column=2, sticky="w", padx=(8, 0), pady=10)
     ctk.CTkLabel(f_grid, text="SL Tối thiểu (Points):").grid(
         row=8, column=0, sticky="w", pady=10
@@ -992,10 +1086,10 @@ def open_symbol_config_popup(app, symbol, on_change=None):
         row=9, column=0, sticky="w", pady=10
     )
     e_basket_dd = ctk.CTkEntry(f_grid, width=100, justify="center")
-    e_basket_dd.insert(0, str(sym_cfg.get("max_basket_drawdown", 0.0)))
+    e_basket_dd.insert(0, money_input_to_display(sym_cfg.get("max_basket_drawdown", 0.0), sym_cfg.get("max_basket_drawdown_unit", "USD")))
     e_basket_dd.grid(row=9, column=1, sticky="e", pady=10)
-    cbo_basket_dd_unit = ctk.CTkOptionMenu(f_grid, values=["USD", "%Equity"], width=90)
-    cbo_basket_dd_unit.set(sym_cfg.get("max_basket_drawdown_unit", "USD"))
+    cbo_basket_dd_unit = ctk.CTkOptionMenu(f_grid, values=["VND", "%Equity"], width=90)
+    cbo_basket_dd_unit.set(unit_to_display(sym_cfg.get("max_basket_drawdown_unit", "USD")))
     cbo_basket_dd_unit.grid(row=9, column=2, sticky="w", padx=(8, 0), pady=10)
     var_reject_lot = ctk.BooleanVar(value=sym_cfg.get("reject_on_max_lot", False))
     ctk.CTkCheckBox(
@@ -1020,13 +1114,13 @@ def open_symbol_config_popup(app, symbol, on_change=None):
                 "max_ping": mp,
                 "fixed_lot": float(e_fixed_lot.get()),
                 "max_lot_cap": float(e_max_lot_cap.get()),
-                "watermark_trigger": float(e_wm_trigger.get()),
-                "watermark_trigger_unit": cbo_wm_trigger_unit.get(),
-                "watermark_drawdown": float(e_wm_drawdown.get()),
-                "watermark_drawdown_unit": cbo_wm_drawdown_unit.get(),
+                "watermark_trigger": money_input_from_display(e_wm_trigger.get(), cbo_wm_trigger_unit.get()),
+                "watermark_trigger_unit": unit_from_display(cbo_wm_trigger_unit.get()),
+                "watermark_drawdown": money_input_from_display(e_wm_drawdown.get(), cbo_wm_drawdown_unit.get()),
+                "watermark_drawdown_unit": unit_from_display(cbo_wm_drawdown_unit.get()),
                 "min_sl_points": int(e_min_sl.get()),
-                "max_basket_drawdown": float(e_basket_dd.get()),
-                "max_basket_drawdown_unit": cbo_basket_dd_unit.get(),
+                "max_basket_drawdown": money_input_from_display(e_basket_dd.get(), cbo_basket_dd_unit.get()),
+                "max_basket_drawdown_unit": unit_from_display(cbo_basket_dd_unit.get()),
                 "reject_on_max_lot": var_reject_lot.get(),
             }
             with open(cfg_path, "w", encoding="utf-8") as f:
@@ -1442,34 +1536,34 @@ def open_bot_setting_popup(app):
         row=0, column=0, sticky="w", padx=10, pady=5
     )
     e_gl_wm_trigger = ctk.CTkEntry(f_sg_content, width=60, justify="center")
-    e_gl_wm_trigger.insert(0, str(safe_cfg.get("WATERMARK_TRIGGER", 0.0)))
+    e_gl_wm_trigger.insert(0, money_input_to_display(safe_cfg.get("WATERMARK_TRIGGER", 0.0), safe_cfg.get("WATERMARK_TRIGGER_UNIT", "USD")))
     e_gl_wm_trigger.grid(row=0, column=1, sticky="w", padx=5, pady=5)
     cbo_gl_wm_trigger_unit = ctk.CTkOptionMenu(
-        f_sg_content, values=["USD", "%Equity"], width=90
+        f_sg_content, values=["VND", "%Equity"], width=90
     )
-    cbo_gl_wm_trigger_unit.set(safe_cfg.get("WATERMARK_TRIGGER_UNIT", "USD"))
+    cbo_gl_wm_trigger_unit.set(unit_to_display(safe_cfg.get("WATERMARK_TRIGGER_UNIT", "USD")))
     cbo_gl_wm_trigger_unit.grid(row=0, column=2, sticky="w", padx=(0, 10), pady=5)
     ctk.CTkLabel(f_sg_content, text="Drawdown:").grid(
         row=0, column=3, sticky="w", padx=10, pady=5
     )
     e_gl_wm_drawdown = ctk.CTkEntry(f_sg_content, width=60, justify="center")
-    e_gl_wm_drawdown.insert(0, str(safe_cfg.get("WATERMARK_DRAWDOWN", 0.0)))
+    e_gl_wm_drawdown.insert(0, money_input_to_display(safe_cfg.get("WATERMARK_DRAWDOWN", 0.0), safe_cfg.get("WATERMARK_DRAWDOWN_UNIT", "USD")))
     e_gl_wm_drawdown.grid(row=0, column=4, sticky="w", padx=5, pady=5)
     cbo_gl_wm_drawdown_unit = ctk.CTkOptionMenu(
-        f_sg_content, values=["USD", "%Equity"], width=90
+        f_sg_content, values=["VND", "%Equity"], width=90
     )
-    cbo_gl_wm_drawdown_unit.set(safe_cfg.get("WATERMARK_DRAWDOWN_UNIT", "USD"))
+    cbo_gl_wm_drawdown_unit.set(unit_to_display(safe_cfg.get("WATERMARK_DRAWDOWN_UNIT", "USD")))
     cbo_gl_wm_drawdown_unit.grid(row=0, column=5, sticky="w", padx=(0, 10), pady=5)
     ctk.CTkLabel(f_sg_content, text="Max Basket Loss (DCA/PCA):").grid(
         row=1, column=0, sticky="w", padx=10, pady=5
     )
     e_gl_basket_dd = ctk.CTkEntry(f_sg_content, width=60, justify="center")
-    e_gl_basket_dd.insert(0, str(safe_cfg.get("MAX_BASKET_DRAWDOWN_USD", 0.0)))
+    e_gl_basket_dd.insert(0, money_input_to_display(safe_cfg.get("MAX_BASKET_DRAWDOWN_USD", 0.0), safe_cfg.get("MAX_BASKET_DRAWDOWN_UNIT", "USD")))
     e_gl_basket_dd.grid(row=1, column=1, sticky="w", padx=5, pady=5)
     cbo_gl_basket_dd_unit = ctk.CTkOptionMenu(
-        f_sg_content, values=["USD", "%Equity"], width=90
+        f_sg_content, values=["VND", "%Equity"], width=90
     )
-    cbo_gl_basket_dd_unit.set(safe_cfg.get("MAX_BASKET_DRAWDOWN_UNIT", "USD"))
+    cbo_gl_basket_dd_unit.set(unit_to_display(safe_cfg.get("MAX_BASKET_DRAWDOWN_UNIT", "USD")))
     cbo_gl_basket_dd_unit.grid(row=1, column=2, sticky="w", padx=(0, 10), pady=5)
     ctk.CTkLabel(f_sg_content, text="SL Tối thiểu (pts):").grid(
         row=1, column=3, sticky="w", padx=10, pady=5
@@ -1734,13 +1828,13 @@ def open_bot_setting_popup(app):
                     "POST_CLOSE_COOLDOWN": int(e_post_close.get()),
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
-                    "WATERMARK_TRIGGER": float(e_gl_wm_trigger.get()),
-                    "WATERMARK_TRIGGER_UNIT": cbo_gl_wm_trigger_unit.get(),
-                    "WATERMARK_DRAWDOWN": float(e_gl_wm_drawdown.get()),
-                    "WATERMARK_DRAWDOWN_UNIT": cbo_gl_wm_drawdown_unit.get(),
+                    "WATERMARK_TRIGGER": money_input_from_display(e_gl_wm_trigger.get(), cbo_gl_wm_trigger_unit.get()),
+                    "WATERMARK_TRIGGER_UNIT": unit_from_display(cbo_gl_wm_trigger_unit.get()),
+                    "WATERMARK_DRAWDOWN": money_input_from_display(e_gl_wm_drawdown.get(), cbo_gl_wm_drawdown_unit.get()),
+                    "WATERMARK_DRAWDOWN_UNIT": unit_from_display(cbo_gl_wm_drawdown_unit.get()),
                     "MIN_SL_POINTS": int(e_gl_min_sl.get()),
-                    "MAX_BASKET_DRAWDOWN_USD": float(e_gl_basket_dd.get()),
-                    "MAX_BASKET_DRAWDOWN_UNIT": cbo_gl_basket_dd_unit.get(),
+                    "MAX_BASKET_DRAWDOWN_USD": money_input_from_display(e_gl_basket_dd.get(), cbo_gl_basket_dd_unit.get()),
+                    "MAX_BASKET_DRAWDOWN_UNIT": unit_from_display(cbo_gl_basket_dd_unit.get()),
                     "REJECT_ON_MAX_LOT": var_gl_reject_lot.get(),
                     "GLOBAL_BRAKE_MODE": cbo_brake_mode.get(),
                     "BOT_ORDER_MODE": cbo_bot_order_mode.get(),
@@ -2483,8 +2577,8 @@ def open_preset_config_popup(app):
     data = config.PRESETS.get(p_name, {})
     top = ctk.CTkToplevel(app)
     top.title(f"Preset: {p_name}")
-    top.geometry("540x800")
-    top.minsize(500, 520)
+    top.geometry("760x800")
+    top.minsize(720, 520)
     _bring_popup_to_front(top)
 
     # 2 tab: 'Cố định' (rule lệnh, 1 preset duy nhất) + 'Paper' (vốn ảo)
@@ -2515,7 +2609,7 @@ def open_preset_config_popup(app):
         "- Preset chỉ định rule riêng cho SL và TP manual: Percent/RR hoặc SwingPoint.",
         padx=20,
         pady=(0, 10),
-        wraplength=470,
+        wraplength=680,
     )
     ctk.CTkLabel(body, text="Risk Per Trade (%):").pack()
     e_risk = ctk.CTkEntry(body, justify="center")
@@ -2974,21 +3068,21 @@ def open_tsl_popup(app, override_symbol=None):
         f_be_r1, text="BE Loss Guard", text_color="#00B8D4", font=("Roboto", 12, "bold")
     ).pack(side="left", padx=5)
     cbo_be_sl_unit = ctk.CTkOptionMenu(
-        f_be_r1, values=["R", "USD", "PERCENT", "POINT"], width=90
+        f_be_r1, values=["R", "VND", "PERCENT", "POINT"], width=90
     )
-    cbo_be_sl_unit.set(tsl_cfg.get("BE_SL_LOSS_UNIT", "R"))
+    cbo_be_sl_unit.set(unit_to_display(tsl_cfg.get("BE_SL_LOSS_UNIT", "R")))
     cbo_be_sl_unit.pack(side="left", padx=5)
     ctk.CTkLabel(f_be_r1, text="Loss Trig:").pack(side="left", padx=(8, 2))
     e_be_sl_loss_trigger = ctk.CTkEntry(f_be_r1, width=55)
-    e_be_sl_loss_trigger.insert(0, str(tsl_cfg.get("BE_SL_LOSS_TRIGGER", 0.5)))
+    e_be_sl_loss_trigger.insert(0, money_input_to_display(tsl_cfg.get("BE_SL_LOSS_TRIGGER", 0.5), tsl_cfg.get("BE_SL_LOSS_UNIT", "R")))
     e_be_sl_loss_trigger.pack(side="left", padx=(5, 10))
     ctk.CTkLabel(f_be_r1, text="Step:").pack(side="left", padx=(8, 2))
     e_be_sl_loss_step = ctk.CTkEntry(f_be_r1, width=55)
-    e_be_sl_loss_step.insert(0, str(tsl_cfg.get("BE_SL_LOSS_STEP", 0.15)))
+    e_be_sl_loss_step.insert(0, money_input_to_display(tsl_cfg.get("BE_SL_LOSS_STEP", 0.15), tsl_cfg.get("BE_SL_LOSS_UNIT", "R")))
     e_be_sl_loss_step.pack(side="left", padx=(5, 10))
     ctk.CTkLabel(f_be_r1, text="Guard Buf:").pack(side="left", padx=(8, 2))
     e_be_sl_guard_buffer = ctk.CTkEntry(f_be_r1, width=55)
-    e_be_sl_guard_buffer.insert(0, str(tsl_cfg.get("BE_SL_GUARD_BUFFER", 0.075)))
+    e_be_sl_guard_buffer.insert(0, money_input_to_display(tsl_cfg.get("BE_SL_GUARD_BUFFER", 0.075), tsl_cfg.get("BE_SL_LOSS_UNIT", "R")))
     e_be_sl_guard_buffer.pack(side="left", padx=(5, 10))
     ctk.CTkLabel(f_be_r2, text="Re-entry Lock(s):").pack(side="left", padx=(8, 2))
     e_be_sl_reentry_lock = ctk.CTkEntry(f_be_r2, width=80)
@@ -3076,7 +3170,7 @@ def open_tsl_popup(app, override_symbol=None):
     _add_popup_hint(
         tab_adv,
         "- Swing/PSAR dùng group được chọn để bám cấu trúc giá.\n"
-        "- CASH trail khóa lãi theo USD/Percent/Point; One-Time chỉ khóa một lần.\n"
+        "- CASH trail khóa lãi theo VND/Percent/Point; One-Time chỉ khóa một lần.\n"
         "- ANTI CASH giữ tên cũ nhưng có thêm MAE/MFE theo từng ticket.\n"
         "- MAE = âm sâu nhất của ticket; MFE = lời cao nhất của ticket.\n"
         "- Hard Stop là cầu dao lỗ; MFE Giveback chống trả lại lợi nhuận.",
@@ -3114,7 +3208,7 @@ def open_tsl_popup(app, override_symbol=None):
         wraplength=620,
         justify="left",
     ).pack(anchor="w", padx=5, pady=(0, 5))
-    f_cash = sec(tab_adv, "5. BE HARD CASH (Thang cuốn USD/Point/%/R)")
+    f_cash = sec(tab_adv, "5. BE HARD CASH (Thang cuốn VND/Point/%/R)")
     f_cash.pack(fill="x", padx=15, pady=(0, 8))
     f_cash_r1 = ctk.CTkFrame(f_cash, fg_color="transparent")
     f_cash_r1.pack(fill="x")
@@ -3123,19 +3217,19 @@ def open_tsl_popup(app, override_symbol=None):
     f_cash_r3 = ctk.CTkFrame(f_cash, fg_color="transparent")
     f_cash_r3.pack(fill="x", pady=(5, 0))
     cbo_cash_type = ctk.CTkOptionMenu(
-        f_cash_r1, values=["USD", "PERCENT", "POINT", "R"], width=80
+        f_cash_r1, values=["VND", "PERCENT", "POINT", "R"], width=80
     )
-    cbo_cash_type.set(tsl_cfg.get("BE_CASH_TYPE", "USD"))
+    cbo_cash_type.set(unit_to_display(tsl_cfg.get("BE_CASH_TYPE", "USD")))
     cbo_cash_type.pack(side="left", padx=5)
     lbl_cash_trig = ctk.CTkLabel(f_cash_r1, text="Trig:")
     lbl_cash_trig.pack(side="left", padx=2)
     e_cash_trig = ctk.CTkEntry(f_cash_r1, width=50)
-    e_cash_trig.insert(0, str(tsl_cfg.get("BE_TRIGGER", 10.0)))
+    e_cash_trig.insert(0, money_input_to_display(tsl_cfg.get("BE_TRIGGER", 10.0), tsl_cfg.get("BE_CASH_TYPE", "USD")))
     e_cash_trig.pack(side="left", padx=2)
     lbl_cash_step = ctk.CTkLabel(f_cash_r1, text="Step:")
     lbl_cash_step.pack(side="left", padx=2)
     e_cash_val = ctk.CTkEntry(f_cash_r1, width=50)
-    e_cash_val.insert(0, str(tsl_cfg.get("BE_VALUE", 20.0)))
+    e_cash_val.insert(0, money_input_to_display(tsl_cfg.get("BE_VALUE", 20.0), tsl_cfg.get("BE_CASH_TYPE", "USD")))
     e_cash_val.pack(side="left", padx=2)
     cbo_cash_strat = ctk.CTkOptionMenu(
         f_cash_r1,
@@ -3159,21 +3253,22 @@ def open_tsl_popup(app, override_symbol=None):
     lbl_cash_buffer = ctk.CTkLabel(f_cash_r3, text="Buffer:")
     lbl_cash_buffer.pack(side="left", padx=2)
     cbo_cash_buffer_type = ctk.CTkOptionMenu(
-        f_cash_r3, values=["USD", "PERCENT", "POINT", "ATR", "R"], width=90
+        f_cash_r3, values=["VND", "PERCENT", "POINT", "ATR", "R"], width=90
     )
-    cbo_cash_buffer_type.set(tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD"))
+    cbo_cash_buffer_type.set(unit_to_display(tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD")))
     cbo_cash_buffer_type.pack(side="left", padx=2)
     e_cash_buffer = ctk.CTkEntry(f_cash_r3, width=55)
-    e_cash_buffer.insert(0, str(tsl_cfg.get("BE_CASH_SOFT_BUFFER", 3.0)))
+    e_cash_buffer.insert(0, money_input_to_display(tsl_cfg.get("BE_CASH_SOFT_BUFFER", 3.0), tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD")))
     e_cash_buffer.pack(side="left", padx=2)
     lbl_cash_min_lock = ctk.CTkLabel(f_cash_r3, text="Min Lock:")
     lbl_cash_min_lock.pack(side="left", padx=(10, 2))
+    # Min Lock không có dropdown unit -> luôn là tiền (nghìn VND trên UI)
     e_cash_min_lock = ctk.CTkEntry(f_cash_r3, width=55)
-    e_cash_min_lock.insert(0, str(tsl_cfg.get("BE_CASH_MIN_LOCK", 0.0)))
+    e_cash_min_lock.insert(0, money_input_to_display(tsl_cfg.get("BE_CASH_MIN_LOCK", 0.0), "VND"))
     e_cash_min_lock.pack(side="left", padx=2)
     lbl_cash_help = ctk.CTkLabel(
         f_cash,
-        text="SOFT LOCK: khóa = target - buffer; Min Lock là sàn khóa tối thiểu nếu kết quả còn dương.",
+        text="SOFT LOCK: khóa = target - buffer; Min Lock là sàn khóa tối thiểu nếu kết quả còn dương. Tiền VND nhập theo NGHÌN (khớp dashboard): 500 = 500.000đ = 5 điểm PS/HĐ.",
         text_color="#B0BEC5",
         font=("Arial", 11, "italic"),
         wraplength=820,
@@ -3245,7 +3340,7 @@ def open_tsl_popup(app, override_symbol=None):
     e_psar_min_rr.pack(side="left", padx=(0, 18))
     ctk.CTkLabel(
         f_psar,
-        text="Min RR dung cash-R: 0.5R = loi 50% so tien risk ban dau cua lenh. Neu thieu risk USD thi fallback theo khoang gia SL.",
+        text="Min RR dung cash-R: 0.5R = loi 50% so tien risk ban dau cua lenh. Neu thieu risk VND thi fallback theo khoang gia SL.",
         text_color="#B0BEC5",
         font=("Arial", 11, "italic"),
         wraplength=760,
@@ -3302,15 +3397,18 @@ def open_tsl_popup(app, override_symbol=None):
                 value = float(value or 0.0) / 100.0
             except (TypeError, ValueError):
                 value = 0.0
-        entry.insert(0, str(value))
+            entry.insert(0, str(value))
+        else:
+            # Tiền hiện theo nghìn VND; unit R/%Equity giữ nguyên số
+            entry.insert(0, money_input_to_display(value, unit))
         entry.pack(side="left", padx=(0, 6))
-        unit_menu = ctk.CTkOptionMenu(group, values=["USD", "R", "%Equity"], width=92)
-        unit_menu.set("R" if unit in ("%R", "PERCENT_R") else (unit or "USD"))
+        unit_menu = ctk.CTkOptionMenu(group, values=["VND", "R", "%Equity"], width=92)
+        unit_menu.set("R" if unit in ("%R", "PERCENT_R") else unit_to_display(unit or "USD"))
         unit_menu.pack(side="left")
         return entry, unit_menu
     ctk.CTkLabel(
         f_anti,
-        text="⚠️ Đơn vị 'USD' ở đây = TIỀN THÔ của tài khoản (VND). VD 250000 = 250.000đ.",
+        text="⚠️ Đơn vị 'VND' nhập theo NGHÌN đồng (khớp dashboard). VD 250 = 250.000đ = 2.5 điểm PS/HĐ.",
         font=("Roboto", 10, "italic"), text_color="#FFB300",
     ).pack(anchor="w", padx=8, pady=(2, 0))
     f_anti_grid = ctk.CTkFrame(f_anti, fg_color="transparent")
@@ -3388,21 +3486,21 @@ def open_tsl_popup(app, override_symbol=None):
     def save():
         try:
             output_tsl = {
-                "BE_CASH_TYPE": cbo_cash_type.get(),
-                "BE_TRIGGER": float(e_cash_trig.get()),
-                "BE_VALUE": float(e_cash_val.get()),
+                "BE_CASH_TYPE": unit_from_display(cbo_cash_type.get()),
+                "BE_TRIGGER": money_input_from_display(e_cash_trig.get(), cbo_cash_type.get()),
+                "BE_VALUE": money_input_from_display(e_cash_val.get(), cbo_cash_type.get()),
                 "BE_CASH_STRAT": cbo_cash_strat.get(),
                 "BE_CASH_FEE_PROTECT": var_cash_fee_protect.get(),
-                "BE_CASH_SOFT_BUFFER_TYPE": cbo_cash_buffer_type.get(),
-                "BE_CASH_SOFT_BUFFER": float(e_cash_buffer.get()),
-                "BE_CASH_MIN_LOCK": float(e_cash_min_lock.get()),
+                "BE_CASH_SOFT_BUFFER_TYPE": unit_from_display(cbo_cash_buffer_type.get()),
+                "BE_CASH_SOFT_BUFFER": money_input_from_display(e_cash_buffer.get(), cbo_cash_buffer_type.get()),
+                "BE_CASH_MIN_LOCK": money_input_from_display(e_cash_min_lock.get(), "VND"),
                 "BE_MODE": "LOSS_GUARD",
                 "BE_OFFSET_RR": 0.0,
                 "BE_SL_LOSS_ENABLE": True,
-                "BE_SL_LOSS_UNIT": cbo_be_sl_unit.get(),
-                "BE_SL_LOSS_TRIGGER": float(e_be_sl_loss_trigger.get()),
-                "BE_SL_LOSS_STEP": float(e_be_sl_loss_step.get()),
-                "BE_SL_GUARD_BUFFER": float(e_be_sl_guard_buffer.get()),
+                "BE_SL_LOSS_UNIT": unit_from_display(cbo_be_sl_unit.get()),
+                "BE_SL_LOSS_TRIGGER": money_input_from_display(e_be_sl_loss_trigger.get(), cbo_be_sl_unit.get()),
+                "BE_SL_LOSS_STEP": money_input_from_display(e_be_sl_loss_step.get(), cbo_be_sl_unit.get()),
+                "BE_SL_GUARD_BUFFER": money_input_from_display(e_be_sl_guard_buffer.get(), cbo_be_sl_unit.get()),
                 "BE_SL_LOSS_ACTION": "RECOVERY_GUARD",
                 "BE_SL_REENTRY_LOCK_SEC": int(e_be_sl_reentry_lock.get()),
                 "ONE_TIME_BE": var_be_one_time.get(),
@@ -3423,23 +3521,23 @@ def open_tsl_popup(app, override_symbol=None):
                 "PSAR_MIN_RR": float(e_psar_min_rr.get()),
                 "PSAR_PROFIT_ONLY": var_psar_profit_only.get(),
                 "PSAR_PROFIT_BUFFER_POINTS": float(e_psar_profit_buffer.get()),
-                "ANTI_CASH_USD": float(e_anti_usd.get()),
-                "ANTI_CASH_HARD_STOP_UNIT": cbo_anti_usd_unit.get(),
+                "ANTI_CASH_USD": money_input_from_display(e_anti_usd.get(), cbo_anti_usd_unit.get()),
+                "ANTI_CASH_HARD_STOP_UNIT": unit_from_display(cbo_anti_usd_unit.get()),
                 "ANTI_CASH_TIME": int(e_anti_time.get()),
                 "ANTI_CASH_TIME_ENABLE": var_anti_time_en.get(),
                 "ANTI_CASH_MAE_ENABLE": var_anti_mae_en.get(),
-                "ANTI_CASH_MAE_MAX_LOSS_USD": float(e_anti_mae_loss.get()),
-                "ANTI_CASH_MAE_MAX_LOSS_UNIT": cbo_anti_mae_loss_unit.get(),
+                "ANTI_CASH_MAE_MAX_LOSS_USD": money_input_from_display(e_anti_mae_loss.get(), cbo_anti_mae_loss_unit.get()),
+                "ANTI_CASH_MAE_MAX_LOSS_UNIT": unit_from_display(cbo_anti_mae_loss_unit.get()),
                 "ANTI_CASH_MAE_MIN_HOLD_SEC": int(e_anti_mae_hold.get()),
-                "ANTI_CASH_MAE_LOW_MFE_USD": float(e_anti_mae_low_mfe.get()),
-                "ANTI_CASH_MAE_LOW_MFE_UNIT": cbo_anti_mae_low_mfe_unit.get(),
+                "ANTI_CASH_MAE_LOW_MFE_USD": money_input_from_display(e_anti_mae_low_mfe.get(), cbo_anti_mae_low_mfe_unit.get()),
+                "ANTI_CASH_MAE_LOW_MFE_UNIT": unit_from_display(cbo_anti_mae_low_mfe_unit.get()),
                 "ANTI_CASH_MFE_ENABLE": var_anti_mfe_en.get(),
-                "ANTI_CASH_MFE_TRIGGER_USD": float(e_anti_mfe_trig.get()),
-                "ANTI_CASH_MFE_TRIGGER_UNIT": cbo_anti_mfe_trig_unit.get(),
-                "ANTI_CASH_MFE_GIVEBACK_USD": float(e_anti_mfe_giveback.get()),
-                "ANTI_CASH_MFE_GIVEBACK_UNIT": cbo_anti_mfe_giveback_unit.get(),
-                "ANTI_CASH_MFE_FLOOR_USD": float(e_anti_mfe_floor.get()),
-                "ANTI_CASH_MFE_FLOOR_UNIT": cbo_anti_mfe_floor_unit.get(),
+                "ANTI_CASH_MFE_TRIGGER_USD": money_input_from_display(e_anti_mfe_trig.get(), cbo_anti_mfe_trig_unit.get()),
+                "ANTI_CASH_MFE_TRIGGER_UNIT": unit_from_display(cbo_anti_mfe_trig_unit.get()),
+                "ANTI_CASH_MFE_GIVEBACK_USD": money_input_from_display(e_anti_mfe_giveback.get(), cbo_anti_mfe_giveback_unit.get()),
+                "ANTI_CASH_MFE_GIVEBACK_UNIT": unit_from_display(cbo_anti_mfe_giveback_unit.get()),
+                "ANTI_CASH_MFE_FLOOR_USD": money_input_from_display(e_anti_mfe_floor.get(), cbo_anti_mfe_floor_unit.get()),
+                "ANTI_CASH_MFE_FLOOR_UNIT": unit_from_display(cbo_anti_mfe_floor_unit.get()),
                 "ANTI_CASH_REENTRY_LOCK_SEC": int(e_anti_reentry.get()),
             }
             new_tsl_logic_mode = cbo_tsl_logic_mode.get()
