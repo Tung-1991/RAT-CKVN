@@ -19,7 +19,11 @@ def get_signal_vector(df, params, context=None):
     close = df_slice['close'].values[-1]
     
     # Lấy ATR từ context để tính khoảng cách
-    atr = context.get("atr_G2", 0.0005) if context else 0.0005
+    # [FIX CKVN - Audit F3] Fallback cũ 0.0005 là scale pip forex (Exness) — với giá CKVN nó ≈ 0
+    # khiến vùng dung sai chạm hỗ trợ/kháng cự gần như chết. Thiếu context -> dùng 0.1% giá.
+    atr = context.get("atr_G2", 0.0) if context else 0.0
+    if not atr:
+        atr = float(close) * 0.001
 
     last_swing_high = None
     last_swing_low = None

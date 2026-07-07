@@ -45,6 +45,11 @@ DNSE_OHLC_CACHE_TTL_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_SECONDS", "30
 DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_CLOSED_SECONDS", "1800.0"))
 # [24/7] Số lần thử lại khi dính rate-limit 429 (backoff theo Retry-After / luỹ thừa 2). 0 = không retry.
 DNSE_RATE_LIMIT_RETRIES = int(os.getenv("DNSE_RATE_LIMIT_RETRIES", "1"))
+# [Audit F1] Hệ số nhân cửa sổ thời gian khi fetch OHLC: TT VN chỉ mở ~5h/ngày nên muốn đủ N nến
+# intraday phải lùi xa hơn N×bar (công thức gốc Exness giả định thị trường 24h). Daily nhân thêm
+# để bù cuối tuần + nghỉ lễ.
+DNSE_OHLC_WINDOW_FACTOR_INTRADAY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_INTRADAY", "8.0"))
+DNSE_OHLC_WINDOW_FACTOR_DAILY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_DAILY", "1.6"))
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
 DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
 # Cache gói phí/loan-package (giây) — phí ít đổi trong ngày nên TTL dài.

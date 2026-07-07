@@ -31,6 +31,16 @@ AI_INSTRUCTIONS = """> **CHỈ DẪN CHO AI (bắt buộc đọc trước khi ph
 > 6. KẾT LUẬN bắt buộc: xếp các mã vào 3 nhóm **MUA MỚI / TRÁNH / CHỐT LỜI (nếu đang giữ)**,
 >    mỗi mã kèm 1-2 câu lý do tổng hợp cả indicator lẫn bối cảnh web_search.
 >
+> **Chú giải field (dữ liệu do bot Python sinh tự động, không phải người viết):**
+> - G0..G3 = 4 khung nến bot phân tích, G0 lớn nhất (thường khung ngày) → G3 nhỏ nhất.
+> - "trend UP/DOWN/NONE" theo thứ tự G0/G1/G2/G3 = xu hướng bot tính trên từng khung.
+> - "mode" = chế độ thị trường bot nhận diện (TRENDING / SIDEWAY...) để chọn bộ indicator.
+> - "x2.4 avg20" = volume hôm nay gấp 2.4 lần trung bình 20 phiên. "pro-rate" = volume quy đổi
+>   cả phiên khi phiên chưa kết thúc (nến ngày chưa đóng — số tham khảo, không phải final).
+> - "3 BUY / 0 SELL" = số tín hiệu kỹ thuật bot đã bắn trong các ngày lưu; bot có thể KHÔNG
+>   vào lệnh thật — tín hiệu ≠ giao dịch. Giao dịch thật/paper nằm trong advisor_export.xlsx.
+> - Indicator nào không hiện = operator không bật indicator đó, không phải lỗi dữ liệu.
+>
 > Đơn vị giá: cổ phiếu cơ sở = nghìn VND; phái sinh = điểm chỉ số."""
 
 

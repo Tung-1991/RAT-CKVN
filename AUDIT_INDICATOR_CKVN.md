@@ -1,19 +1,19 @@
 # AUDIT INDICATOR: Exness (Forex/MT5) → CKVN (DNSE)
 
 > Ngày audit: 2026-07-07. Phạm vi: `signals/*.py`, `core/data_engine.py` (`_apply_ta`, `_fetch_bars`, `_calc_atr`, `fetch_data_v4`).
-> **Chỉ báo cáo + đề xuất — CHƯA sửa bất kỳ logic nào.** Mỗi finding bàn xong mới sửa, từng cái một (lego).
+> **Cập nhật 2026-07-07 (chiều): user đã duyệt — F1/F2/F3 ĐÃ FIX**, có test tại `tests/test_indicator_ckvn_fixes.py`. F4/5/6 ghi nhận không sửa code; F7 giữ nguyên có chủ đích (nhánh chết).
 
 ## Tóm tắt nhanh
 
-| # | Vị trí | Vấn đề | Mức độ | Sửa ngay? |
+| # | Vị trí | Vấn đề | Mức độ | Trạng thái |
 |---|--------|--------|--------|-----------|
-| 1 | `data_engine.py:189-193` | Cửa sổ thời gian fetch nến giả định thị trường 24h như forex → khung 1H/15m có thể **thiếu nến trầm trọng** → EMA50/SMA20 ra NaN → signal câm lặng trả 0 | 🔴 CAO | Cần xác minh runtime trước |
-| 2 | `signals/volume.py` | Nến đang hình thành: volume mới chạy một phần phiên nhưng đem so SMA20 của nến đủ → khung D1 trong phiên gần như không bao giờ nổ tín hiệu | 🔴 CAO (với CKCS) | Bàn phương án |
-| 3 | `signals/simple_breakout.py:16`, `signals/swing_point.py:24` | Fallback ATR `0.0005` là scale pip forex — vô nghĩa với giá CKVN | 🟡 TRUNG | Dễ, sửa sau khi duyệt |
-| 4 | `data_engine.py:195-229` | Nến D1 bị cache bucket "đóng băng" trong phiên → indicator khung 1d chỉ tươi 1 lần/ngày | 🟡 TRUNG | Không phải bug — cần ghi rõ độ tươi vào dữ liệu lưu |
-| 5 | RSI/Stochastic/Bollinger (mean-reversion) | Mua khi quá bán ổn ở forex (thoát lệnh tức thì); ở CKCS dính **T+2 + biên độ trần/sàn** → bắt dao rơi không thoát được | 🟡 TRUNG | Caveat vận hành, tune per-symbol |
+| 1 | `data_engine.py:_fetch_bars` | Cửa sổ thời gian fetch nến giả định thị trường 24h như forex → khung 1H/15m có thể **thiếu nến trầm trọng** → EMA50/SMA20 ra NaN → signal câm lặng trả 0 | 🔴 CAO | ✅ ĐÃ FIX: nhân hệ số phủ phiên (`DNSE_OHLC_WINDOW_FACTOR_INTRADAY=8.0`, `_DAILY=1.6`, chỉnh được qua env) + log cảnh báo khi nhận <60% số nến yêu cầu |
+| 2 | `signals/volume.py` | Nến đang hình thành: volume mới chạy một phần phiên nhưng đem so SMA20 của nến đủ → khung D1 trong phiên gần như không bao giờ nổ tín hiệu | 🔴 CAO (với CKCS) | ✅ ĐÃ FIX (phương án b): trong phiên xét trên nến ĐÃ ĐÓNG gần nhất; ngoài phiên giữ nguyên. Kho snapshot lưu thêm cờ partial + pro-rate cho AI |
+| 3 | `signals/simple_breakout.py`, `signals/swing_point.py` | Fallback ATR `0.0005` là scale pip forex — vô nghĩa với giá CKVN | 🟡 TRUNG | ✅ ĐÃ FIX: fallback = 0.1% giá hiện tại (tương đối theo scale) |
+| 4 | `data_engine.py:195-229` | Nến D1 bị cache bucket "đóng băng" trong phiên → indicator khung 1d chỉ tươi 1 lần/ngày | 🟡 TRUNG | Không phải bug — kho snapshot đã ghi rõ độ tươi (intraday/EOD) |
+| 5 | RSI/Stochastic/Bollinger (mean-reversion) | Mua khi quá bán ổn ở forex (thoát lệnh tức thì); ở CKCS dính **T+2 + biên độ trần/sàn** → bắt dao rơi không thoát được | 🟡 TRUNG | Caveat vận hành — đã dặn trong prompt advisor; tune per-symbol khi tách CKPS/CKCS |
 | 6 | Candle patterns + khung intraday | Nến ATO/ATC là nến 1 giá; nghỉ trưa tạo khoảng trống chuỗi nến — forex 24h không có | 🟢 THẤP | Ghi nhận, chưa cần sửa |
-| 7 | `data_engine.py:275` | `_calc_atr` trả `0.0001` tuyệt đối khi df rỗng — scale forex (các fallback khác đã theo % giá, ổn) | 🟢 THẤP | Nhánh chết, gần như không chạy tới |
+| 7 | `data_engine.py:_calc_atr` | `_calc_atr` trả `0.0001` tuyệt đối khi df rỗng — scale forex (các fallback khác đã theo % giá, ổn) | 🟢 THẤP | Giữ nguyên có chủ đích: nhánh chết (fetch_data_v4 abort trước), đổi sang 0.0 có rủi ro chia 0 ở consumer chưa rà hết |
 
 ---
 
@@ -115,10 +115,12 @@ Nến phiên khớp lệnh định kỳ (ATO 9h00, ATC 14h30-14h45) là nến 1 
 - `_calc_atr`/`_calc_swings` fallback theo % giá: ổn.
 - Volume DNSE là volume khớp thật (`data['v']`) — nâng cấp so với tick volume Exness, nền tảng tốt cho phân tích volume của advisor.
 
-## Đề xuất thứ tự xử lý (sau khi mày duyệt)
+## Trạng thái xử lý (user duyệt 2026-07-07)
 
-1. **Không chặn gì cả** → Phần B (kho snapshot) làm ngay theo Finding 2(c) + 4: lưu `is_partial_bar` + volume pro-rate tham khảo, logic signal giữ nguyên 100%.
-2. Finding 1: thêm log chẩn đoán số nến/khung → chạy 1 phiên → có số thật rồi quyết có nhân hệ số cửa sổ không.
-3. Finding 3 (+7): sửa fallback — mỗi file 1 dòng, an toàn.
-4. Finding 2 (a/b): chỉ khi mày muốn tín hiệu volume của **bot** nhạy hơn; còn advisor thì 2(c) đã đủ.
-5. Finding 5: gộp vào task "tách CKPS/CKCS" đang pending.
+1. ✅ Kho snapshot (Finding 2c + 4): lưu `is_partial_bar` + volume pro-rate — `ai_advisor/scan_cache.py`.
+2. ✅ Finding 1: nhân hệ số cửa sổ (`config.DNSE_OHLC_WINDOW_FACTOR_*`) + log cảnh báo thiếu nến (throttled) trong `_fetch_bars`. Chạy phiên đầu tiên nên soi log xem còn cảnh báo "nhận x/y nến" không — còn thì tăng hệ số qua env.
+3. ✅ Finding 3: fallback ATR = 0.1% giá trong `simple_breakout.py` + `swing_point.py`. Finding 7 giữ nguyên có chủ đích.
+4. ✅ Finding 2 (phương án b): `volume.py` trong phiên xét nến ĐÃ ĐÓNG gần nhất (xác nhận theo nến đóng, hết under-fire khung D1); ngoài phiên giữ nguyên.
+5. ⏳ Finding 5: gộp vào task "tách CKPS/CKCS" đang pending.
+
+Tests: `tests/test_indicator_ckvn_fixes.py` (7 test, chạy bằng ckvnvenv).

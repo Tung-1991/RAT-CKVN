@@ -190,7 +190,14 @@ class DataEngine:
         seconds_per_bar = multiplier_map.get(str(res).lower(), 900)
         
         to_ts = int(time.time())
-        from_ts = to_ts - (num_bars * seconds_per_bar)
+        # [FIX CKVN - Audit F1] Cửa sổ thời gian phải nhân hệ số phủ phiên: TT VN chỉ mở ~5h/ngày
+        # (công thức gốc Exness giả định 24h) — không nhân thì khung intraday nhận thiếu nến trầm trọng
+        # (100 nến 1H = 100 giờ lịch ≈ chỉ ~22 nến giao dịch thật) -> EMA/SMA period dài ra NaN im lặng.
+        if str(res).lower() == "1d":
+            window_factor = float(getattr(config, "DNSE_OHLC_WINDOW_FACTOR_DAILY", 1.6) or 1.0)
+        else:
+            window_factor = float(getattr(config, "DNSE_OHLC_WINDOW_FACTOR_INTRADAY", 8.0) or 1.0)
+        from_ts = to_ts - int(num_bars * seconds_per_bar * max(window_factor, 1.0))
 
         cache_ttl = float(getattr(config, "DNSE_OHLC_CACHE_TTL_SECONDS", 30.0) or 0.0)
         effective_cache_ttl = max(cache_ttl, float(seconds_per_bar))
@@ -259,7 +266,15 @@ class DataEngine:
             'volume': data['v']
         })
         df['time'] = pd.to_datetime(df['time'], unit='s')
-        
+
+        # [Audit F1] Chẩn đoán thiếu nến: nhận < 60% số nến yêu cầu -> indicator period dài có nguy cơ NaN
+        if len(df) < int(num_bars * 0.6):
+            _warn_ohlc_throttled(
+                f"{symbol}|{res}|short",
+                "OHLC %s tf=%s res=%s: nhận %s/%s nến — indicator period dài (EMA50, SMA20...) có thể NaN",
+                symbol, timeframe_val, res, len(df), num_bars,
+            )
+
         # Chỉ tính những Indicator đang bật
         df = self._apply_ta(df, inds_config, tsl_config)
         if effective_cache_ttl > 0:

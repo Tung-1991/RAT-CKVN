@@ -12,8 +12,11 @@ def get_signal_vector(df: pd.DataFrame, params: dict, context: dict = None) -> i
         return 0
 
     # 2. Lấy giá trị ATR thời gian thực từ context (Ưu tiên ATR của G2)
-    # Nếu không có data, dùng tạm 0.0005 làm mức mặc định an toàn
-    current_atr = context.get("atr_G2", 0.0005) if context else 0.0005
+    # [FIX CKVN - Audit F3] Fallback cũ 0.0005 là scale pip forex (Exness) — vô nghĩa với giá CKVN.
+    # Thiếu context thì dùng 0.1% giá hiện tại làm đệm tương đối.
+    current_atr = context.get("atr_G2", 0.0) if context else 0.0
+    if not current_atr:
+        current_atr = float(df["close"].iloc[-1]) * 0.001
 
     # 3. Tính toán khoảng đệm thực tế (Giá trị tuyệt đối)
     actual_buffer = current_atr * atr_buffer_multiplier
