@@ -2183,6 +2183,77 @@ def build_cache_and_symbols_tab(app, parent):
 
     ctk.CTkButton(frame, text="Lưu Cache & Mã", width=180, fg_color="#2E7D32", command=_save).pack(anchor="w", padx=14, pady=(2, 10))
 
+    # --- [CONFIG BUNDLE] Export/Import toàn bộ settings ra 1 file (mang máy khác import là xong) ---
+    ctk.CTkLabel(
+        frame,
+        text="SAO LƯU / CHUYỂN MÁY — gom brain + overrides + presets + TSL + watchlist vào 1 file (không kèm API key/token):",
+        font=("Roboto", 11, "bold"),
+        text_color="#90CAF9",
+        wraplength=520,
+        justify="left",
+    ).pack(anchor="w", padx=14, pady=(8, 2))
+
+    def _export_settings():
+        try:
+            from tkinter import filedialog
+            from core import config_bundle
+            dest = filedialog.asksaveasfilename(
+                parent=top,
+                title="Export Settings Bundle",
+                initialdir=config_bundle.default_export_dir(),
+                initialfile=config_bundle.default_bundle_name(),
+                defaultextension=".json",
+                filetypes=[("RAT-CKVN Settings", "*.json")],
+            )
+            if not dest:
+                return
+            result = config_bundle.export_bundle(dest)
+            lbl_msg.configure(
+                text=f"Đã export {result['files']} file settings + {result['env_keys']} env → {result['path']}",
+                text_color="#81C784",
+            )
+        except Exception as exc:  # noqa: BLE001
+            lbl_msg.configure(text=f"Lỗi export: {exc}", text_color="#E57373")
+
+    def _import_settings():
+        try:
+            from tkinter import filedialog, messagebox
+            from core import config_bundle
+            src = filedialog.askopenfilename(
+                parent=top,
+                title="Import Settings Bundle",
+                initialdir=config_bundle.default_export_dir(),
+                filetypes=[("RAT-CKVN Settings", "*.json")],
+            )
+            if not src:
+                return
+            if not messagebox.askyesno(
+                "Import Settings",
+                "Ghi đè settings hiện tại bằng file bundle?\n(File cũ tự backup .bak_import trước khi đè)",
+                parent=top,
+            ):
+                return
+            result = config_bundle.import_bundle(src)
+            try:
+                if hasattr(app, "reload_config_from_json"):
+                    app.reload_config_from_json()
+            except Exception:
+                pass
+            lbl_msg.configure(
+                text=(
+                    f"Đã import {len(result['restored'])} file (backup: {len(result['backups'])}). "
+                    "KHỞI ĐỘNG LẠI APP để env/watchlist mới có hiệu lực đầy đủ."
+                ),
+                text_color="#FFB74D",
+            )
+        except Exception as exc:  # noqa: BLE001
+            lbl_msg.configure(text=f"Lỗi import: {exc}", text_color="#E57373")
+
+    bundle_row = ctk.CTkFrame(frame, fg_color="transparent")
+    bundle_row.pack(anchor="w", padx=14, pady=(0, 12))
+    ctk.CTkButton(bundle_row, text="⬇ Export Settings", width=160, fg_color="#1565C0", hover_color="#0D47A1", command=_export_settings).pack(side="left")
+    ctk.CTkButton(bundle_row, text="⬆ Import Settings", width=160, fg_color="#6A1B9A", hover_color="#4A148C", command=_import_settings).pack(side="left", padx=(8, 0))
+
 
 def build_manual_margin_tab(app, parent):
     """Manual-only CKCS margin settings. Bot margin stays hard-disabled in v1."""

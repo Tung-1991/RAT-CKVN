@@ -7,6 +7,9 @@ DNSE/
 # Recovery/debug artifacts (one-off, do not commit)
 *_recovered.txt
 
+# Settings bundles (export/import chuyển máy — chứa watchlist/chiến thuật, không đẩy lên git)
+ratckvn_settings_*.json
+
 # Python cache/test artifacts
 **/__pycache__/
 **/*.pyc

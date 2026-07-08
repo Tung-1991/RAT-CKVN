@@ -279,8 +279,12 @@ class DataEngine:
         df = self._apply_ta(df, inds_config, tsl_config)
         if effective_cache_ttl > 0:
             self._bars_cache[cache_key] = {"ts": time.time(), "df": df.copy()}
-            if len(self._bars_cache) > 128:
-                oldest = sorted(self._bars_cache.items(), key=lambda item: item[1]["ts"])[:32]
+            # [Audit F1 follow-up] Cap cũ 128 chỉ đủ ~42 mã × 3 khung — watchlist lớn sẽ thrash
+            # (mỗi vòng đá văng cache mã đầu -> gọi API lại vô ích). Nâng mặc định 512, chỉnh qua env.
+            max_entries = int(getattr(config, "DNSE_OHLC_CACHE_MAX_ENTRIES", 512) or 512)
+            if len(self._bars_cache) > max_entries:
+                evict = max(32, max_entries // 8)
+                oldest = sorted(self._bars_cache.items(), key=lambda item: item[1]["ts"])[:evict]
                 for old_key, _ in oldest:
                     self._bars_cache.pop(old_key, None)
         

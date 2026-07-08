@@ -50,6 +50,8 @@ DNSE_RATE_LIMIT_RETRIES = int(os.getenv("DNSE_RATE_LIMIT_RETRIES", "1"))
 # để bù cuối tuần + nghỉ lễ.
 DNSE_OHLC_WINDOW_FACTOR_INTRADAY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_INTRADAY", "8.0"))
 DNSE_OHLC_WINDOW_FACTOR_DAILY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_DAILY", "1.6"))
+# Số entry tối đa của cache nến OHLC (mỗi mã ~3 khung riêng biệt -> 512 đủ cho ~170 mã).
+DNSE_OHLC_CACHE_MAX_ENTRIES = int(os.getenv("DNSE_OHLC_CACHE_MAX_ENTRIES", "512"))
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
 DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
 # Cache gói phí/loan-package (giây) — phí ít đổi trong ngày nên TTL dài.
