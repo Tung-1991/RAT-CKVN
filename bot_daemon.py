@@ -167,17 +167,47 @@ class StandaloneBotDaemon:
             pass
         return {}
 
+    def _tick_symbols(self):
+        """Chọn mã cần tick real-time 2s = mã ĐANG GIỮ VỊ THẾ MỞ (để canh SL/TSL).
+
+        [FIX 429 v2] Bản trước tick vô điều kiện toàn bộ mã CKPS -> VN30F1M (scan-only,
+        không bao giờ trade) vẫn bị poll /quotes/latest mỗi 2s -> 429 triền miên trên
+        endpoint phái sinh. Tick chỉ có ý nghĩa cho mã đang giữ vị thế; không giữ gì
+        thì poll = 0. Vào lệnh dựa trên vòng quét nến (15s), không cần tick 2s.
+        Ai muốn tick CKPS kể cả chưa có vị thế (scalping phái sinh) thì bật cờ config.
+        """
+        now = time.time()
+        cached = getattr(self, "_tick_symbols_cache", None)
+        if cached and (now - cached[0]) < 15.0:
+            return cached[1]
+
+        picked = []
+        try:
+            for pos in (self.connector.get_positions() or []):
+                sym = getattr(pos, "symbol", None) or (pos.get("symbol") if isinstance(pos, dict) else None)
+                sym = str(sym or "").upper()
+                if sym and sym not in picked:
+                    picked.append(sym)
+        except Exception:
+            pass
+
+        # Opt-in: scalping phái sinh cần tick CKPS ngay cả khi chưa có vị thế.
+        if getattr(config, "DAEMON_TICK_INCLUDE_CKPS", False):
+            for sym in (getattr(config, "CKPS_SYMBOLS", []) or []):
+                sym = str(sym or "").upper()
+                if sym and sym not in picked:
+                    picked.append(sym)
+
+        self._tick_symbols_cache = (now, picked)
+        return picked
+
     def _tick_update_loop(self):
         """Luồng riêng: poll giá real-time mỗi 2 giây qua trades/latest + quotes/latest."""
         tick_interval = 2.0
         while self.running:
             try:
-                # Chỉ lấy tick cho VN30F1M theo yêu cầu để tối ưu
-                symbols = list(
-                    self._active_symbols
-                    or getattr(config, "BOT_ACTIVE_SYMBOLS", [])
-                    or [getattr(config, "DEFAULT_SYMBOL", "VN30F1M")]
-                )
+                symbols = self._tick_symbols()
+                updated = False
                 for sym in symbols:
                     if not self.running:
                         break
@@ -199,8 +229,10 @@ class StandaloneBotDaemon:
                             ctx["day_low"] = tick["low"]
                         ctx["tick_timestamp"] = tick.get("timestamp", time.time())
                         self.heartbeat_contexts[sym] = ctx
-                        # Ghi tín hiệu ngay để UI cập nhật nhanh
-                        self._atomic_write_signals(symbols)
+                        updated = True
+                # [FIX I/O] Ghi file signals 1 lần/vòng thay vì sau TỪNG mã (file ~245KB)
+                if updated:
+                    self._atomic_write_signals(self._active_symbols or symbols)
             except Exception as e:
                 logger.debug(f"Tick update error: {e}")
             time.sleep(tick_interval)

@@ -936,6 +936,10 @@ def load_brain_settings() -> Dict[str, Any]:
                 "G3_TIMEFRAME",
                 "BOT_ACTIVE_SYMBOLS",
                 "TSL_LOGIC_MODE",
+                # [SCAN SNAPSHOT] Phải nằm trong whitelist, không thì mỗi lần app save
+                # brain_settings sẽ strip mất -> toggle live của daemon chết, chỉ còn fallback env.
+                "SCAN_SNAPSHOT_ENABLED",
+                "SCAN_SNAPSHOT_INTERVAL_MINUTES",
             ]:
                 if key in data:
                     default_brain[key] = copy.deepcopy(data[key])

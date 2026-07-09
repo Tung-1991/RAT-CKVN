@@ -2672,6 +2672,49 @@ class BotUI(ctk.CTk):
                 pass
         return float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0) if self._is_derivative_symbol(symbol) else float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
 
+    def _collect_position_market(self, positions):
+        """[FREEZE FIX] Gom I/O mạng cho từng vị thế NGAY TRÊN THREAD NỀN (bg_update_loop),
+        để update_ui (thread UI) chỉ đọc số liệu đã có sẵn, không gọi mạng -> hết đơ.
+
+        Trả về dict keyed theo ticket_str: {"c_size", "spread", "comm"}.
+        c_size lấy bằng poll_tick=False (tĩnh, không đụng endpoint tick).
+        spread lấy từ fetch_realtime_tick (cache 2s/WS). comm = phí ước tính (fee profile cache 1h).
+        """
+        extras = {}
+        for p in (positions or []):
+            tkt = str(p.ticket)
+            c_size = None
+            try:
+                if self.connector:
+                    c_size = self.connector.get_symbol_info(p.symbol, poll_tick=False).trade_contract_size
+            except Exception:
+                c_size = None
+            if not c_size:
+                c_size = self._symbol_contract_size(p.symbol)
+
+            spread = 0.0
+            try:
+                td = data_engine.fetch_realtime_tick(p.symbol)
+            except Exception:
+                td = None
+            if td and not td.get("synthetic_quote"):
+                b = float(td.get("bid", 0.0) or 0.0)
+                a = float(td.get("ask", 0.0) or 0.0)
+                if b > 0 and a >= b:
+                    spread = a - b
+
+            try:
+                comm = self.calculate_trade_fee(p.symbol, p.price_current or p.price_open, p.volume)
+            except Exception:
+                comm = 0.0
+
+            extras[tkt] = {
+                "c_size": float(c_size or 1.0),
+                "spread": float(spread or 0.0),
+                "comm": float(comm or 0.0),
+            }
+        return extras
+
     def _normalize_contracts(self, value, min_contracts=None, max_contracts=None):
         try:
             qty = float(value or 0.0)
@@ -2800,6 +2843,9 @@ class BotUI(ctk.CTk):
             expired = pending_orders.expire_pending()
             for item in expired:
                 self.log_message(f"[HẸN LỆNH] Hết hạn {item.get('symbol')} id={str(item.get('id'))[:8]}", error=True, target="manual")
+            # Dọn hẳn lệnh EXPIRED/FAILED/CANCELLED cũ khỏi bảng running (không cần bấm X tay).
+            for item in pending_orders.purge_stale():
+                self.log_message(f"[HẸN LỆNH] Đã dọn lệnh chết {item.get('symbol')} id={str(item.get('id'))[:8]}", target="manual")
             from core.market_hours import market_session_phase
             due_items = pending_orders.claim_due(market_session_phase)
             for item in due_items:
@@ -2924,6 +2970,9 @@ class BotUI(ctk.CTk):
                         open_orders = self.connector.get_orders(symbol=sym, orderCategory=getattr(self.connector, "order_category", "NORMAL"))
                 except Exception:
                     open_orders = []
+                # [FREEZE FIX] Gom giá/spread/phí cho mọi vị thế NGAY TẠI ĐÂY (thread nền),
+                # để update_ui trên thread UI không phải gọi mạng -> không đơ.
+                pos_extras = self._collect_position_market(pos)
                 self.after(
                     0,
                     self.update_ui,
@@ -2937,6 +2986,7 @@ class BotUI(ctk.CTk):
                     sym,
                     pos,
                     open_orders,
+                    pos_extras,
                 )
                 self._run_pending_order_scheduler()
                 self.run_advisor_triggers_tick()
@@ -2944,7 +2994,11 @@ class BotUI(ctk.CTk):
                 main_logger.exception("[BG_LOOP ERROR] %s", e)
             time.sleep(config.LOOP_SLEEP_SECONDS)
 
-    def update_ui(self, acc, state, check_res, tick, preset, sym, positions, open_orders=None):
+    def update_ui(self, acc, state, check_res, tick, preset, sym, positions, open_orders=None, pos_extras=None):
+        # [FREEZE FIX] pos_extras do bg_update_loop gom sẵn (thread nền). Nếu caller khác
+        # (vd đường tạo lệnh hẹn thủ công) không truyền -> tự gom ở đây để giữ hành vi cũ.
+        if pos_extras is None:
+            pos_extras = self._collect_position_market(positions)
         sym_count = len(self.brain_active_symbols)
         if "SLEEPING" in self.brain_status:
             rem = int(self.brain_wakeup_time - time.time())
@@ -3174,7 +3228,9 @@ class BotUI(ctk.CTk):
                 else:
                     self.lbl_band_info.configure(text="")
             try:
-                s_info = self.connector.get_symbol_info(sym) if self.connector else None
+                # poll_tick=False: giá đã lấy ở fetch_realtime_tick phía trên, đây chỉ cần
+                # cỡ hợp đồng/lô (tĩnh) -> khỏi poll lại endpoint phái sinh nóng, tránh 429 + đơ UI.
+                s_info = self.connector.get_symbol_info(sym, poll_tick=False) if self.connector else None
             except Exception:
                 s_info = None
             if s_info:
@@ -3656,27 +3712,24 @@ class BotUI(ctk.CTk):
             ticket_str = str(p.ticket)
             current_tickets_on_chart.append(ticket_str)
 
-            try:
-                p_sym_info = self.connector.get_symbol_info(p.symbol) if self.connector else None
-            except Exception:
-                p_sym_info = None
-            p_c_size = p_sym_info.trade_contract_size if p_sym_info else self._symbol_contract_size(p.symbol)
+            # [FREEZE FIX] Đọc số liệu đã gom sẵn ở thread nền -> KHÔNG gọi mạng trên thread UI.
+            extra = (pos_extras or {}).get(ticket_str) or {}
+            p_c_size = float(extra.get("c_size") or 0.0)
+            if not p_c_size:
+                # Fallback không đụng mạng (poll_tick=False + hằng số theo loại thị trường).
+                try:
+                    p_c_size = self.connector.get_symbol_info(p.symbol, poll_tick=False).trade_contract_size if self.connector else 0.0
+                except Exception:
+                    p_c_size = 0.0
+                if not p_c_size:
+                    p_c_size = self._symbol_contract_size(p.symbol)
             p_unit = self._quantity_unit(p.symbol)
             swap_val = getattr(p, "swap", 0.0)
 
-            # Spread hiện tại của mã (tick cache 2s/WS) — chỉ tính khi có sổ lệnh thật.
-            current_spread = 0.0
-            try:
-                p_tick_data = data_engine.fetch_realtime_tick(p.symbol)
-            except Exception:
-                p_tick_data = None
-            if p_tick_data and not p_tick_data.get("synthetic_quote"):
-                p_bid = float(p_tick_data.get("bid", 0.0) or 0.0)
-                p_ask = float(p_tick_data.get("ask", 0.0) or 0.0)
-                if p_bid > 0 and p_ask >= p_bid:
-                    current_spread = p_ask - p_bid
+            # Spread hiện tại của mã (đã gom ở thread nền, cache 2s/WS) — chỉ khi có sổ lệnh thật.
+            current_spread = float(extra.get("spread", 0.0) or 0.0)
             spread_cost_usd = current_spread * p.volume * p_c_size
-            comm_total_usd = self.calculate_trade_fee(p.symbol, p.price_current or p.price_open, p.volume)
+            comm_total_usd = float(extra.get("comm", 0.0) or 0.0)
 
             # [NEW] Cộng fee lệnh đang mở vào tổng (spread + commission + |swap|)
             open_fee_total += spread_cost_usd + comm_total_usd + abs(swap_val)

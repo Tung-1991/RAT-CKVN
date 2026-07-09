@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -238,6 +239,9 @@ class DNSEConnector:
         self.trading_token_expires_at: float = 0.0
         self.trading_token_persistent: bool = False
         self.last_request_time = 0.0
+        # [FREEZE FIX] Khóa để giãn nhịp rate-limit nhất quán giữa các thread (UI + nền).
+        # Trước đây 2 thread đọc last_request_time cùng lúc -> cùng bỏ qua wait -> burst -> 429.
+        self._rate_lock = threading.Lock()
         self.last_latency_ms = 0.0
         self.market_type = os.getenv("DNSE_MARKET_TYPE", "DERIVATIVE")
         self.order_category = os.getenv("DNSE_ORDER_CATEGORY", "NORMAL")
@@ -394,11 +398,12 @@ class DNSEConnector:
         }
 
     def _rate_limit(self):
-        now = time.time()
-        wait_s = 0.1 - (now - self.last_request_time)
-        if wait_s > 0:
-            time.sleep(wait_s)
-        self.last_request_time = time.time()
+        with self._rate_lock:
+            now = time.time()
+            wait_s = 0.1 - (now - self.last_request_time)
+            if wait_s > 0:
+                time.sleep(wait_s)
+            self.last_request_time = time.time()
 
     def _record_api_request(self, method: str, path: str, status_code: int, latency_ms: float, error: str = ""):
         endpoint = f"{method.upper()} {path}"
@@ -1259,9 +1264,11 @@ class DNSEConnector:
         self._tick_cache_ts[sym_key] = time.time()
         return tick
 
-    def get_symbol_info(self, symbol: str) -> BrokerSymbolInfo:
+    def get_symbol_info(self, symbol: str, poll_tick: bool = True) -> BrokerSymbolInfo:
         market_type = self.market_type_for_symbol(symbol)
-        tick = self.get_tick(symbol)
+        # [FIX 429] poll_tick=False: chỉ cần thông số hợp đồng (tĩnh theo loại thị trường),
+        # không gọi /trades|quotes/latest -> tránh đập endpoint phái sinh nóng từ UI mỗi vòng.
+        tick = self.get_tick(symbol) if poll_tick else None
         is_derivative = market_type == "DERIVATIVE"
         point_value = (
             float(getattr(config, "DNSE_POINT_VALUE", DNSE_POINT_VALUE) or DNSE_POINT_VALUE)

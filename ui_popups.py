@@ -4166,7 +4166,9 @@ def show_history_popup(app):
 
     history_tabs = ctk.CTkTabview(top)
     history_tabs.pack(fill="both", expand=True)
-    tab_bot_history = history_tabs.add("BOT")
+    # 4 tab tách theo loại thị trường (PS/CKCS) × thật/paper. Phân loại từ ticket + symbol.
+    SCOPES = ["Phái sinh", "CKCS", "Paper-PS", "Paper-CKCS"]
+    scope_tabs = {name: history_tabs.add(name) for name in SCOPES}
 
     cols = (
         "Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP",
@@ -4210,12 +4212,13 @@ def show_history_popup(app):
             tree.column(col, width=width, minwidth=width, anchor="center", stretch=False)
         return tree
 
-    trees = {
-        "BOT": make_tree(tab_bot_history),
-    }
+    trees = {name: make_tree(scope_tabs[name]) for name in SCOPES}
 
     from core.storage_manager import MASTER_LOG_FILE
     csv_path = MASTER_LOG_FILE
+
+    _derivatives = {str(s).upper() for s in getattr(config, "CKPS_SYMBOLS", []) or []}
+    _deriv_reals = {str(s).upper() for s in getattr(config, "DERIVATIVE_REAL_SYMBOLS", []) or []}
 
     def to_float(val, default=0.0):
         try:
@@ -4224,7 +4227,13 @@ def show_history_popup(app):
             return default
 
     def row_scope(row):
-        return "BOT"
+        ticket = str(row[1] if len(row) > 1 else "").upper()
+        symbol = str(row[2] if len(row) > 2 else "").upper()
+        is_paper = ticket.startswith("PAPER") or ticket.startswith("#PAPER")
+        is_ps = symbol.startswith("VN30F") or symbol in _derivatives or symbol in _deriv_reals
+        if is_paper:
+            return "Paper-PS" if is_ps else "Paper-CKCS"
+        return "Phái sinh" if is_ps else "CKCS"
 
     def clear_trees():
         for tree in trees.values():
@@ -4306,7 +4315,7 @@ def show_history_popup(app):
         if not os.path.exists(csv_path):
             return
         try:
-            scope_sessions = {"BOT": {}}
+            scope_sessions = {name: {} for name in SCOPES}
             with open(csv_path, mode="r", encoding="utf-8") as file_obj:
                 reader = csv.reader(file_obj)
                 header = next(reader, None)

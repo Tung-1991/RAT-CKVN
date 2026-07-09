@@ -164,6 +164,8 @@ def mark(order_id: str, status: str, result: str = "", **updates: Any) -> Option
                     item["result"] = str(result)
                 for key, value in updates.items():
                     item[key] = value
+                if status in FINAL_STATUSES and "finalized_at" not in updates:
+                    item["finalized_at"] = _now()
                 found = _normalize(item)
                 item.update(found)
                 break
@@ -209,11 +211,50 @@ def expire_pending(now: Optional[float] = None) -> List[Dict[str, Any]]:
             if str(item.get("status", "")).upper() == PENDING and float(item.get("expire_at", 0.0) or 0.0) <= now:
                 item["status"] = EXPIRED
                 item["result"] = "Expired before market phase"
+                item["finalized_at"] = now
                 expired.append(_normalize(item))
                 item.update(expired[-1])
         if expired:
             _write_unlocked(items)
     return deepcopy(expired)
+
+
+# Trạng thái cuối đã "chết" -> được phép dọn khỏi bảng running (SENT giữ lại vì đã lên sàn).
+_PURGEABLE_STATUSES = {EXPIRED, FAILED, CANCELLED}
+
+
+def purge_stale(max_age_sec: Optional[float] = None, now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Xóa hẳn lệnh local đã EXPIRED/FAILED/CANCELLED quá lâu khỏi pending_orders.json.
+
+    Để bảng "LỆNH ĐANG CHẠY" không giữ mãi lệnh chết. SENT không đụng (đã lên sàn).
+    Mốc tuổi ưu tiên finalized_at, fallback expire_at/created_at cho item cũ chưa có field.
+    """
+    if max_age_sec is None:
+        hours = float(getattr(config, "PENDING_PURGE_AFTER_HOURS", 2.0) or 0.0)
+        max_age_sec = hours * 3600.0
+    if max_age_sec <= 0:
+        return []
+    now = _now() if now is None else float(now)
+    removed: List[Dict[str, Any]] = []
+    with _LOCK:
+        items = _read_unlocked()
+        kept = []
+        for item in items:
+            status = str(item.get("status", "")).upper()
+            if status in _PURGEABLE_STATUSES:
+                ref = float(
+                    item.get("finalized_at")
+                    or item.get("expire_at")
+                    or item.get("created_at")
+                    or 0.0
+                )
+                if ref and (now - ref) >= max_age_sec:
+                    removed.append(deepcopy(item))
+                    continue
+            kept.append(item)
+        if removed:
+            _write_unlocked(kept)
+    return removed
 
 
 def recover_stuck(max_age_sec: float = 600.0, now: Optional[float] = None) -> List[Dict[str, Any]]:

@@ -42,6 +42,16 @@ except Exception:  # pragma: no cover - optional dependency
     websocket = None
     _WS_AVAILABLE = False
 
+# DNSE ép kênh dữ liệu tick/top_price về msgpack (dù ta xin encoding=json — server
+# vẫn ack channel `.msgpack`). Frame dữ liệu về dạng nhị phân -> phải giải mã msgpack,
+# nếu chỉ json.loads sẽ nuốt im lặng và tick không bao giờ vào cache.
+try:
+    import msgpack  # optional; missing -> binary frames bỏ qua, REST làm nền
+    _MSGPACK_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    msgpack = None
+    _MSGPACK_AVAILABLE = False
+
 
 def _env(key, default=""):
     try:
@@ -269,8 +279,22 @@ class DNSEMarketWS:
     def _on_message(self, _ws, message):
         self.stats["messages"] += 1
         self.stats["last_message_ts"] = time.time()
+        # Control frames (welcome/auth_success/subscribed/ping) về dạng text JSON;
+        # dữ liệu tick/top_price về dạng nhị phân msgpack -> giải mã theo kiểu frame.
         try:
-            payload = json.loads(message) if isinstance(message, (str, bytes, bytearray)) else message
+            if isinstance(message, (bytes, bytearray)):
+                if _MSGPACK_AVAILABLE:
+                    payload = msgpack.unpackb(message, raw=False)
+                else:
+                    if not getattr(self, "_msgpack_warned", False):
+                        logger.warning("Nhận frame nhị phân (msgpack) nhưng chưa cài `msgpack`; "
+                                       "tick WS sẽ bị bỏ qua, dùng REST. (pip install msgpack)")
+                        self._msgpack_warned = True
+                    return
+            elif isinstance(message, str):
+                payload = json.loads(message)
+            else:
+                payload = message
         except Exception:
             return
         if not isinstance(payload, dict):

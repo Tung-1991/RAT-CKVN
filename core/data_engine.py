@@ -222,8 +222,11 @@ class DataEngine:
             for k, v in (inds_config or {}).items()
             if isinstance(v, dict)
         ))
-        # Ngoài giờ: bucket cố định để cùng 1 key được dùng lại (cache đóng băng).
-        cache_bucket = -1 if not market_open else int(to_ts / max(1, seconds_per_bar))
+        # Ngoài giờ: bucket đóng băng NHƯNG xoay theo khối 6h. Bucket -1 cố định cũ có bug:
+        # app chạy 24/7 cache nến 1d TRƯỚC PHIÊN (data chốt hôm qua) -> SAU PHIÊN vẫn trúng
+        # key đó -> lượt quét EOD nhận nến cũ, không bao giờ thấy nến chốt hôm nay.
+        # Khối 6h (mốc ~07h/13h/19h/01h VN) tách sáng-trước-phiên khỏi chiều-sau-phiên.
+        cache_bucket = (-int(to_ts // 21600) - 1) if not market_open else int(to_ts / max(1, seconds_per_bar))
         try:
             market_type = dnse_api.market_type_for_symbol(symbol)
         except Exception:

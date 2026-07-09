@@ -38,7 +38,9 @@ WEEKEND_CLOSE_HOUR = 15 # Đóng cửa 15:00
 WEEKEND_OPEN_WEEKDAY = 0 # Thứ 2
 WEEKEND_OPEN_HOUR = 8 # Mở cửa 8:45 (tính 8)
 
-LOOP_SLEEP_SECONDS = 0.25
+# [FIX LAG] Nhịp vòng lặp UI nền. 0.25s (4Hz) khiến hàm vẽ nặng chạy 4 lần/giây -> đơ.
+# Swing CKCS/T+2 không cần refresh nhanh; 1.0s (1Hz) mượt hơn, giảm 4× tải render + tải mạng.
+LOOP_SLEEP_SECONDS = float(os.getenv("LOOP_SLEEP_SECONDS", "1.0"))
 DNSE_TICK_CACHE_TTL_SECONDS = float(os.getenv("DNSE_TICK_CACHE_TTL_SECONDS", "2.0"))
 DNSE_OHLC_CACHE_TTL_SECONDS = float(os.getenv("DNSE_OHLC_CACHE_TTL_SECONDS", "30.0"))
 # [24/7] Ngoài giờ giao dịch: đóng băng cache OHLC lâu hơn để khỏi spam API (giây). 0 = tắt.
@@ -52,6 +54,9 @@ DNSE_OHLC_WINDOW_FACTOR_INTRADAY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_INTR
 DNSE_OHLC_WINDOW_FACTOR_DAILY = float(os.getenv("DNSE_OHLC_WINDOW_FACTOR_DAILY", "1.6"))
 # Số entry tối đa của cache nến OHLC (mỗi mã ~3 khung riêng biệt -> 512 đủ cho ~170 mã).
 DNSE_OHLC_CACHE_MAX_ENTRIES = int(os.getenv("DNSE_OHLC_CACHE_MAX_ENTRIES", "512"))
+# [FIX 429] Daemon tick 2s chỉ poll mã ĐANG GIỮ VỊ THẾ (canh SL/TSL). Không giữ gì -> không poll.
+# Bật cờ dưới nếu scalping phái sinh, cần tick CKPS ngay cả khi chưa có vị thế.
+DAEMON_TICK_INCLUDE_CKPS = os.getenv("DAEMON_TICK_INCLUDE_CKPS", "false").strip().lower() in ("1", "true", "yes", "on")
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
 DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
 # Cache gói phí/loan-package (giây) — phí ít đổi trong ngày nên TTL dài.
@@ -136,6 +141,8 @@ PAPER_FALLBACK_PRICE = 0.0
 MAX_LOT_CAP = 0.0  # [NEW V4.4] Giới hạn Lot tối đa cho mỗi lệnh (0 = Không GH)
 MANUAL_CONFIG = {"BYPASS_CHECKLIST": False, "DEFAULT_LOT": 0.0}
 PENDING_ORDER_EXPIRE_HOURS = float(os.getenv("PENDING_ORDER_EXPIRE_HOURS", "24"))
+# [FIX] Tự dọn lệnh local đã EXPIRED/FAILED/CANCELLED khỏi bảng running sau X giờ (0 = không dọn).
+PENDING_PURGE_AFTER_HOURS = float(os.getenv("PENDING_PURGE_AFTER_HOURS", "2"))
 MANUAL_MARGIN_CONFIG = {
     "ENABLE_MANUAL_MARGIN": False,
     "MARGIN_RISK_BASE": "EQUITY_NAV",
