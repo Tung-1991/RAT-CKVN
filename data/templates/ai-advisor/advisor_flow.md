@@ -8,6 +8,7 @@ Review RAT-CKVN như một trader/risk manager: tìm nguyên nhân lời/lỗ, r
 Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa config, không bịa hành vi module khi thiếu bằng chứng.
 
 ## Thứ tự đọc package
+Khi gửi thủ công cho AI bên ngoài, chỉ dùng các file trong thư mục `external_package` đã được làm sạch và có manifest. Không gửi `.env`, trading-token hoặc file workspace tài khoản.
 1. advisor_flow.md: hiểu luồng nghiệp vụ, glossary và cách diễn giải field.
 2. user_context.md: hiểu câu hỏi/mục tiêu hiện tại của operator.
 3. technical_settings.json: đọc config hiện tại, runtime snapshot, advisor_guide và state module.

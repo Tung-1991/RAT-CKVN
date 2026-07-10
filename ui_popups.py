@@ -699,6 +699,7 @@ def open_advisor_popup(app):
 
     var_provider = tk.StringVar(value=str(api_settings.get("provider", api_client.DEFAULT_PROVIDER)))
     var_model = tk.StringVar(value=str(api_settings.get("model", api_client.DEFAULT_MODEL)))
+    var_reasoning = tk.StringVar(value=str(api_settings.get("reasoning_effort", "medium")))
     var_prompt_limit = tk.StringVar(value=str(api_settings.get("advisor_prompt_limit", 200000)))
     var_flow_limit = tk.StringVar(value=str(api_settings.get("advisor_flow_limit", 200000)))
     var_context_limit = tk.StringVar(value=str(api_settings.get("user_context_limit", 100000)))
@@ -729,9 +730,10 @@ def open_advisor_popup(app):
         if var_model.get() not in models:
             var_model.set(models[0] if models else "")
 
-    _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 4)
-    _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 5)
-    _edit_row("max output tokens", var_max_output, 6)
+    _edit_row("reasoning effort", var_reasoning, 4, ["low", "medium", "high", "xhigh"])
+    _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 5)
+    _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 6)
+    _edit_row("max output tokens", var_max_output, 7)
 
     ctk.CTkCheckBox(
         edit_top,
@@ -740,10 +742,10 @@ def open_advisor_popup(app):
         font=("Roboto", 11, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 4))
+    ).grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 4))
 
     limit_buttons = ctk.CTkFrame(edit_top, fg_color="transparent")
-    limit_buttons.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=(6, 10))
+    limit_buttons.grid(row=9, column=0, columnspan=2, sticky="ew", padx=10, pady=(6, 10))
 
     def save_api_edit():
         try:
@@ -751,6 +753,7 @@ def open_advisor_popup(app):
                 {
                     "provider": var_provider.get(),
                     "model": var_model.get(),
+                    "reasoning_effort": var_reasoning.get(),
                     "advisor_prompt_limit": var_prompt_limit.get(),
                     "advisor_flow_limit": var_flow_limit.get(),
                     "user_context_limit": var_context_limit.get(),
@@ -764,6 +767,7 @@ def open_advisor_popup(app):
             var_provider.set(str(saved.get("provider", api_client.DEFAULT_PROVIDER)))
             cbo_model.configure(values=api_client.models_for(var_provider.get()))
             var_model.set(str(saved.get("model", api_client.DEFAULT_MODEL)))
+            var_reasoning.set(str(saved.get("reasoning_effort", "medium")))
             var_prompt_limit.set(str(saved.get("advisor_prompt_limit")))
             var_flow_limit.set(str(saved.get("advisor_flow_limit")))
             var_context_limit.set(str(saved.get("user_context_limit")))
@@ -4117,6 +4121,8 @@ def open_edit_popup(app, ticket):
 
     def save_e():
         try:
+            if not app._ensure_trading_otp():
+                return
             app.connector.modify_position(ticket, float(e_sl.get()), float(e_tp.get()))
             act = []
             for k, v in states.items():

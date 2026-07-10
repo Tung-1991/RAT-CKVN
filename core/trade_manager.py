@@ -565,6 +565,9 @@ class TradeManager:
     ):
         config.SYMBOL = symbol
         self._sync_state_lifecycle()
+        is_open, closed_reason = is_symbol_trade_window_open(symbol)
+        if not is_open:
+            return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
         acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
         safeguard_cfg = brain.get("bot_safeguard", {})
@@ -572,10 +575,6 @@ class TradeManager:
             margin_block = margin_rules.bot_margin_block_reason(acc_info, brain.get("manual_margin", {}))
             if margin_block:
                 return f"SAFEGUARD_FAIL|BOT_MARGIN_DISABLED|{margin_block}"
-
-        is_open, closed_reason = is_symbol_trade_window_open(symbol)
-        if not is_open:
-            return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
 
         # [NEW V4.4] KIỂM TRA ĐẢO CHIỀU TRƯỚC KHI VÀO LỆNH (Cắt lệnh ngược chiều giải phóng Margin)
         lock_until = self._check_anti_cash_reentry_lock(symbol, direction)
@@ -1076,6 +1075,9 @@ class TradeManager:
         risk_gate_ack=False,  # True = user đã xác nhận popup RISK GATE, cho qua CONFIRM
     ):
         config.SYMBOL = symbol
+        is_open, closed_reason = is_symbol_trade_window_open(symbol)
+        if not is_open:
+            return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
         acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
         margin_cfg = margin_rules.settings_from_brain(brain)

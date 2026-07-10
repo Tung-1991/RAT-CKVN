@@ -70,13 +70,25 @@ class DNSEMarketWS:
         self._encoding = getattr(config, "DNSE_WS_ENCODING", "json")
         self._url = f"{base}/v1/stream?encoding={self._encoding}"
         self._board_id = getattr(config, "DNSE_WS_BOARD_ID", "G1")
+        self._account_numbers = {
+            str(value).strip()
+            for value in (
+                _env("DNSE_ACCOUNT_NO"),
+                _env("DNSE_STOCK_ACCOUNT_NO"),
+                _env("DNSE_DERIVATIVE_ACCOUNT_NO"),
+            )
+            if str(value).strip()
+        }
         self._reconnect_s = float(getattr(config, "DNSE_WS_RECONNECT_SECONDS", 5.0))
         self._pong_interval = float(getattr(config, "DNSE_WS_PONG_INTERVAL", 150.0))
 
         self._ticks: Dict[str, Dict] = {}
+        self._orders: Dict[str, Dict] = {}
+        self._positions: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._desired: set = set()
         self._subscribed: set = set()
+        self._market_data_enabled = False
 
         self._ws = None
         self._thread: Optional[threading.Thread] = None
@@ -84,11 +96,14 @@ class DNSEMarketWS:
         self._connected = False
         self._authenticated = False
         self._last_pong = 0.0
+        self._connected_at = 0.0
 
         self.stats = {
             "messages": 0,
             "reconnects": 0,
             "last_message_ts": 0.0,
+            "last_market_message_ts": 0.0,
+            "last_trading_message_ts": 0.0,
             "last_error": "",
         }
 
@@ -100,22 +115,41 @@ class DNSEMarketWS:
     def is_connected(self) -> bool:
         return self._connected and self._authenticated
 
+    def is_running(self) -> bool:
+        return bool(self._running and self._thread and self._thread.is_alive())
+
     def latest_tick(self, symbol: str) -> Optional[Dict]:
         with self._lock:
             tick = self._ticks.get(str(symbol).upper())
             return dict(tick) if tick else None
+
+    def latest_order_events(self) -> List[Dict]:
+        with self._lock:
+            return [dict(value) for value in self._orders.values()]
+
+    def latest_position_events(self) -> List[Dict]:
+        with self._lock:
+            return [dict(value) for value in self._positions.values()]
 
     def snapshot(self) -> Dict:
         with self._lock:
             return {
                 "available": _WS_AVAILABLE,
                 "enabled": bool(getattr(config, "DNSE_WS_ENABLED", False)),
+                "mode": str(getattr(config, "DNSE_WS_MODE", "auto")),
+                "market_data_enabled": self._market_data_enabled,
                 "connected": self._connected and self._authenticated,
+                "authenticated": self._authenticated,
                 "subscribed": sorted(self._subscribed),
                 "desired": sorted(self._desired),
+                "order_events": len(self._orders),
+                "position_events": len(self._positions),
                 "messages": self.stats["messages"],
                 "reconnects": self.stats["reconnects"],
                 "last_message_ts": self.stats["last_message_ts"],
+                "last_market_message_ts": self.stats["last_market_message_ts"],
+                "last_trading_message_ts": self.stats["last_trading_message_ts"],
+                "connection_age_seconds": max(0.0, time.time() - self._connected_at) if self._connected_at else 0.0,
                 "last_error": self.stats["last_error"],
             }
 
@@ -142,14 +176,31 @@ class DNSEMarketWS:
             pass
         self._connected = False
         self._authenticated = False
+        with self._lock:
+            self._subscribed.clear()
 
     def subscribe(self, symbols: Iterable[str]):
         syms = {str(s).upper() for s in symbols if s}
         with self._lock:
             new = syms - self._desired
             self._desired |= syms
-        if new and self.is_connected():
+        if new and self.is_connected() and self._market_data_enabled:
             self._send_subscribe(new)
+
+    def set_market_data_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if enabled == self._market_data_enabled:
+            return
+        self._market_data_enabled = enabled
+        with self._lock:
+            desired = set(self._desired)
+            subscribed = set(self._subscribed)
+        if not self.is_connected():
+            return
+        if enabled and desired:
+            self._send_subscribe(desired)
+        elif not enabled and subscribed:
+            self._send_unsubscribe(subscribed)
 
     def unsubscribe(self, symbols: Iterable[str]):
         syms = {str(s).upper() for s in symbols if s}
@@ -167,7 +218,7 @@ class DNSEMarketWS:
             to_add = syms - self._desired
             to_remove = self._desired - syms
             self._desired = syms
-        if self.is_connected():
+        if self.is_connected() and self._market_data_enabled:
             if to_remove:
                 self._send_unsubscribe(to_remove)
             if to_add:
@@ -192,9 +243,28 @@ class DNSEMarketWS:
     def _channels(self) -> List[str]:
         enc = self._encoding
         bid = self._board_id
-        return [f"tick.{bid}.{enc}", f"top_price.{bid}.{enc}"]
+        return [f"tick.{bid}.{enc}", f"top_price.{bid}.{enc}", f"expected_price.{bid}.{enc}"]
+
+    def _trading_channels(self) -> List[str]:
+        enc = self._encoding
+        return [
+            f"order.STOCK.{enc}",
+            f"position.STOCK.{enc}",
+            f"order.DERIVATIVE.{enc}",
+            f"position.DERIVATIVE.{enc}",
+        ]
+
+    def _send_trading_subscribe(self):
+        try:
+            channels = [{"name": channel} for channel in self._trading_channels()]
+            self._ws.send(json.dumps({"action": "subscribe", "channels": channels}))
+        except Exception as exc:  # noqa: BLE001
+            self.stats["last_error"] = str(exc)
+            logger.debug("trading subscribe error: %s", exc)
 
     def _send_subscribe(self, symbols: Iterable[str]):
+        if not self._market_data_enabled:
+            return
         syms = sorted(symbols)
         try:
             channels = [{"name": ch, "symbols": syms} for ch in self._channels()]
@@ -241,6 +311,7 @@ class DNSEMarketWS:
     def _on_open(self, _ws):
         self._connected = True
         self._authenticated = False
+        self._connected_at = time.time()
         self._last_pong = time.time()
         logger.info("DNSE market WS connected: %s", self._url)
         try:
@@ -253,6 +324,15 @@ class DNSEMarketWS:
             time.sleep(min(30.0, self._pong_interval))
             if not self._connected:
                 break
+            try:
+                expired = (time.time() - self._connected_at) >= float(
+                    getattr(config, "DNSE_WS_MAX_CONNECTION_SECONDS", 28200.0) or 28200.0
+                )
+                if expired:
+                    self._ws.close()
+                    break
+            except Exception:
+                pass
             if time.time() - self._last_pong >= self._pong_interval:
                 try:
                     self._ws.pong("")
@@ -306,7 +386,10 @@ class DNSEMarketWS:
         # Some servers wrap the payload as {"channel":.., "data":{...}}.
         data = payload.get("data", payload)
         if isinstance(data, dict):
-            self._ingest(data)
+            if self._is_trading_event(data):
+                self._ingest_trading(data)
+            else:
+                self._ingest(data)
 
     def _handle_control(self, action: str, payload: Dict):
         if action == "auth_success":
@@ -314,8 +397,9 @@ class DNSEMarketWS:
             logger.info("DNSE market WS authenticated.")
             with self._lock:
                 desired = set(self._desired)
-            if desired:
+            if desired and self._market_data_enabled:
                 self._send_subscribe(desired)
+            self._send_trading_subscribe()
             threading.Thread(target=self._heartbeat_loop, daemon=True, name="DNSEMarketWS-HB").start()
         elif action in ("auth_error", "error"):
             self.stats["last_error"] = str(payload.get("message") or payload)
@@ -327,6 +411,7 @@ class DNSEMarketWS:
         if not symbol:
             return
         now = time.time()
+        self.stats["last_market_message_ts"] = now
         with self._lock:
             tick = self._ticks.get(symbol, {"symbol": symbol})
             if "matchPrice" in data:
@@ -334,6 +419,11 @@ class DNSEMarketWS:
                 tick["high"] = _f(data.get("highestPrice"), tick.get("high"))
                 tick["low"] = _f(data.get("lowestPrice"), tick.get("low"))
                 tick["open"] = _f(data.get("openPrice"), tick.get("open"))
+            if "expectedPrice" in data:
+                expected = _f(data.get("expectedPrice"), tick.get("last"))
+                tick["expected_price"] = expected
+                if expected is not None:
+                    tick["last"] = expected
             bid = _best_level(data.get("bid"))
             ask = _best_level(data.get("offer") if data.get("offer") is not None else data.get("ask"))
             if bid is not None:
@@ -353,6 +443,32 @@ class DNSEMarketWS:
                 tick["spread"] = round(float(tick["ask"]) - float(tick["bid"]), 2)
             tick["timestamp"] = now
             self._ticks[symbol] = tick
+
+    def _is_trading_event(self, data: Dict) -> bool:
+        return bool(
+            data.get("accountNo")
+            and (
+                "orderStatus" in data
+                or "openQuantity" in data
+                or "accumulateQuantity" in data
+                or "tradeQuantity" in data
+            )
+        )
+
+    def _ingest_trading(self, data: Dict):
+        account_no = str(data.get("accountNo") or "").strip()
+        if self._account_numbers and account_no not in self._account_numbers:
+            return
+        now = time.time()
+        event = dict(data)
+        event["_ws_timestamp"] = now
+        key = str(data.get("id") or f"{account_no}:{data.get('symbol', '')}")
+        with self._lock:
+            if "orderStatus" in data:
+                self._orders[key] = event
+            else:
+                self._positions[key] = event
+        self.stats["last_trading_message_ts"] = now
 
 
 def _f(value, default=None):

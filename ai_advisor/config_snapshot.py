@@ -10,6 +10,47 @@ import config
 from . import paths
 
 
+_SECRET_KEY_PARTS = ("API_KEY", "API_SECRET", "PASSWORD", "PASSCODE", "TRADING_TOKEN", "ACCESS_TOKEN", "OTP")
+_ACCOUNT_KEYS = {
+    "ACCOUNT_ID",
+    "ACCOUNT_NO",
+    "DNSE_ACCOUNT_NO",
+    "DNSE_STOCK_ACCOUNT_NO",
+    "DNSE_DERIVATIVE_ACCOUNT_NO",
+    "DNSE_CUSTODY_CODE",
+    "CUSTODY_CODE",
+    "LOGIN",
+}
+
+
+def _pseudonym(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return "ACCOUNT#" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def _looks_absolute_path(value):
+    text = str(value or "")
+    return os.path.isabs(text) or (len(text) > 2 and text[1:3] in (":\\", ":/"))
+
+
+def redact_for_external_ai(value, key=""):
+    """Recursively remove secrets, account identifiers and local absolute paths."""
+    key_upper = str(key or "").upper()
+    if any(marker in key_upper for marker in _SECRET_KEY_PARTS):
+        return "[REDACTED]" if value not in (None, "") else value
+    if key_upper in _ACCOUNT_KEYS or key_upper.endswith("_ACCOUNT_NO"):
+        return _pseudonym(value)
+    if isinstance(value, dict):
+        return {str(k): redact_for_external_ai(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [redact_for_external_ai(item, key) for item in value]
+    if isinstance(value, str) and _looks_absolute_path(value):
+        return os.path.join("<LOCAL_PATH>", os.path.basename(value))
+    return _json_safe(value)
+
+
 def _json_safe(value):
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
@@ -39,7 +80,7 @@ def _public_config_values():
         if callable(value):
             continue
         if isinstance(value, (str, int, float, bool, list, tuple, dict, set)) or value is None:
-            values[name] = _json_safe(value)
+            values[name] = redact_for_external_ai(value, name)
     return values
 
 
@@ -240,21 +281,21 @@ def build_snapshot(reason="manual"):
         except Exception as exc:
             active_by_symbol[symbol] = {"_advisor_merge_error": str(exc)}
 
-    config_payload = {
+    config_payload = redact_for_external_ai({
         "config_py": _public_config_values(),
         "active_global": _json_safe(global_cfg),
         "active_by_symbol": _json_safe(active_by_symbol),
         "relevant_symbols": relevant_symbols,
         "omitted_symbols": omitted_symbols,
         "raw_sources": _json_safe(raw_sources),
-    }
+    })
     snapshot_id = _stable_hash(config_payload)
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "reason": reason,
-        "account_id": paths.account_id(),
-        "account_dir": paths.account_dir(),
+        "account_id": _pseudonym(paths.account_id()),
+        "account_dir": "<ACCOUNT_WORKSPACE>",
         "config_snapshot_id": snapshot_id,
         "hash_basis": "config_py + active_global + active_by_symbol + raw_settings_sources",
         "advisor_guide": _advisor_guide(),

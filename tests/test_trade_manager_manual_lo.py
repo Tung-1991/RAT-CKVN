@@ -83,6 +83,7 @@ def test_manual_entry_price_flows_to_connector_and_state(monkeypatch, tmp_path):
 
 
 def test_manual_ckcs_margin_adds_tag_and_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setattr(trade_manager_module, "is_symbol_trade_window_open", lambda _symbol: (True, ""))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "core.storage_manager.get_magic_numbers",
@@ -134,6 +135,7 @@ def test_manual_ckcs_margin_adds_tag_and_snapshot(monkeypatch, tmp_path):
 
 
 def test_manual_ckcs_margin_blocks_low_rtt(monkeypatch, tmp_path):
+    monkeypatch.setattr(trade_manager_module, "is_symbol_trade_window_open", lambda _symbol: (True, ""))
     monkeypatch.chdir(tmp_path)
     connector = DummyConnector(
         {

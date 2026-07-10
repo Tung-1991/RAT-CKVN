@@ -86,10 +86,16 @@ class TelegramClient:
         self.token_env = token_env or "TELE_BOT_KEY"
         self.token = token or get_env_value(self.token_env)
         self.timeout = timeout
-        self.allow_insecure_ssl = True if allow_insecure_ssl is None else bool(allow_insecure_ssl)
+        if allow_insecure_ssl is None:
+            allow_insecure_ssl = str(os.getenv("TELEGRAM_ALLOW_INSECURE_SSL", "false")).lower() in {"1", "true", "yes", "on"}
+        self.allow_insecure_ssl = bool(allow_insecure_ssl)
 
     def enabled(self):
         return bool(self.token)
+
+    def _safe_error(self, value):
+        text = str(value or "")
+        return text.replace(str(self.token), "[REDACTED]") if self.token else text
 
     def _urlopen(self, req):
         try:
@@ -123,9 +129,9 @@ class TelegramClient:
                 detail = parsed.get("description", detail)
             except Exception:
                 detail = detail or str(exc)
-            return {"ok": False, "error": f"HTTP {exc.code}: {detail}", "retry_after": retry_after}
+            return {"ok": False, "error": self._safe_error(f"HTTP {exc.code}: {detail}"), "retry_after": retry_after}
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": self._safe_error(exc)}
 
     def _json_request(self, method, payload):
         if not self.token:
@@ -152,9 +158,9 @@ class TelegramClient:
                 detail = parsed.get("description", detail)
             except Exception:
                 detail = detail or str(exc)
-            return {"ok": False, "error": f"HTTP {exc.code}: {detail}"}
+            return {"ok": False, "error": self._safe_error(f"HTTP {exc.code}: {detail}")}
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": self._safe_error(exc)}
 
     def send_message(self, chat_id, text, parse_mode=None):
         last_error = ""

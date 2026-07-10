@@ -14,6 +14,7 @@ from core.storage_manager import get_brain_settings_for_symbol
 from core.market_structure import analyze_market_structure, write_structure_context
 from core.dnse_connector import DNSEConnector
 from core.dnse_ws import market_ws
+from core.market_hours import is_symbol_network_window_open, is_symbol_trade_window_open
 
 logger = logging.getLogger("DataEngine")
 
@@ -62,7 +63,13 @@ class DataEngine:
         """Khởi động WS (1 lần) và subscribe symbol khi streaming được bật."""
         if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
             return
-        if not self._ws_started:
+        if not is_symbol_network_window_open(symbol, include_preopen=True)[0]:
+            market_ws.set_market_data_enabled(False)
+            if not market_ws.is_running():
+                self._ws_started = market_ws.start()
+            return
+        market_ws.set_market_data_enabled(True)
+        if not self._ws_started or not market_ws.is_running():
             self._ws_started = market_ws.start()
         market_ws.subscribe([symbol])
 
@@ -70,7 +77,15 @@ class DataEngine:
         """Đồng bộ danh sách mã đang stream với watchlist hiện tại (gọi từ UI/daemon)."""
         if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
             return
-        if not self._ws_started:
+        symbols = [str(symbol).upper() for symbol in (symbols or []) if symbol]
+        if not any(is_symbol_network_window_open(symbol, include_preopen=True)[0] for symbol in symbols):
+            market_ws.set_symbols(symbols)
+            market_ws.set_market_data_enabled(False)
+            if not market_ws.is_running():
+                self._ws_started = market_ws.start()
+            return
+        market_ws.set_market_data_enabled(True)
+        if not self._ws_started or not market_ws.is_running():
             self._ws_started = market_ws.start()
         market_ws.set_symbols(symbols)
 
@@ -204,8 +219,8 @@ class DataEngine:
         # [24/7] Ngoài giờ giao dịch OHLC không đổi -> đóng băng cache để khỏi gọi API liên tục.
         market_open = True
         try:
-            from core.market_hours import is_symbol_trade_window_open
-            market_open = bool(is_symbol_trade_window_open(symbol)[0])
+            if isinstance(dnse_api, DNSEConnector):
+                market_open = bool(is_symbol_trade_window_open(symbol)[0])
         except Exception:
             market_open = True
         if not market_open:
@@ -237,6 +252,23 @@ class DataEngine:
             if cached and (time.time() - cached["ts"]) < effective_cache_ttl:
                 self.cache_stats["ohlc_hits"] += 1
                 return cached["df"].copy()
+        # Ngoài giờ tuyệt đối không gọi endpoint market-data DNSE. Account APIs vẫn hoạt động.
+        # Dùng bản cache mới nhất cùng symbol/tf
+        # dù TTL đã hết; nếu app vừa khởi động và chưa có cache thì trả DataFrame rỗng.
+        if not market_open:
+            candidates = [
+                cached
+                for key, cached in self._bars_cache.items()
+                if len(key) >= 4
+                and key[0] == str(symbol).upper()
+                and key[1] == market_type
+                and key[2] == res
+                and key[3] == int(num_bars)
+            ]
+            if candidates:
+                self.cache_stats["ohlc_hits"] += 1
+                return max(candidates, key=lambda item: float(item.get("ts", 0.0)))["df"].copy()
+            return pd.DataFrame()
         self.cache_stats["ohlc_misses"] += 1
         
         data = dnse_api.get_ohlc(symbol, res, from_ts, to_ts)
@@ -475,6 +507,17 @@ class DataEngine:
         Trả về dict {bid, ask, last, high, low, spread, timestamp} hoặc None.
         Cache kết quả vào self._last_tick[symbol].
         """
+        # Ngoài giờ/nghỉ trưa chỉ trả cache giá; market channels tắt nhưng trading WS
+        # (order/position) vẫn kết nối, và không fallback REST market-data.
+        enforce_session_gate = isinstance(dnse_api, DNSEConnector)
+        market_open = bool(is_symbol_trade_window_open(symbol)[0]) if enforce_session_gate else True
+        network_open = bool(is_symbol_network_window_open(symbol, include_preopen=True)[0]) if enforce_session_gate else True
+        if not network_open:
+            market_ws.set_market_data_enabled(False)
+            if getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available and not market_ws.is_running():
+                self._ws_started = market_ws.start()
+            return self._last_tick.get(symbol)
+
         # 0. Ưu tiên dữ liệu WebSocket streaming nếu được bật và còn tươi.
         if getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available:
             self._ensure_ws_symbol(symbol)
@@ -486,6 +529,11 @@ class DataEngine:
                     self._last_tick[symbol] = ws_tick
                     self.cache_stats["ws_hits"] += 1
                     return ws_tick
+
+        # Warm-up chỉ dùng để thiết lập WebSocket. REST market data chỉ được gọi khi
+        # ATO/OPEN/ATC thực sự bắt đầu.
+        if not market_open:
+            return self._last_tick.get(symbol)
 
         cache_ttl = float(getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0) or 0.0)
         cached = self._last_tick.get(symbol)

@@ -13,7 +13,11 @@ import threading
 import config
 from core.dnse_connector import DNSEConnector
 from core.data_engine import data_engine
-from core.market_hours import is_symbol_trade_window_open
+from core.market_hours import (
+    is_any_network_window_open,
+    is_symbol_trade_window_open,
+    seconds_until_network_open,
+)
 from core.position_classifier import is_bot_position, is_manual_position
 from signals.signal_generator import signal_generator
 from core.storage_manager import get_brain_settings_for_symbol
@@ -211,6 +215,10 @@ class StandaloneBotDaemon:
         idle_interval = 30.0  # [FIX 429] Ngoài giờ nghỉ dài, khỏi đập quotes/latest.
         while self.running:
             try:
+                watched = self._active_symbols or getattr(config, "BOT_ACTIVE_SYMBOLS", [])
+                if not is_any_network_window_open(watched or None, include_preopen=False):
+                    time.sleep(min(idle_interval, max(1.0, seconds_until_network_open(watched or None))))
+                    continue
                 symbols = self._tick_symbols()
                 # [FIX 429] Ngoài giờ giao dịch KHÔNG có tick để lấy -> bỏ poll để tránh
                 # bão HTTP 429 triền miên trên /quotes/latest (check giờ thuần, không mạng).
@@ -262,6 +270,22 @@ class StandaloneBotDaemon:
         while self.running:
             try:
                 now = time.time()
+                live_cfg = self._read_live_config()
+                bot_active = live_cfg.get(
+                    "BOT_ACTIVE",
+                    live_cfg.get("AUTO_TRADE_ENABLED", getattr(config, "AUTO_TRADE_ENABLED", False)),
+                )
+                symbols = live_cfg.get(
+                    "BOT_ACTIVE_SYMBOLS",
+                    getattr(config, "BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", [])),
+                )
+                self._active_symbols = symbols
+
+                market_data_window = is_any_network_window_open(symbols or None, include_preopen=True)
+                try:
+                    data_engine.set_stream_symbols(symbols)
+                except Exception:
+                    pass
                 if acc_info is None or (now - last_acc_check > 15.0):
                     acc_info = self.connector.get_account_info()
                     last_acc_check = now
@@ -277,23 +301,16 @@ class StandaloneBotDaemon:
                         storage_manager.set_active_account(current_acc_id)
                         update_daemon_paths(current_acc_id)
                         logger.info(f"🔄 Daemon phát hiện đổi tài khoản DNSE sang {current_acc_id}. Đã cập nhật Workspace.")
-                        
-                live_cfg = self._read_live_config()
-                bot_active = live_cfg.get(
-                    "BOT_ACTIVE",
-                    live_cfg.get(
-                        "AUTO_TRADE_ENABLED",
-                        getattr(config, "AUTO_TRADE_ENABLED", False),
-                    ),
-                )
-                symbols = live_cfg.get(
-                    "BOT_ACTIVE_SYMBOLS",
-                    getattr(
-                        config, "BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", [])
-                    ),
-                )
-                self._active_symbols = symbols
 
+                # Ngoài phiên chỉ market-data ngủ. Account REST + trading WS phía trên
+                # vẫn hoạt động để balances/positions/orders luôn đồng bộ.
+                if not market_data_window:
+                    time.sleep(5.0)
+                    continue
+                if not any(is_symbol_trade_window_open(symbol)[0] for symbol in (symbols or [])):
+                    time.sleep(5.0)  # warm-up: market WS + account APIs, chưa quét giá
+                    continue
+                        
                 # Khởi động luồng tick nếu chưa chạy
                 if self._tick_thread is None or not self._tick_thread.is_alive():
                     self._tick_thread = threading.Thread(target=self._tick_update_loop, daemon=True)
@@ -365,6 +382,9 @@ class StandaloneBotDaemon:
                 break
 
             is_open, closed_reason = is_symbol_trade_window_open(sym)
+            if not is_open:
+                signal_debug_state[sym] = f"[PAUSE] {closed_reason}"
+                continue
             dfs, context = data_engine.fetch_data_v4(sym)
             if dfs is None or context is None:
                 signal_debug_state[sym] = f"[PAUSE] {closed_reason}" if not is_open else "Đang tải dữ liệu..."

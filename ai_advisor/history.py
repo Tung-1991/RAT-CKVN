@@ -52,7 +52,7 @@ def _now():
 
 
 def _json(value, limit=30000):
-    raw = json.dumps(config_snapshot.clone_json(value), ensure_ascii=False, sort_keys=True)
+    raw = json.dumps(config_snapshot.redact_for_external_ai(value), ensure_ascii=False, sort_keys=True)
     if len(raw) <= limit:
         return raw
     return raw[:limit] + "...[truncated]"

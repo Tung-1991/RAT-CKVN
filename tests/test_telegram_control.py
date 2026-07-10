@@ -337,6 +337,7 @@ def test_channel_non_owner_callback_can_cancel_pending(monkeypatch, tmp_path):
 
 
 def test_channel_owner_callbacks_toggle_and_close(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.market_hours.is_symbol_trade_window_open", lambda _symbol: (True, ""))
     connector = FakeConnector()
     connector.positions = [_pos(ticket=88)]
     service, toggles, _executions = _service(connector)
@@ -409,7 +410,8 @@ def test_operator_bot_toggle_is_allowed():
     assert "Bot is now ON" in client.messages[-1][1]
 
 
-def test_control_close_ticket_refetches_position():
+def test_control_close_ticket_refetches_position(monkeypatch):
+    monkeypatch.setattr("core.market_hours.is_symbol_trade_window_open", lambda _symbol: (True, ""))
     connector = FakeConnector()
     connector.positions = [_pos(ticket=88)]
     service, _toggles, _executions = _service(connector)

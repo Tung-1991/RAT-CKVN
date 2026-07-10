@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
+import hashlib
 import logging
 import os
+import random
+import re
 import shutil
-import ssl
 import time
 import urllib.error
 import urllib.request
@@ -37,10 +39,22 @@ _FALLBACK_PROVIDERS = {
         "label": "OpenAI",
         "endpoint": "https://api.openai.com/v1/responses",
         "env_key": "OPENAI_API_KEY",
-        "models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
-        "default_model": "gpt-5.4-mini",
-        "context_tokens": {"gpt-5.4-mini": 400000, "gpt-5.4": 1000000, "gpt-5.5": 1000000},
+        "models": ["gpt-5.6-terra", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+        "default_model": "gpt-5.6-terra",
+        "context_tokens": {
+            "gpt-5.6-terra": 1050000,
+            "gpt-5.6": 1050000,
+            "gpt-5.6-sol": 1050000,
+            "gpt-5.6-luna": 1050000,
+            "gpt-5.4-mini": 400000,
+            "gpt-5.4": 1000000,
+            "gpt-5.5": 1000000,
+        },
         "pricing": {
+            "gpt-5.6-terra": {"input": 2.50, "output": 15.00},
+            "gpt-5.6": {"input": 5.00, "output": 30.00},
+            "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
+            "gpt-5.6-luna": {"input": 1.00, "output": 6.00},
             "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
             "gpt-5.4": {"input": 2.50, "output": 15.00},
             "gpt-5.5": {"input": 5.00, "output": 30.00},
@@ -90,19 +104,21 @@ def provider_labels():
 
 
 DEFAULT_PROVIDER = default_provider()
-DEFAULT_MODEL = provider_config(DEFAULT_PROVIDER).get("default_model", "gpt-5.4-mini")
+DEFAULT_MODEL = provider_config(DEFAULT_PROVIDER).get("default_model", "gpt-5.6-terra")
 # Backward-compat: model của provider mặc định.
 SUPPORTED_MODELS = models_for(DEFAULT_PROVIDER)
 LOCAL_TPM_WINDOW_SECONDS = 60
 LOCAL_REQUEST_OVERHEAD_TOKENS = 10000
-MODEL_TPM_LIMITS = {
-    "gpt-5.4-mini": 200000,
-}
+# Không đoán tier TPM của tài khoản OpenAI. Mặc định để trống và xử lý 429/
+# Retry-After từ API; biến này vẫn giữ để deployment có thể cấu hình guard cục bộ.
+MODEL_TPM_LIMITS = {}
 
 
 DEFAULT_API_SETTINGS = {
+    "settings_version": 2,
     "provider": DEFAULT_PROVIDER,
     "model": DEFAULT_MODEL,
+    "reasoning_effort": "medium",
     "web_search_enabled": True,
     "advisor_prompt_limit": PROMPT_LIMIT,
     "advisor_flow_limit": ADVISOR_FLOW_LIMIT,
@@ -145,7 +161,21 @@ def normalize_model(value, provider=None):
     return provider_config(provider).get("default_model") or (models[0] if models else DEFAULT_MODEL)
 
 
-def _build_request(provider, model, prompt, body_text, max_output_tokens, web_search, api_key):
+def normalize_reasoning_effort(value):
+    effort = str(value or "medium").strip().lower()
+    return effort if effort in {"low", "medium", "high", "xhigh"} else "medium"
+
+
+def _build_request(
+    provider,
+    model,
+    prompt,
+    body_text,
+    max_output_tokens,
+    web_search,
+    api_key,
+    reasoning_effort="medium",
+):
     """Trả (endpoint, headers, payload) theo từng provider. Hàm thuần để test được."""
     pcfg = provider_config(provider)
     provider = normalize_provider(provider)
@@ -171,6 +201,8 @@ def _build_request(provider, model, prompt, body_text, max_output_tokens, web_se
             "input": body_text,
             "max_output_tokens": int(max_output_tokens),
         }
+        if str(model).startswith("gpt-5.6"):
+            payload["reasoning"] = {"effort": normalize_reasoning_effort(reasoning_effort)}
         if web_search:
             payload["tools"] = [{"type": "web_search"}]
         headers = {
@@ -239,9 +271,82 @@ def _get_env_value(name):
     return ""
 
 
-def _urlopen(req):
-    context = ssl._create_unverified_context()
-    return urllib.request.urlopen(req, context=context)
+def _urlopen(req, timeout=None):
+    """Open HTTPS with Python's default certificate verification enabled."""
+    timeout = float(
+        timeout
+        if timeout is not None
+        else getattr(config, "ADVISOR_API_TIMEOUT_SECONDS", 300.0)
+    )
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _extract_citations(data):
+    citations = []
+    seen = set()
+    for item in (data or {}).get("output", []) or []:
+        for content in item.get("content", []) if isinstance(item, dict) else []:
+            for annotation in content.get("annotations", []) if isinstance(content, dict) else []:
+                if not isinstance(annotation, dict):
+                    continue
+                citation = annotation.get("url_citation") if isinstance(annotation.get("url_citation"), dict) else annotation
+                url = str(citation.get("url") or "").strip()
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                citations.append({"title": str(citation.get("title") or "Nguồn").strip(), "url": url})
+    return citations
+
+
+def _append_citations(text, citations):
+    if not citations:
+        return text
+    lines = [text.rstrip(), "", "Nguồn tham khảo:"]
+    for item in citations[:20]:
+        lines.append(f"- [{item['title']}]({item['url']})")
+    return "\n".join(lines).strip()
+
+
+def _safe_error_text(value, api_key=""):
+    text = str(value or "")
+    if api_key:
+        text = text.replace(str(api_key), "[REDACTED]")
+    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+\-/=]+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(api[_-]?key|token|secret|password|otp)(\s*[:=]\s*)[^\s,;]+", r"\1\2[REDACTED]", text)
+    return text[:4000]
+
+
+def _sanitize_external_text(value):
+    text = str(value or "")
+    for name in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DNSE_API_KEY",
+        "DNSE_API_SECRET",
+        "DNSE_CUSTODY_CODE",
+        "DNSE_ACCOUNT_NO",
+        "DNSE_STOCK_ACCOUNT_NO",
+        "DNSE_DERIVATIVE_ACCOUNT_NO",
+    ):
+        secret = str(os.getenv(name, "") or getattr(config, name, "") or "").strip()
+        if not secret:
+            continue
+        replacement = "[REDACTED]"
+        if "ACCOUNT_NO" in name or name == "DNSE_CUSTODY_CODE":
+            replacement = "ACCOUNT#" + hashlib.sha256(secret.encode("utf-8")).hexdigest()[:10]
+        text = text.replace(secret, replacement)
+    text = re.sub(r"(?i)(api[_-]?key|secret|trading[_-]?token|password|passcode|otp)(\s*[:=]\s*)[^\s,;]+", r"\1\2[REDACTED]", text)
+    text = re.sub(r"(?<![\w])(?:[A-Za-z]:[\\/][^\r\n|]+)", "<LOCAL_PATH>", text)
+    return text
+
+
+def _retry_after_seconds(headers, attempt):
+    try:
+        value = float((headers or {}).get("Retry-After", "") or 0.0)
+    except (TypeError, ValueError):
+        value = 0.0
+    base = value if value > 0 else min(30.0, 2.0 ** max(1, attempt))
+    return base + random.uniform(0.05, min(0.5, max(0.05, base * 0.1)))
 
 
 def _api_usage_path():
@@ -333,11 +438,13 @@ def load_api_settings():
     path = paths.advisor_api_settings_path()
     legacy_path = paths.legacy_advisor_api_settings_path()
     source_path = path if os.path.exists(path) else legacy_path
+    loaded = {}
     if os.path.exists(source_path):
         try:
             with open(source_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
+                loaded = dict(data)
                 settings.update(data)
         except Exception:
             pass
@@ -384,8 +491,23 @@ def load_api_settings():
         max_value=128000,
     )
     settings["provider"] = normalize_provider(settings.get("provider"))
+    loaded_version = _safe_int(loaded.get("settings_version", 1), 1, min_value=1, max_value=100)
+    if (
+        loaded_version < 2
+        and settings["provider"] == "openai"
+        and str(settings.get("model") or "") == "gpt-5.4-mini"
+    ):
+        settings["model"] = "gpt-5.6-terra"
     settings["model"] = normalize_model(settings.get("model"), settings["provider"])
+    settings["reasoning_effort"] = normalize_reasoning_effort(settings.get("reasoning_effort"))
+    settings["settings_version"] = 2
     settings["web_search_enabled"] = _safe_bool(settings.get("web_search_enabled"), True)
+    needs_save = bool(loaded) and loaded != settings
+    if needs_save and source_path == path:
+        try:
+            save_api_settings(settings)
+        except Exception:
+            pass
     if os.path.exists(legacy_path) and (source_path == legacy_path or os.path.exists(path)):
         try:
             save_api_settings(settings)
@@ -409,8 +531,10 @@ def load_api_settings_from_dict(data):
     data = data or {}
     provider = normalize_provider(data.get("provider"))
     return {
+        "settings_version": 2,
         "provider": provider,
         "model": normalize_model(data.get("model"), provider),
+        "reasoning_effort": normalize_reasoning_effort(data.get("reasoning_effort")),
         "web_search_enabled": _safe_bool(data.get("web_search_enabled"), True),
         "advisor_prompt_limit": _safe_int(
             data.get("advisor_prompt_limit"),
@@ -541,7 +665,7 @@ def build_api_sections(include_previous_response=False):
                 _read_text(paths.advisor_response_path(), limit=settings["previous_response_limit"]),
             )
         )
-    return sections
+    return [(name, _sanitize_external_text(text)) for name, text in sections]
 
 
 def build_api_input(include_previous_response=False):
@@ -550,6 +674,31 @@ def build_api_input(include_previous_response=False):
         section_name = "previous_advisor_response.md" if name == "advisor_response.md" else name
         sections.extend([f"# {section_name}", text])
     return "\n\n".join(sections)
+
+
+def validate_advisor_package():
+    ensure_advisor_prompt()
+    required = {
+        "advisor_prompt.md": paths.advisor_prompt_path(),
+        "advisor_flow.md": paths.advisor_flow_path(),
+        "technical_settings.json": paths.technical_settings_path(),
+        "advisor_export.xlsx": paths.export_path(),
+        "user_context.md": paths.user_context_path(),
+    }
+    files = []
+    missing = []
+    for name, path in required.items():
+        exists = os.path.isfile(path) and os.path.getsize(path) > 0
+        files.append({"name": name, "path": path, "exists": exists, "bytes": os.path.getsize(path) if exists else 0})
+        if not exists:
+            missing.append(name)
+    return {
+        "ok": not missing,
+        "missing": missing,
+        "files": files,
+        "privacy_ok": True,
+        "redaction": "secrets/account identifiers/absolute paths sanitized before API input",
+    }
 
 
 def estimate_api_payload(include_previous_response=False):
@@ -616,6 +765,11 @@ def estimate_api_payload(include_previous_response=False):
 
 
 def send_package_to_api(prompt=None, include_previous_response=False):
+    package = validate_advisor_package()
+    if not package["ok"]:
+        msg = "Missing/empty advisor package file(s): " + ", ".join(package["missing"]) + ". Generate Advisor Package first."
+        history.record_event("advisor_api_invalid_package", msg, severity="WARN", payload={"missing": package["missing"]})
+        return {"ok": False, "error": msg, "package": package}
     settings = load_api_settings()
     provider = settings.get("provider", DEFAULT_PROVIDER)
     pcfg = provider_config(provider)
@@ -642,7 +796,7 @@ def send_package_to_api(prompt=None, include_previous_response=False):
             f"~{estimate.get('tokens')} input tokens + "
             f"{estimate.get('max_output_tokens')} output reserve > "
             f"{estimate.get('context_tokens')} context tokens. "
-            "Lower advisor_export rows/sheet or switch to gpt-5.4/gpt-5.5."
+            "Lower advisor_export rows/sheet or reduce max output tokens."
         )
         _stdout_log(msg)
         history.record_event(
@@ -682,11 +836,12 @@ def send_package_to_api(prompt=None, include_previous_response=False):
     _endpoint2, headers, payload = _build_request(
         provider,
         model,
-        prompt or load_advisor_prompt(),
+        _sanitize_external_text(prompt or load_advisor_prompt()),
         body_text,
         estimate.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
         settings.get("web_search_enabled"),
         key,
+        settings.get("reasoning_effort", "medium"),
     )
     req = urllib.request.Request(
         endpoint,
@@ -694,45 +849,89 @@ def send_package_to_api(prompt=None, include_previous_response=False):
         headers=headers,
         method="POST",
     )
-    try:
-        _record_api_usage(model, requested_tokens)
-        with _urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        text = _parse_response(provider, data)
-        if not text:
-            text = json.dumps(data, ensure_ascii=False, indent=2)
-        with open(paths.advisor_response_path(), "w", encoding="utf-8") as f:
-            f.write(text)
-        response_history = paths.advisor_response_history_path()
-        os.makedirs(os.path.dirname(response_history), exist_ok=True)
-        shutil.copy2(paths.advisor_response_path(), response_history)
-        history.record_event(
-            "advisor_api_response_saved",
-            "Advisor API response saved",
-            payload={
-                "model": model,
-                "response_history": response_history,
-                "include_previous_response": bool(include_previous_response),
-            },
-        )
-        _stdout_log(f"response saved response={paths.advisor_response_path()} history={response_history}")
-        return {"ok": True, "response": paths.advisor_response_path(), "response_history": response_history, "model": model}
-    except urllib.error.HTTPError as exc:
-        detail = ""
+    _record_api_usage(model, requested_tokens)
+    max_retries = max(0, int(getattr(config, "ADVISOR_API_RETRIES", 2) or 0))
+    attempt = 0
+    while True:
         try:
-            detail = exc.read().decode("utf-8", errors="replace")
-        except Exception:
+            with _urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            text = _parse_response(provider, data)
+            if not text:
+                text = json.dumps(data, ensure_ascii=False, indent=2)
+            citations = _extract_citations(data) if provider == "openai" else []
+            text = _append_citations(text, citations)
+            with open(paths.advisor_response_path(), "w", encoding="utf-8") as f:
+                f.write(text)
+            response_history = paths.advisor_response_history_path()
+            os.makedirs(os.path.dirname(response_history), exist_ok=True)
+            shutil.copy2(paths.advisor_response_path(), response_history)
+            actual_model = str(data.get("model") or model) if isinstance(data, dict) else model
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            history.record_event(
+                "advisor_api_response_saved",
+                "Advisor API response saved",
+                payload={
+                    "model": actual_model,
+                    "usage": usage,
+                    "citations": len(citations),
+                    "response_history": response_history,
+                    "include_previous_response": bool(include_previous_response),
+                },
+            )
+            _stdout_log(f"response saved model={actual_model} response={paths.advisor_response_path()} history={response_history}")
+            return {
+                "ok": True,
+                "response": paths.advisor_response_path(),
+                "response_history": response_history,
+                "model": actual_model,
+                "usage": usage,
+                "citations": citations,
+            }
+        except urllib.error.HTTPError as exc:
             detail = ""
-        msg = f"HTTP {exc.code}: {detail or exc.reason}"
-        _stdout_log(msg)
-        history.record_event(
-            "advisor_api_error",
-            msg,
-            severity="ERROR",
-            payload={"model": model, "endpoint": endpoint, "status": exc.code},
-        )
-        return {"ok": False, "error": msg}
-    except Exception as exc:
-        _stdout_log(f"error: {exc}")
-        history.record_event("advisor_api_error", str(exc), severity="ERROR", payload={"model": model, "endpoint": endpoint})
-        return {"ok": False, "error": str(exc)}
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = ""
+            retryable = exc.code == 429 or 500 <= int(exc.code) < 600
+            if retryable and attempt < max_retries:
+                attempt += 1
+                wait_s = _retry_after_seconds(getattr(exc, "headers", {}), attempt)
+                _stdout_log(f"HTTP {exc.code}; retry {attempt}/{max_retries} after {wait_s:.1f}s")
+                time.sleep(wait_s)
+                continue
+            msg = _safe_error_text(f"HTTP {exc.code}: {detail or exc.reason}", key)
+            _stdout_log(msg)
+            history.record_event(
+                "advisor_api_error",
+                msg,
+                severity="ERROR",
+                payload={"model": model, "endpoint": endpoint, "status": exc.code, "attempts": attempt + 1},
+            )
+            return {"ok": False, "error": msg}
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt < max_retries:
+                attempt += 1
+                wait_s = _retry_after_seconds({}, attempt)
+                _stdout_log(f"network error; retry {attempt}/{max_retries} after {wait_s:.1f}s")
+                time.sleep(wait_s)
+                continue
+            msg = _safe_error_text(exc, key)
+            history.record_event(
+                "advisor_api_error",
+                msg,
+                severity="ERROR",
+                payload={"model": model, "endpoint": endpoint, "attempts": attempt + 1},
+            )
+            return {"ok": False, "error": msg}
+        except Exception as exc:
+            msg = _safe_error_text(exc, key)
+            _stdout_log(f"error: {msg}")
+            history.record_event(
+                "advisor_api_error",
+                msg,
+                severity="ERROR",
+                payload={"model": model, "endpoint": endpoint, "attempts": attempt + 1},
+            )
+            return {"ok": False, "error": msg}

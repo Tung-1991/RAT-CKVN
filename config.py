@@ -33,6 +33,14 @@ DNSE_TOKEN_TTL_HOURS = {"email_otp": 8.0, "smart_otp": 8.0}
 CRYPTO_SYMBOLS = []
 WEEKDAY_ONLY_SYMBOLS = ["VN30F1M"]
 MARKET_HOURS_UTC_OFFSET = 7 # Giờ VN
+MARKET_PREOPEN_MINUTES = int(os.getenv("MARKET_PREOPEN_MINUTES", "5"))
+# Danh sách ngày nghỉ bổ sung dạng YYYY-MM-DD, phân tách bằng dấu phẩy. Việc kiểm tra
+# hoàn toàn cục bộ để không tạo request mạng khi thị trường đóng cửa.
+MARKET_HOLIDAYS = {
+    day.strip()
+    for day in os.getenv("MARKET_HOLIDAYS", "").split(",")
+    if day.strip()
+}
 WEEKEND_CLOSE_WEEKDAY = 4 # Thứ 6
 WEEKEND_CLOSE_HOUR = 15 # Đóng cửa 15:00
 WEEKEND_OPEN_WEEKDAY = 0 # Thứ 2
@@ -63,8 +71,15 @@ DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SEC
 DNSE_FEE_CACHE_TTL_SECONDS = float(os.getenv("DNSE_FEE_CACHE_TTL_SECONDS", "3600.0"))
 
 # --- Market-data WebSocket streaming (giảm tải REST để add nhiều mã không bị BAN) ---
-# Bật WS để stream giá thay vì poll REST. Khi tắt (mặc định) hệ thống dùng REST + cache.
-DNSE_WS_ENABLED = os.getenv("DNSE_WS_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+# Chế độ mới: auto chỉ kết nối trong warm-up/phiên giao dịch và tự ngắt ngoài giờ.
+# DNSE_WS_ENABLED vẫn tồn tại để code/config bundle cũ đọc được; DNSE_WS_MODE=off
+# là công tắc tắt rõ ràng. Cài đặt mới mặc định auto theo chính sách RAT6.
+_DNSE_WS_LEGACY_RAW = os.getenv("DNSE_WS_ENABLED", "")
+DNSE_WS_LEGACY_ENABLED = _DNSE_WS_LEGACY_RAW.strip().lower() in ("1", "true", "yes", "on")
+DNSE_WS_MODE = os.getenv("DNSE_WS_MODE", "auto").strip().lower()
+if DNSE_WS_MODE not in ("auto", "off"):
+    DNSE_WS_MODE = "auto"
+DNSE_WS_ENABLED = DNSE_WS_MODE != "off"
 DNSE_WS_URL = os.getenv("DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn")
 DNSE_WS_ENCODING = os.getenv("DNSE_WS_ENCODING", "json")
 DNSE_WS_BOARD_ID = os.getenv("DNSE_WS_BOARD_ID", "G1")
@@ -72,6 +87,8 @@ DNSE_WS_RECONNECT_SECONDS = 5.0
 DNSE_WS_PONG_INTERVAL = 150.0  # gửi PONG mỗi 150s (< 180s server PING) để giữ kết nối
 # Khi WS bật: nếu tick từ WS cũ hơn ngưỡng này (giây) thì fallback sang REST.
 DNSE_WS_STALE_SECONDS = 5.0
+DNSE_WS_MAX_CONNECTION_SECONDS = float(os.getenv("DNSE_WS_MAX_CONNECTION_SECONDS", "28200"))  # 7h50
+DNSE_WS_RECONCILE_SECONDS = float(os.getenv("DNSE_WS_RECONCILE_SECONDS", "300"))
 RESET_HOUR = 0
 STRICT_MODE_DEFAULT = True
 MAX_PING_MS = 150
@@ -571,6 +588,8 @@ PCA_CONFIG = {
 # 8. AI ADVISOR — catalog đa provider/model (setting GỐC ở đây; UI lưu JSON override)
 # ==============================================================================
 AI_ADVISOR_DEFAULT_PROVIDER = "openai"
+ADVISOR_API_TIMEOUT_SECONDS = float(os.getenv("ADVISOR_API_TIMEOUT_SECONDS", "300"))
+ADVISOR_API_RETRIES = int(os.getenv("ADVISOR_API_RETRIES", "2"))
 AI_ADVISOR_DEFAULT_MAX_OUTPUT_TOKENS = 8000
 # Mỗi provider: endpoint REST, biến môi trường chứa key, danh sách model, context + giá (USD/1M token).
 AI_ADVISOR_PROVIDERS = {
@@ -578,10 +597,22 @@ AI_ADVISOR_PROVIDERS = {
         "label": "OpenAI",
         "endpoint": "https://api.openai.com/v1/responses",
         "env_key": "OPENAI_API_KEY",
-        "models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
-        "default_model": "gpt-5.4-mini",
-        "context_tokens": {"gpt-5.4-mini": 400000, "gpt-5.4": 1000000, "gpt-5.5": 1000000},
+        "models": ["gpt-5.6-terra", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+        "default_model": "gpt-5.6-terra",
+        "context_tokens": {
+            "gpt-5.6-terra": 1050000,
+            "gpt-5.6": 1050000,
+            "gpt-5.6-sol": 1050000,
+            "gpt-5.6-luna": 1050000,
+            "gpt-5.4-mini": 400000,
+            "gpt-5.4": 1000000,
+            "gpt-5.5": 1000000,
+        },
         "pricing": {
+            "gpt-5.6-terra": {"input": 2.50, "output": 15.00},
+            "gpt-5.6": {"input": 5.00, "output": 30.00},
+            "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
+            "gpt-5.6-luna": {"input": 1.00, "output": 6.00},
             "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
             "gpt-5.4": {"input": 2.50, "output": 15.00},
             "gpt-5.5": {"input": 5.00, "output": 30.00},

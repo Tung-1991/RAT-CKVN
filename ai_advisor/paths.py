@@ -25,6 +25,10 @@ def advisor_root():
     return os.path.join(account_dir(), "advisor")
 
 
+def external_package_root():
+    return os.path.join(advisor_root(), "external_package")
+
+
 def account_api_settings_path():
     return os.path.join(account_dir(), "advisor_api_settings.json")
 
@@ -107,6 +111,7 @@ def scan_report_path():
 
 def ensure_advisor_dirs():
     os.makedirs(advisor_root(), exist_ok=True)
+    os.makedirs(external_package_root(), exist_ok=True)
     os.makedirs(history_root(), exist_ok=True)
     return advisor_root()
 

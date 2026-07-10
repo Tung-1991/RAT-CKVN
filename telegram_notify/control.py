@@ -440,12 +440,13 @@ class TelegramControlService:
 
     def _send_status(self, client, chat_id, positions_only=False, plain=False):
         positions = self._positions()
+        account_info = self.connector.get_account_info()
         magics = self._magics()
         if positions_only:
             text = format_positions(positions, magics=magics)
         else:
             text = format_status(
-                self.connector.get_account_info(),
+                account_info,
                 self.get_state() or {},
                 positions,
                 bool(self.get_bot_enabled()),
@@ -472,6 +473,12 @@ class TelegramControlService:
         pos = next((p for p in positions if int(getattr(p, "ticket", 0) or 0) == ticket), None)
         if not pos:
             return client.send_message(chat_id, f"Ticket #{ticket} is not open anymore.")
+        try:
+            from core.market_hours import is_symbol_trade_window_open
+            if not is_symbol_trade_window_open(getattr(pos, "symbol", ""))[0]:
+                return client.send_message(chat_id, "Market is closed; close request was not sent to DNSE.")
+        except Exception:
+            return client.send_message(chat_id, "Cannot verify market session; close request was not sent.")
         result = self.connector.close_position(pos, comment="telegram_control_close")
         if result:
             return client.send_message(chat_id, f"Close sent for #{ticket} {getattr(pos, 'symbol', '')}.")

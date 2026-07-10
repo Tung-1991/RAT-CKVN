@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from datetime import datetime
+from types import SimpleNamespace
 import logging
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log 3 lớp
 import config
@@ -491,15 +492,22 @@ class BotUI(ctk.CTk):
                 return True
         except Exception:
             pass
+        otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
+        if str(otp_type).lower() == "email_otp":
+            if not self.connector.send_email_otp():
+                self.log_message("❌ Không gửi được Email OTP DNSE.", target="bot", error=True)
+                return False
+            prompt_text = "DNSE đã gửi Email OTP (hiệu lực khoảng 2 phút). Nhập mã để tạo Trading Token 8 giờ:"
+        else:
+            prompt_text = "Nhập Smart OTP DNSE hiện tại (mã thường đổi sau khoảng 30 giây) để tạo Trading Token 8 giờ:"
         dialog = customtkinter.CTkInputDialog(
-            text="Nhập mã OTP của DNSE (Trading Token có hiệu lực 8 tiếng):",
+            text=prompt_text,
             title="Xác thực OTP",
         )
         otp_code = dialog.get_input()
         if not otp_code:
             self.log_message("⚠ Đã huỷ nhập OTP. Bot chưa được bật.", target="bot", error=True)
             return False
-        otp_type = os.getenv("DNSE_OTP_TYPE", "email_otp")
         if not self.connector.verify_otp(otp_type, otp_code):
             self.log_message("❌ Xác thực OTP DNSE thất bại. Không thể bật Bot.", target="bot", error=True)
             return False
@@ -2554,15 +2562,19 @@ class BotUI(ctk.CTk):
         """Mở cửa sổ Danh mục cổ phiếu nắm giữ (CKCS)."""
         ui_popups.open_portfolio_popup(self)
 
-    def update_portfolio_table(self, acc=None):
+    def update_portfolio_table(self, acc=None, positions=None):
         """Cập nhật tách Tổng/Tiền/Giá trị CP (luôn) + nạp bảng danh mục (khi popup mở).
 
         Dùng get_positions() KHÔNG lọc magic (thấy cả cổ mua ngoài bot).
         """
         try:
             from core import portfolio
-            positions = self.connector.get_positions()
-            account_info = acc if isinstance(acc, dict) else self.connector.get_account_info()
+            if positions is None:
+                positions = self.connector.get_positions()
+            if isinstance(acc, dict):
+                account_info = acc
+            else:
+                account_info = self.connector.get_account_info()
             summary = portfolio.portfolio_summary(positions, account_info)
         except Exception as exc:
             main_logger.debug("update_portfolio_table failed: %s", exc)
@@ -2817,16 +2829,29 @@ class BotUI(ctk.CTk):
                 f"[LIMIT ORDER] Cache {data['side']} {data['symbol']} {mode} id={item['id'][:8]} plan={order_plan} lot={data['lot']:g} sl={data['sl']:g} tp={data['tp']:g}.",
                 target="manual",
             )
+            from core.market_hours import is_symbol_trade_window_open
+            if getattr(config, "PAPER_TRADING", True) or is_symbol_trade_window_open(data["symbol"])[0]:
+                cached_acc = self.connector.get_account_info()
+                cached_positions = self.connector.get_all_open_positions()
+            else:
+                cached_acc = getattr(self.connector, "_account_cache", None) or {
+                    "login": getattr(self.connector, "account_no", ""),
+                    "balance": 0.0,
+                    "equity": 0.0,
+                    "margin": 0.0,
+                    "free_margin": 0.0,
+                }
+                cached_positions = list(getattr(self.connector, "_positions_cache", []) or [])
             self.update_ui(
-                self.connector.get_account_info(),
+                cached_acc,
                 self.trade_mgr.state,
                 self.checklist_mgr.run_pre_trade_checks(
-                    self.connector.get_account_info(), self.trade_mgr.state, data["symbol"], self.var_strict_mode.get()
+                    cached_acc, self.trade_mgr.state, data["symbol"], self.var_strict_mode.get()
                 ),
                 None,
                 data["preset"],
                 data["symbol"],
-                self.connector.get_all_open_positions(),
+                cached_positions,
                 [],
             )
         except Exception as exc:
@@ -2856,6 +2881,19 @@ class BotUI(ctk.CTk):
         entry_price = float(item.get("entry_price", 0.0) or 0.0)
         target = str(item.get("target", "")).upper()
         order_kind = target if target in ("ATO", "ATC") and entry_price <= 0 else None
+        if not getattr(config, "PAPER_TRADING", True) and not self.connector.has_trading_token():
+            pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_TRADING_TOKEN")
+            if not getattr(self, "_otp_prompt_scheduled", False):
+                self._otp_prompt_scheduled = True
+
+                def _prompt_pending_otp():
+                    try:
+                        self._ensure_trading_otp()
+                    finally:
+                        self._otp_prompt_scheduled = False
+
+                self.after(0, _prompt_pending_otp)
+            return
         try:
             result = self.trade_mgr.execute_manual_trade(
                 side,
@@ -2883,10 +2921,156 @@ class BotUI(ctk.CTk):
             pending_orders.mark(order_id, pending_orders.FAILED, str(exc))
             self.log_message(f"[LIMIT ORDER] Exception {side} {symbol}: {exc}", error=True, target="manual")
 
+    def _render_cached_ui_snapshot(self, sym):
+        """Render account state while market-data endpoints are asleep."""
+        import core.storage_manager as storage_manager
+
+        paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+        if paper_mode:
+            acc = self.connector.get_account_info()
+            all_positions = list(self.connector.get_all_open_positions() or [])
+            open_orders = []
+        else:
+            cached_acc = getattr(self.connector, "_account_cache", None)
+            cached_positions = list(getattr(self.connector, "_positions_cache", []) or [])
+            cached_orders = list(getattr(self.connector, "_orders_cache", []) or [])
+            try:
+                acc = self.connector.get_account_info() or cached_acc
+            except Exception:
+                acc = cached_acc
+            acc = acc or {
+                "login": getattr(self.connector, "account_no", ""),
+                "balance": 0.0,
+                "equity": 0.0,
+                "margin": 0.0,
+                "free_margin": 0.0,
+            }
+            try:
+                all_positions = list(self.connector.get_all_open_positions() or [])
+            except Exception:
+                all_positions = cached_positions
+            try:
+                open_orders = list(
+                    self.connector.get_orders(
+                        symbol=sym,
+                        orderCategory=getattr(self.connector, "order_category", "NORMAL"),
+                    )
+                    if hasattr(self.connector, "get_orders")
+                    else []
+                )
+            except Exception:
+                open_orders = [
+                    order for order in cached_orders
+                    if not sym or str(order.get("symbol", "")).upper() == str(sym).upper()
+                ]
+
+        tick_data = data_engine.fetch_realtime_tick(sym)  # outside session: cache-only by contract
+        if not tick_data:
+            cached_ctx = self.latest_market_context.get(sym, {}) or {}
+            cached_price = float(cached_ctx.get("current_price", 0.0) or 0.0)
+            if cached_price <= 0:
+                matching = [p for p in all_positions if str(getattr(p, "symbol", "")).upper() == str(sym).upper()]
+                if matching:
+                    cached_price = float(
+                        getattr(matching[0], "price_current", 0.0)
+                        or getattr(matching[0], "price_open", 0.0)
+                        or 0.0
+                    )
+            if cached_price > 0:
+                tick_data = {
+                    "symbol": sym,
+                    "last": cached_price,
+                    "bid": cached_price,
+                    "ask": cached_price,
+                    "spread": 0.0,
+                    "synthetic_quote": True,
+                    "timestamp": float(cached_ctx.get("tick_timestamp", 0.0) or 0.0),
+                }
+
+        tick = None
+        if tick_data:
+            bid_val = float(tick_data.get("bid", tick_data.get("last", 0.0)) or 0.0)
+            ask_val = float(tick_data.get("ask", tick_data.get("last", bid_val)) or bid_val)
+            last_val = float(tick_data.get("last", ask_val or bid_val) or 0.0)
+            self.latest_market_context.setdefault(sym, {}).update(
+                {
+                    "bid": bid_val,
+                    "ask": ask_val,
+                    "current_price": last_val,
+                    "spread": float(tick_data.get("spread", 0.0) or 0.0),
+                    "synthetic_quote": True,
+                    "tick_timestamp": tick_data.get("timestamp", 0.0),
+                }
+            )
+            tick = SimpleNamespace(bid=bid_val, ask=ask_val, synthetic=True)
+
+        magics = storage_manager.get_magic_numbers()
+        self._ui_all_positions_snapshot = list(all_positions)
+        positions = [
+            p for p in all_positions
+            if is_bot_position(p, magics) or is_manual_position(p, magics)
+        ]
+        cached_spread = float((self.latest_market_context.get(sym, {}) or {}).get("spread", 0.0) or 0.0)
+        pos_extras = {}
+        for position in positions:
+            derivative = self._is_derivative_symbol(position.symbol)
+            pos_extras[str(position.ticket)] = {
+                "c_size": float(
+                    getattr(config, "DNSE_POINT_VALUE", 100000.0)
+                    if derivative
+                    else getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0)
+                ),
+                "spread": cached_spread if str(position.symbol).upper() == str(sym).upper() else 0.0,
+                "comm": float(getattr(position, "commission", 0.0) or 0.0),
+            }
+        try:
+            checks = self.checklist_mgr.run_pre_trade_checks(
+                acc, self.trade_mgr.state, sym, self.var_strict_mode.get()
+            )
+        except Exception:
+            checks = {"passed": False, "checks": []}
+        self.after(
+            0,
+            self.update_ui,
+            acc,
+            self.trade_mgr.state,
+            checks,
+            tick,
+            getattr(config, "DEFAULT_PRESET", "SCALPING"),
+            sym,
+            positions,
+            open_orders,
+            pos_extras,
+        )
+
     def bg_update_loop(self):
         while self.running:
             try:
                 sym = self.cbo_symbol.get()
+                from core.market_hours import (
+                    is_symbol_network_window_open,
+                    is_symbol_trade_window_open,
+                    seconds_until_network_open,
+                )
+                network_open = is_symbol_network_window_open(sym, include_preopen=True)[0]
+                trade_open = is_symbol_trade_window_open(sym)[0]
+                if not network_open:
+                    try:
+                        data_engine.set_stream_symbols([sym])
+                    except Exception:
+                        pass
+                elif not trade_open:
+                    # Pre-open warm-up: establish WS only. Do not poll balances/positions/OHLC.
+                    try:
+                        data_engine.set_stream_symbols([sym])
+                    except Exception:
+                        pass
+                if not trade_open:
+                    self._render_cached_ui_snapshot(sym)
+                    self._run_pending_order_scheduler()  # local-only; claim_due remains closed
+                    wait_s = min(5.0, max(1.0, seconds_until_network_open([sym]))) if not network_open else 5.0
+                    time.sleep(wait_s)
+                    continue
                 new_map = self.trade_mgr.update_running_trades(
                     "STANDARD", self.latest_market_context
                 )
@@ -2952,9 +3136,11 @@ class BotUI(ctk.CTk):
                     logger.error(f"[TICK_ERROR] {sym}: {e}", exc_info=True)
                 magics = storage_manager.get_magic_numbers()
                 
+                all_pos = list(self.connector.get_all_open_positions() or [])
+                self._ui_all_positions_snapshot = list(all_pos)
                 pos = [
                     p
-                    for p in self.connector.get_all_open_positions()
+                    for p in all_pos
                     if (
                         is_bot_position(p, magics)
                         or is_manual_position(p, magics)
@@ -3022,7 +3208,12 @@ class BotUI(ctk.CTk):
         # thiếu atr/swing -> fetch nến on-demand (thread nền, throttle 15s/mã).
         try:
             _params_active = config.PRESETS.get(preset, {})
-            if sym and not self._manual_context_ready(_params_active, sym_ctx):
+            from core.market_hours import is_symbol_trade_window_open
+            if (
+                sym
+                and is_symbol_trade_window_open(sym)[0]
+                and not self._manual_context_ready(_params_active, sym_ctx)
+            ):
                 self._schedule_symbol_context_fetch(sym)
         except Exception:
             pass
@@ -3105,7 +3296,10 @@ class BotUI(ctk.CTk):
             self.lbl_acc_info.configure(text=f"ID: {acc['login']}  ·  {_wallet}")
         # Danh mục CKCS + tách Tiền/CP/Tổng (read-only). Đặt sau khi set equity để
         # ghi đè bằng tổng tự tính (balances cổ phiếu không trả sẵn NAV).
-        self.update_portfolio_table(acc)
+        self.update_portfolio_table(
+            acc,
+            getattr(self, "_ui_all_positions_snapshot", positions),
+        )
         base_pnl = float(state.get("pnl_today", 0.0) or 0.0)
         pnl = base_pnl
         self.lbl_stats.configure(
@@ -3226,7 +3420,12 @@ class BotUI(ctk.CTk):
             try:
                 # poll_tick=False: giá đã lấy ở fetch_realtime_tick phía trên, đây chỉ cần
                 # cỡ hợp đồng/lô (tĩnh) -> khỏi poll lại endpoint phái sinh nóng, tránh 429 + đơ UI.
-                s_info = self.connector.get_symbol_info(sym, poll_tick=False) if self.connector else None
+                from core.market_hours import is_symbol_trade_window_open
+                s_info = (
+                    self.connector.get_symbol_info(sym, poll_tick=False)
+                    if self.connector and is_symbol_trade_window_open(sym)[0]
+                    else None
+                )
             except Exception:
                 s_info = None
             if s_info:
@@ -3963,6 +4162,8 @@ class BotUI(ctk.CTk):
         if me > 0 and phase != "OPEN":
             self.log_message("LO chi gui trong phien OPEN; dung LIMIT ORDER de cache toi phien.", error=True, target="manual")
             return
+        if not self._ensure_trading_otp():
+            return
 
         def run_trade_thread(risk_gate_ack=False):
             result = self.trade_mgr.execute_manual_trade(
@@ -4320,18 +4521,19 @@ class BotUI(ctk.CTk):
             cost = estimate.get("input_cost_usd", 0.0)
             out_2k = estimate.get("estimated_output_2k_usd", 0.0)
             out_4k = estimate.get("estimated_output_4k_usd", 0.0)
-            model = estimate.get("model", "gpt-5.4-mini")
+            model = estimate.get("model", "gpt-5.6-terra")
             context_tokens = estimate.get("context_tokens", 0)
             max_output_tokens = estimate.get("max_output_tokens", 0)
             remaining_tokens = estimate.get("context_remaining_tokens", 0)
             context_status = "OK" if estimate.get("fits_context") else "TOO LARGE"
             web_status = "ON" if estimate.get("web_search_enabled") else "OFF"
+            reasoning = str((estimate.get("settings") or {}).get("reasoning_effort", "medium"))
             text = (
                 f"API payload: ~{tokens:,} input tokens\n"
                 f"Input cost: ~${cost:.4f} | Output 2k/4k: ~${out_2k:.4f}/${out_4k:.4f}\n"
                 f"Model: {model} | Context: {context_status} "
                 f"(limit {context_tokens:,}, output reserve {max_output_tokens:,}, remain {remaining_tokens:,})\n"
-                f"Web Search: {web_status} | Tool cost is not included in this token preview"
+                f"Reasoning: {reasoning} | Web Search: {web_status} | Tool cost is not included in this token preview"
             )
             detail_parts = []
             for item in estimate.get("breakdown", []):
@@ -4364,10 +4566,12 @@ class BotUI(ctk.CTk):
 
     def open_advisor_folder(self):
         try:
-            from ai_advisor.paths import advisor_root, ensure_advisor_dirs
+            from ai_advisor.paths import advisor_root, ensure_advisor_dirs, external_package_root
 
             ensure_advisor_dirs()
-            os.startfile(advisor_root())
+            external_root = external_package_root()
+            target = external_root if os.path.isfile(os.path.join(external_root, "package_manifest.json")) else advisor_root()
+            os.startfile(target)
             self.log_message("[AI ADVISOR] Opened Advisor folder.", target="manual")
         except Exception as exc:
             self._set_advisor_status("Advisor folder ERR", str(exc))
@@ -4475,6 +4679,7 @@ class BotUI(ctk.CTk):
 
             cache = engine_health.get("cache", {}) if isinstance(engine_health, dict) else {}
             sizes = engine_health.get("cache_sizes", {}) if isinstance(engine_health, dict) else {}
+            ws_health = engine_health.get("ws", {}) if isinstance(engine_health, dict) else {}
             total = int(connector_health.get("total_requests", 0) or 0)
             started = float(connector_health.get("started_at", time.time()) or time.time())
             elapsed_min = max(1.0 / 60.0, (time.time() - started) / 60.0)
@@ -4524,7 +4729,28 @@ class BotUI(ctk.CTk):
                 f"  Tick/OHLC    {getattr(config, 'DNSE_TICK_CACHE_TTL_SECONDS', 2.0)}s / {getattr(config, 'DNSE_OHLC_CACHE_TTL_SECONDS', 30.0)}s",
                 f"  Acc/Pos      {getattr(config, 'DNSE_ACCOUNT_CACHE_TTL_SECONDS', 5.0)}s / {getattr(config, 'DNSE_POSITIONS_CACHE_TTL_SECONDS', 2.0)}s",
                 f"  Size         tick={sizes.get('ticks', 0)} ohlc={sizes.get('ohlc', 0)}",
+                "",
+                "WEBSOCKET",
+                f"  Mode/State   {ws_health.get('mode', 'off')} / {'CONNECTED' if ws_health.get('connected') else 'OFFLINE'}",
+                f"  Market feed  {'ON' if ws_health.get('market_data_enabled') else 'SLEEP'} · trading feed {'ON' if ws_health.get('connected') else 'OFF'}",
+                f"  Auth/Sub     {bool(ws_health.get('authenticated'))} / {len(ws_health.get('subscribed', []) or [])}",
+                f"  Messages     {int(ws_health.get('messages', 0) or 0)} · reconnect {int(ws_health.get('reconnects', 0) or 0)}",
+                f"  Events       order={int(ws_health.get('order_events', 0) or 0)} position={int(ws_health.get('position_events', 0) or 0)}",
             ]
+            if ws_health.get("last_error"):
+                lines.append(f"  WS error     {ws_health.get('last_error')}")
+            rate_limits = connector_health.get("rate_limits", {}) or {}
+            throttled = connector_health.get("throttled_endpoints", {}) or {}
+            lines.extend(["", "RATE LIMIT"])
+            if rate_limits:
+                for endpoint, quota in sorted(rate_limits.items()):
+                    lines.append(
+                        f"  {endpoint} remaining={quota.get('remaining')} limit={quota.get('limit')} reset={quota.get('reset_at')}"
+                    )
+            else:
+                lines.append("  No DNSE quota header received")
+            for endpoint, until in sorted(throttled.items()):
+                lines.append(f"  THROTTLED {endpoint} · {max(0, int(float(until) - time.time()))}s")
             if connector_health.get("last_error"):
                 lines.extend(["", f"ERROR {connector_health.get('last_error')}"])
             lines.extend(["", "ENDPOINTS"])
@@ -4706,6 +4932,8 @@ class BotUI(ctk.CTk):
             "Xác nhận", "ĐÓNG TOÀN BỘ LỆNH?", parent=self
         ):
             return
+        if not self._ensure_trading_otp():
+            return
         for item in items:
             p = next(
                 (
@@ -4718,7 +4946,9 @@ class BotUI(ctk.CTk):
             if p:
                 self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
                 threading.Thread(
-                    target=lambda: self.connector.close_position(p)
+                    target=self.connector.close_position,
+                    args=(p,),
+                    daemon=True,
                 ).start()
 
     def _pending_row_item(self, row_id):
@@ -4768,6 +4998,8 @@ class BotUI(ctk.CTk):
                 "Huy lenh DNSE", f"Huy lenh DNSE #{order_id}?", parent=self
             ):
                 return
+            if not self._ensure_trading_otp():
+                return
 
             def _cancel_order():
                 try:
@@ -4791,6 +5023,8 @@ class BotUI(ctk.CTk):
             "Dong lenh", f"Dong lenh #{row_id}?", parent=self
         ):
             return
+        if not self._ensure_trading_otp():
+            return
         p = next(
             (
                 p
@@ -4801,7 +5035,7 @@ class BotUI(ctk.CTk):
         )
         if p:
             self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
-            threading.Thread(target=lambda: self.connector.close_position(p), daemon=True).start()
+            threading.Thread(target=self.connector.close_position, args=(p,), daemon=True).start()
 
     def close_selected_trades(self):
         selected = self.tree.selection()

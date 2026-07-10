@@ -115,7 +115,7 @@ def test_storage_master_csv_keeps_unknown_legacy_close_time_blank(monkeypatch, t
     assert row[header.index("Close Time")] == ""
 
 
-def test_advisor_folder_has_no_nested_dirs_after_export(monkeypatch, tmp_path):
+def test_advisor_folder_only_has_sanitized_external_package_dir_after_export(monkeypatch, tmp_path):
     _patch_account_dir(monkeypatch, tmp_path)
     wb = _new_history_workbook()
     wb.save(paths.history_path())
@@ -123,7 +123,7 @@ def test_advisor_folder_has_no_nested_dirs_after_export(monkeypatch, tmp_path):
     result = history.build_export_workbook(export_days=7)
 
     assert result["ok"] is True
-    assert not [p for p in (tmp_path / "advisor").iterdir() if p.is_dir()]
+    assert [p.name for p in (tmp_path / "advisor").iterdir() if p.is_dir()] == ["external_package"]
 
 
 def test_export_workbook_filters_closed_trades_without_touching_full_history(monkeypatch, tmp_path):
@@ -312,6 +312,8 @@ def test_api_client_saves_latest_response_and_history_snapshot(monkeypatch, tmp_
         f.write("{}")
     with open(paths.user_context_path(), "w", encoding="utf-8") as f:
         f.write("context")
+    with open(paths.advisor_flow_path(), "w", encoding="utf-8") as f:
+        f.write("flow")
 
     class FakeResponse:
         def __enter__(self):
@@ -525,7 +527,7 @@ def test_api_client_local_tpm_guard_blocks_second_large_request(monkeypatch, tmp
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(api_client.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(api_client, "MODEL_TPM_LIMITS", {"gpt-5.4-mini": 15000})
+    monkeypatch.setattr(api_client, "MODEL_TPM_LIMITS", {"gpt-5.6-terra": 15000})
     monkeypatch.setattr(api_client, "LOCAL_REQUEST_OVERHEAD_TOKENS", 0)
 
     first = api_client.send_package_to_api()
@@ -672,7 +674,7 @@ def test_api_client_estimates_payload(monkeypatch, tmp_path):
 
     assert estimate["tokens"] > 0
     assert estimate["input_cost_usd"] > 0
-    assert estimate["model"] == "gpt-5.4-mini"
+    assert estimate["model"] == "gpt-5.6-terra"
     assert estimate["web_search_enabled"] is True
     names = [item["name"] for item in estimate["breakdown"]]
     assert "advisor_prompt.md" in names
@@ -717,7 +719,7 @@ def test_api_client_reads_prompt_and_limits_from_advisor_files(monkeypatch, tmp_
     assert api_client.load_advisor_prompt() == "custom opening prompt"
     estimate = api_client.estimate_api_payload(include_previous_response=True)
     assert "advisor_response.md" in [item["name"] for item in estimate["breakdown"]]
-    assert estimate["model"] == "gpt-5.4-mini"
+    assert estimate["model"] == "gpt-5.6-terra"
 
 
 def test_api_client_applies_prompt_flow_and_context_limits(monkeypatch, tmp_path):
