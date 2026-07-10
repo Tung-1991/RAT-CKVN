@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import config
@@ -12,7 +12,9 @@ import config
 
 def _market_now() -> datetime:
     offset_hours = float(getattr(config, "MARKET_HOURS_UTC_OFFSET", 7))
-    return datetime.utcnow() + timedelta(hours=offset_hours)
+    # Preserve the historical naive UTC+offset contract while avoiding the
+    # deprecated datetime.utcnow() API on Python 3.13+.
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset_hours)
 
 
 def market_now_hm() -> str:

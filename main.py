@@ -89,6 +89,38 @@ main_logger = logging.getLogger("RAT_CKVN")
 main_logger.addFilter(Suppress10025Filter())
 
 
+def _read_appended_lines(log_path, offsets):
+    """Read only newly appended log lines without holding the file open.
+
+    The first observation starts at EOF. If rotation or truncation makes the
+    file smaller, reading resumes from the beginning of the replacement file.
+    """
+    stat = os.stat(log_path)
+    size = stat.st_size
+    identity = (stat.st_dev, stat.st_ino)
+    state = offsets.get(log_path)
+    if state is None:
+        offsets[log_path] = {"pos": size, "identity": identity}
+        return []
+    if isinstance(state, dict):
+        pos = int(state.get("pos", 0))
+        if state.get("identity") != identity:
+            pos = 0
+    else:
+        # Accept the integer offsets used by older in-memory callers.
+        pos = int(state)
+    if size < pos:
+        pos = 0
+    if size <= pos:
+        offsets[log_path] = {"pos": pos, "identity": identity}
+        return []
+    with open(log_path, "r", encoding="utf-8") as handle:
+        handle.seek(pos)
+        lines = handle.readlines()
+        offsets[log_path] = {"pos": handle.tell(), "identity": identity}
+    return lines
+
+
 class BotUI(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -302,7 +334,14 @@ class BotUI(ctk.CTk):
             pass
 
     def start_daemon_process(self):
+        current = getattr(self, "daemon_process", None)
+        if current is not None and getattr(current, "poll", lambda: None)() is None:
+            self.log_message("ℹ️ Bot Daemon đang chạy; bỏ qua yêu cầu khởi động trùng.", target="bot")
+            return
         try:
+            previous_output = getattr(self, "daemon_output_file", None)
+            if previous_output and not previous_output.closed:
+                previous_output.close()
             os.makedirs(os.path.join("data", "logs"), exist_ok=True)
             self.daemon_output_file = open(
                 os.path.join("data", "logs", "daemon_stdout.log"),
@@ -317,6 +356,14 @@ class BotUI(ctk.CTk):
             )
             self.log_message("🚀 Đã kích hoạt Bot Daemon ngầm.", target="bot")
         except Exception as e:
+            daemon_output = getattr(self, "daemon_output_file", None)
+            if daemon_output:
+                try:
+                    daemon_output.close()
+                except Exception:
+                    pass
+            self.daemon_output_file = None
+            self.daemon_process = None
             self.log_message(f"❌ Lỗi kích hoạt Daemon: {e}", error=True, target="bot")
 
     def on_closing(self):
@@ -325,19 +372,23 @@ class BotUI(ctk.CTk):
             self.signal_listener.stop()
         if getattr(self, "telegram_control_service", None):
             self.telegram_control_service.stop()
-        if self.daemon_process:
-            self.daemon_process.terminate()
-            self.daemon_process.wait()
+        daemon_process = getattr(self, "daemon_process", None)
+        if daemon_process:
+            try:
+                if getattr(daemon_process, "poll", lambda: None)() is None:
+                    daemon_process.terminate()
+                    daemon_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                daemon_process.kill()
+                daemon_process.wait(timeout=5)
+            except Exception as exc:
+                self.log_message(f"❌ Lỗi dừng Daemon: {exc}", error=True, target="bot")
         daemon_output = getattr(self, "daemon_output_file", None)
         if daemon_output:
             try:
                 daemon_output.close()
             except Exception:
                 pass
-        try:
-            pass
-        except:
-            pass
         self.destroy()
         sys.exit(0)
 
@@ -366,48 +417,6 @@ class BotUI(ctk.CTk):
             save_brain_settings(existing_data)
         except Exception as e:
             self.log_message(f"Live config sync error: {e}", error=True)
-        return
-
-        os.makedirs(os.path.dirname(BRAIN_SETTINGS_FILE), exist_ok=True)
-
-        # 1. Đọc dữ liệu JSON hiện tại (để giữ lại cấu hình Sandbox)
-        existing_data = {}
-        try:
-            if os.path.exists(BRAIN_SETTINGS_FILE):
-                with open(BRAIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-        except:
-            pass
-
-        # 2. Merge dữ liệu từ config hiện tại (của Main UI)
-        for k in dir(config):
-            if not k.startswith("__") and k != "COIN_LIST":
-                val = getattr(config, k)
-                if isinstance(val, (int, float, str, bool, list, dict)):
-                    # [FIX]: CẤM ghi đè các cụm Key thuộc thẩm quyền của Sandbox
-                    if k not in [
-                        "SANDBOX_CONFIG",
-                        "indicators",
-                        "voting_rules",
-                        "risk_tsl",
-                        "dca_config",
-                        "pca_config",
-                        "MASTER_EVAL_MODE",
-                        "MIN_MATCHING_VOTES",
-                        "FORCE_ANY_MODE",
-                        "G0_TIMEFRAME",
-                        "G1_TIMEFRAME",
-                        "G2_TIMEFRAME",
-                        "G3_TIMEFRAME",
-                    ]:
-                        existing_data[k] = val
-
-        # 3. Ghi lại vào file
-        try:
-            with open(BRAIN_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(existing_data, f, indent=4)
-        except Exception as e:
-            self.log_message(f"Lỗi đồng bộ cấu hình (Hot-Reload): {e}", error=True)
 
     def _merge_dict(self, target, source):
         for k, v in source.items():
@@ -852,18 +861,6 @@ class BotUI(ctk.CTk):
                     target="manual",
                 )
                 value = "NORMAL"
-        self.var_manual_trade_mode.set(value)
-        if value != "NORMAL" and hasattr(self, "var_preview_trade_after_apply"):
-            self.var_preview_trade_after_apply.set(False)
-        if hasattr(self, "chk_preview_trade_after_apply"):
-            self.chk_preview_trade_after_apply.configure(
-                state="normal" if value == "NORMAL" else "disabled"
-            )
-        self.refresh_manual_preview_tab()
-
-
-
-    def on_manual_trade_mode_change(self, value):
         self.var_manual_trade_mode.set(value)
         if value != "NORMAL" and hasattr(self, "var_preview_trade_after_apply"):
             self.var_preview_trade_after_apply.set(False)
@@ -2390,20 +2387,8 @@ class BotUI(ctk.CTk):
                 continue
 
             try:
-                size = os.path.getsize(log_path)
-                pos = offsets.get(log_path)
-                if pos is None:
-                    pos = size  # lần đầu: bắt đầu bám từ cuối file
-                elif size < pos:
-                    pos = 0  # file đã xoay/cắt -> đọc lại từ đầu file mới
-                if size > pos:
-                    with open(log_path, "r", encoding="utf-8") as f:
-                        f.seek(pos)
-                        new_lines = f.readlines()
-                        pos = f.tell()
-                    for line in new_lines:
-                        self._process_daemon_line(line)
-                offsets[log_path] = pos
+                for line in _read_appended_lines(log_path, offsets):
+                    self._process_daemon_line(line)
             except Exception:
                 pass
             time.sleep(0.5)
@@ -4735,81 +4720,6 @@ class BotUI(ctk.CTk):
                 threading.Thread(
                     target=lambda: self.connector.close_position(p)
                 ).start()
-
-    def close_selected_trades(self):
-        selected = self.tree.selection()
-        if not selected:
-            return
-        if self.var_confirm_close.get() and not messagebox.askyesno(
-            "Xác nhận", f"Đóng {len(selected)} lệnh đã chọn?", parent=self
-        ):
-            return
-        for item in selected:
-            p = next(
-                (
-                    p
-                    for p in self.connector.get_all_open_positions()
-                    if p.ticket == int(item)
-                ),
-                None,
-            )
-            if p:
-                self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
-                threading.Thread(
-                    target=lambda: self.connector.close_position(p)
-                ).start()
-
-    def on_tree_click(self, event):
-        region = self.tree.identify("region", event.x, event.y)
-        if region == "cell":
-            col = self.tree.identify_column(event.x)
-            row_id = self.tree.identify_row(event.y)
-            if row_id and col == "#9":
-                if self.var_confirm_close.get() and not messagebox.askyesno(
-                    "Đóng lệnh", f"Dóng lệnh #{row_id}?", parent=self
-                ):
-                    return
-                p = next(
-                    (
-                        p
-                        for p in self.connector.get_all_open_positions()
-                        if p.ticket == int(row_id)
-                    ),
-                    None,
-                )
-                if p:
-                    self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
-                    threading.Thread(
-                        target=lambda: self.connector.close_position(p)
-                    ).start()
-
-    def on_tree_right_click(self, event):
-        row_id = self.tree.identify_row(event.y)
-        selected = self.tree.selection()
-        menu = Menu(self, tearoff=0, font=("Arial", 14))
-
-        if len(selected) > 1:
-            menu.add_command(
-                label=f"❌ Đóng {len(selected)} Lệnh Đã Chọn",
-                command=self.close_selected_trades,
-            )
-        else:
-            if row_id:
-                self.tree.selection_set(row_id)
-                ticket = row_id
-
-                menu.add_command(
-                    label=f"📝 Sửa lệnh #{ticket}",
-                    command=lambda: self.open_edit_popup(ticket),
-                )
-                menu.add_separator()
-                menu.add_command(
-                    label="❌ Đóng Lệnh Này",
-                    command=lambda: self.close_selected_trades(),
-                )
-
-        menu.post(event.x_root, event.y_root)
-
 
     def _pending_row_item(self, row_id):
         if not str(row_id).startswith("LOCAL:"):
