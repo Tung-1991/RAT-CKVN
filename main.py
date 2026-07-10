@@ -2368,7 +2368,12 @@ class BotUI(ctk.CTk):
     def _tail_daemon_logs(self):
         import time
         import os
-        
+
+        # [FIX WinError 32] Trước đây giữ file log mở suốt phiên -> chặn daemon xoay log
+        # (os.rename thất bại vì "file đang bị tiến trình khác dùng"), gây spam lỗi +
+        # phình daemon_stdout.log. Nay đọc kiểu mở→đọc phần mới→ĐÓNG mỗi nhịp, nhớ offset,
+        # để daemon xoay log thoải mái. Nếu file nhỏ đi (đã xoay/cắt) thì đọc lại từ đầu.
+        offsets = {}
         while self.running:
             # Wait until workspace is ready
             log_candidates = [os.path.join("data", "logs", "daemon_system_events.log")]
@@ -2379,23 +2384,29 @@ class BotUI(ctk.CTk):
             except:
                 pass
             log_path = next((p for p in log_candidates if os.path.exists(p)), log_candidates[0])
-                
+
             if not os.path.exists(log_path):
                 time.sleep(2)
                 continue
-                
+
             try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    f.seek(0, 2)  # Nhảy đến cuối file
-                    while self.running:
-                        line = f.readline()
-                        if not line:
-                            time.sleep(0.5)
-                            continue
-                            
+                size = os.path.getsize(log_path)
+                pos = offsets.get(log_path)
+                if pos is None:
+                    pos = size  # lần đầu: bắt đầu bám từ cuối file
+                elif size < pos:
+                    pos = 0  # file đã xoay/cắt -> đọc lại từ đầu file mới
+                if size > pos:
+                    with open(log_path, "r", encoding="utf-8") as f:
+                        f.seek(pos)
+                        new_lines = f.readlines()
+                        pos = f.tell()
+                    for line in new_lines:
                         self._process_daemon_line(line)
+                offsets[log_path] = pos
             except Exception:
-                time.sleep(1)
+                pass
+            time.sleep(0.5)
 
     def _process_daemon_line(self, line: str):
         line = line.strip()

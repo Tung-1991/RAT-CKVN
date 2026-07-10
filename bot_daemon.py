@@ -5,6 +5,7 @@
 import time
 import json
 import os
+import random
 import uuid
 import logging
 import threading
@@ -106,17 +107,20 @@ class StandaloneBotDaemon:
         }
         os.makedirs(os.path.dirname(SIGNAL_FILE), exist_ok=True)
 
-        # [FIX] WinError 5 Access is denied
-        for attempt in range(5):
+        # [FIX] WinError 5 Access is denied — UI đọc file này liên tục nên os.replace bị
+        # chặn khi UI đang giữ file. Thử nhiều lần + jitter để lệch nhịp với reader; hầu
+        # hết trường hợp thành công ở vài lần đầu, chỉ cực hiếm mới rơi vào nhánh lỗi cuối.
+        max_tries = 20
+        for attempt in range(max_tries):
             try:
                 with open(SIGNAL_FILE_TMP, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=4)
                 os.replace(SIGNAL_FILE_TMP, SIGNAL_FILE)
                 break
             except (PermissionError, OSError) as e:
-                time.sleep(0.05)
-                if attempt == 4:
-                    logger.error(f"Lỗi ghi tín hiệu sau 5 lần thử: {e}")
+                time.sleep(0.05 + random.uniform(0.0, 0.05))
+                if attempt == max_tries - 1:
+                    logger.error(f"Lỗi ghi tín hiệu sau {max_tries} lần thử: {e}")
 
     def _write_signal_debugger(self, debug_state):
         try:
@@ -204,11 +208,18 @@ class StandaloneBotDaemon:
     def _tick_update_loop(self):
         """Luồng riêng: poll giá real-time mỗi 2 giây qua trades/latest + quotes/latest."""
         tick_interval = 2.0
+        idle_interval = 30.0  # [FIX 429] Ngoài giờ nghỉ dài, khỏi đập quotes/latest.
         while self.running:
             try:
                 symbols = self._tick_symbols()
+                # [FIX 429] Ngoài giờ giao dịch KHÔNG có tick để lấy -> bỏ poll để tránh
+                # bão HTTP 429 triền miên trên /quotes/latest (check giờ thuần, không mạng).
+                open_symbols = [s for s in symbols if is_symbol_trade_window_open(s)[0]]
+                if not open_symbols:
+                    time.sleep(idle_interval)
+                    continue
                 updated = False
-                for sym in symbols:
+                for sym in open_symbols:
                     if not self.running:
                         break
                     tick = data_engine.fetch_realtime_tick(sym)
