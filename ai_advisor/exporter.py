@@ -229,9 +229,13 @@ def write_external_package():
         ("technical_settings.json", paths.technical_settings_path()),
         ("user_context.md", paths.user_context_path()),
         ("expert_context.md", paths.expert_context_path()),
-        ("scan_summary.md", paths.scan_summary_path()),
-        ("scan_report.md", paths.scan_report_path()),
     ]
+    # CKCS RAW DATA is separate from BOT Advisor. Delete leftovers created by
+    # older versions so a stale market scan cannot be uploaded by mistake.
+    for stale_name in ("scan_summary.md", "scan_report.md"):
+        stale_path = os.path.join(root, stale_name)
+        if os.path.isfile(stale_path):
+            os.remove(stale_path)
     files = []
     for name, source in text_sources:
         if not os.path.isfile(source):
@@ -291,16 +295,6 @@ def generate_advisor_package(
         ensure_advisor_response_template()
         ensure_advisor_api_files()
         tech_path, snapshot_id = write_technical_settings(reason=reason)
-        # [SCAN SNAPSHOT] Render kho quét watchlist thành summary/report (nếu có dữ liệu)
-        try:
-            from ai_advisor import scan_report
-            scan_files = scan_report.export_scan_files(report_days=export_days)
-            if scan_files:
-                result["scan_summary"] = scan_files["summary"]
-                result["scan_report"] = scan_files["report"]
-                result["scan_symbols"] = scan_files["symbols"]
-        except Exception as scan_exc:
-            result["warnings"].append(f"scan report failed: {scan_exc}")
         history.ensure_config_snapshot(reason=reason)
         synced = history.sync_from_master_csv()
         open_count = history.refresh_open_trades(connector=connector, state=state, market_contexts=market_contexts)

@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import core.trade_manager as trade_manager_module
+import config
+from core.storage_manager import apply_state_defaults
 from core.trade_manager import TradeManager
 
 
@@ -18,6 +20,44 @@ class _Connector:
     def modify_position(self, pos, sl, tp):
         self.modified.append((pos.ticket, sl, tp))
         return True
+
+
+def test_stale_paper_ticket_does_not_create_fake_pnl(monkeypatch):
+    class PaperConnector:
+        def get_all_open_positions(self):
+            return []
+
+        def get_paper_closed_trade(self, _ticket):
+            return None
+
+        def get_account_info(self):
+            return {"balance": 100000000.0, "equity": 100000000.0, "realized_pnl": 0.0}
+
+    manager = TradeManager.__new__(TradeManager)
+    manager.connector = PaperConnector()
+    manager.checklist = None
+    manager.log_callback = None
+    manager.log = lambda *args, **kwargs: None
+    manager._sync_state_lifecycle = lambda: False
+    manager.state = apply_state_defaults(
+        {
+            "date": "2026-07-20",
+            "pnl_today": -62000000.0,
+            "active_trades": ["PAPER-OLD"],
+            "trade_symbols": {"PAPER-OLD": "AAA"},
+            "trade_directions": {"PAPER-OLD": "BUY"},
+            "trade_volumes": {"PAPER-OLD": 100.0},
+            "trade_prices": {"PAPER-OLD": 7.0},
+            "trade_magics": {},
+        }
+    )
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
+
+    manager.update_running_trades()
+
+    assert manager.state["pnl_today"] == 0.0
+    assert manager.state["active_trades"] == []
 
 
 def _position(**updates):

@@ -20,6 +20,8 @@ DEFAULT_SETTINGS = {
     "avoid_vn30_expiry_entry": False,
     "avoid_vn30_rebalance_entry": False,
     "vn30_rebalance_dates": [],
+    "avoid_ckcs_open_entry": True,
+    "ckcs_entry_delay_minutes": 15,
 }
 
 _LOCK = threading.RLock()
@@ -79,6 +81,11 @@ def normalize_settings(raw=None) -> dict:
     result["use_dnse_working_dates"] = bool(result.get("use_dnse_working_dates", True))
     result["avoid_vn30_expiry_entry"] = bool(result.get("avoid_vn30_expiry_entry", False))
     result["avoid_vn30_rebalance_entry"] = bool(result.get("avoid_vn30_rebalance_entry", False))
+    result["avoid_ckcs_open_entry"] = bool(result.get("avoid_ckcs_open_entry", True))
+    try:
+        result["ckcs_entry_delay_minutes"] = max(0, int(result.get("ckcs_entry_delay_minutes", 15)))
+    except (TypeError, ValueError):
+        result["ckcs_entry_delay_minutes"] = 15
     for key in ("manual_closed_dates", "vn30_rebalance_dates"):
         try:
             result[key] = normalize_dates(result.get(key, []))
@@ -255,11 +262,28 @@ def next_vn30_expiry(value=None, settings=None, cache=None) -> date:
 
 
 def bot_entry_block_reason(symbol: str, signal_class: str, settings=None, value=None):
-    if not str(symbol or "").upper().startswith("VN30F"):
-        return None
     if str(signal_class or "ENTRY").upper() != "ENTRY":
         return None
     settings = normalize_settings(settings if settings is not None else load_settings())
+    symbol_key = str(symbol or "").upper()
+    if not symbol_key.startswith("VN30F"):
+        if settings.get("avoid_ckcs_open_entry"):
+            # Giá trị chỉ có ngày được các hàm kiểm tra lịch sử dùng; không đủ giờ để
+            # áp dụng delay trong phiên. Luồng giao dịch thật không truyền value.
+            if value is not None and not isinstance(value, datetime):
+                return None
+            now = value if isinstance(value, datetime) else _market_now()
+            try:
+                delay = max(0, int(settings.get("ckcs_entry_delay_minutes", 15)))
+            except (TypeError, ValueError):
+                delay = 15
+            open_ready = now.replace(hour=9, minute=15, second=0, microsecond=0) + timedelta(minutes=delay)
+            if now < open_ready:
+                return (
+                    "CKCS_OPEN_ENTRY_DELAY",
+                    f"{symbol_key} chờ sau ATO đến {open_ready:%H:%M} mới cho BOT mở ENTRY",
+                )
+        return None
     today = _date_value(value or _market_now())
     if settings.get("avoid_vn30_expiry_entry"):
         expiry = vn30_expiry_date(today.year, today.month, settings=settings)

@@ -51,6 +51,15 @@ MARKET_CALENDAR_DEFAULT = {
     "avoid_vn30_expiry_entry": False,
     "avoid_vn30_rebalance_entry": False,
     "vn30_rebalance_dates": [],
+    "avoid_ckcs_open_entry": True,
+    "ckcs_entry_delay_minutes": 15,
+}
+BOT_OPPORTUNITY_DEFAULT = {
+    "enabled": True,
+    "retention_hours": 24.0,
+    "history_enabled": True,
+    "default_order_mode": "MARKET",
+    "default_slippage_ticks": 2,
 }
 WEEKEND_CLOSE_WEEKDAY = 4 # Thứ 6
 WEEKEND_CLOSE_HOUR = 15 # Đóng cửa 15:00
@@ -151,7 +160,14 @@ STOCK_SYMBOL_EXCHANGE = {
     for p in os.getenv("DNSE_STOCK_EXCHANGE_MAP", "").split(",")
     if ":" in p
 }
-MONEY_DISPLAY_UNIT = "K_VND"
+MONEY_DISPLAY_ZERO_TRIM = os.getenv("MONEY_DISPLAY_ZERO_TRIM", "000").strip() or "000"
+MONEY_DISPLAY_UNIT = {
+    "NONE": "VND",
+    "0": "VND",
+    "000": "K_VND",
+    "000000": "M_VND",
+    "000 000": "M_VND",
+}.get(MONEY_DISPLAY_ZERO_TRIM.upper(), "K_VND")
 DNSE_BROKER_FEE_PER_CONTRACT = 0.0
 DNSE_EXCHANGE_FEE_PER_CONTRACT = 2700.0
 DNSE_CLEARING_FEE_PER_CONTRACT = 2550.0
@@ -661,8 +677,11 @@ AI_ADVISOR_PROVIDERS = {
     },
 }
 
-# --- Scan Snapshot (kho lưu kết quả quét của daemon cho AI Advisor) ---
+# --- CKCS RAW DATA (kho dữ liệu quét độc lập với AI Advisor) ---
 # Daemon quét mỗi vòng nhưng chỉ LƯU mẫu định kỳ; tín hiệu BUY/SELL thì ghi ngay.
 SCAN_SNAPSHOT_ENABLED = os.getenv("SCAN_SNAPSHOT_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 SCAN_SNAPSHOT_INTERVAL_MINUTES = float(os.getenv("SCAN_SNAPSHOT_INTERVAL_MINUTES", "15"))
 SCAN_SNAPSHOT_RETENTION_DAYS = int(os.getenv("SCAN_SNAPSHOT_RETENTION_DAYS", "250"))
+# Danh sách RAW DATA là động và độc lập với quyền vào lệnh BOT. Khi chưa có
+# setting riêng, mặc định lấy toàn bộ mã hiện có (CKPS + CKCS).
+SCAN_SNAPSHOT_SYMBOLS = list(dict.fromkeys(CKPS_SYMBOLS + CKCS_WATCHLIST))

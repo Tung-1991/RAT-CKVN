@@ -39,6 +39,18 @@ def test_advisor_paths_split_history_and_export(monkeypatch, tmp_path):
     assert not paths.advisor_api_settings_path().replace("\\", "/").endswith("advisor/advisor_api_settings.json")
     assert paths.legacy_advisor_api_settings_path().replace("\\", "/").endswith("advisor/advisor_api_settings.json")
     assert paths.advisor_response_path().replace("\\", "/").endswith("advisor/advisor_response.md")
+    assert paths.scan_cache_path().replace("\\", "/").endswith(
+        "ckcs_research/scan_snapshot_cache.json"
+    )
+    assert paths.scan_report_path().replace("\\", "/").endswith(
+        "ckcs_research/scan_report.md"
+    )
+    assert paths.research_private_context_path().replace("\\", "/").endswith(
+        "ckcs_research/private_context.md"
+    )
+    assert paths.legacy_scan_cache_path().replace("\\", "/").endswith(
+        "scan_snapshot_cache.json"
+    )
     assert paths.advisor_response_history_path().replace("\\", "/").endswith(".md")
     assert "/history/advisor_response_" in paths.advisor_response_history_path().replace("\\", "/")
     assert "/history/user_context_" in paths.user_context_history_path().replace("\\", "/")

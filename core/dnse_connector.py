@@ -272,6 +272,8 @@ class DNSEConnector:
         self._orders_cache_ts: float = 0.0
         self._fee_profile_cache: Dict[str, BrokerFeeProfile] = {}
         self._fee_profile_cache_ts: Dict[str, float] = {}
+        self._ppse_cache: Dict[str, Dict[str, Any]] = {}
+        self._ppse_cache_ts: Dict[str, float] = {}
         self._tick_cache: Dict[str, BrokerTick] = {}
         self._tick_cache_ts: Dict[str, float] = {}
         # Map alias phái sinh (symbolType: VN30F1M...) -> mã hợp đồng thật (41I1G6000...).
@@ -331,6 +333,11 @@ class DNSEConnector:
 
     def reset_paper(self, balance: Optional[float] = None) -> Dict[str, Any]:
         return self._paper().reset(balance)
+
+    def get_paper_closed_trade(self, ticket: Any) -> Optional[Dict[str, Any]]:
+        if not self._is_paper_mode():
+            return None
+        return self._paper().get_closed_trade(ticket)
 
     def reset_session_caches(self):
         """Xoá cache tài khoản/vị thế — gọi khi đổi PAPER<->REAL để lần đọc sau lấy số liệu mới
@@ -669,8 +676,10 @@ class DNSEConnector:
         self._save_token_to_disk()  # opt-in: lưu để restart khỏi OTP lại
         return True
 
-    def get_account_info(self) -> Optional[Dict[str, Any]]:
-        if self._is_paper_mode():
+    def get_account_info(self, paper_mode: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+        """Lấy tài sản theo mode; ``None`` giữ hành vi PAPER/REAL hiện tại."""
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return self._paper().get_account_info()
         cache_ttl = float(getattr(config, "DNSE_ACCOUNT_CACHE_TTL_SECONDS", 5.0) or 0.0)
         if self._account_cache is not None and cache_ttl > 0 and (time.time() - self._account_cache_ts) < cache_ttl:
@@ -735,6 +744,9 @@ class DNSEConnector:
             # Tách bạch 2 ví để UI hiện đúng (không gán nhầm tiền cơ sở thành ký quỹ phái sinh).
             "stock_cash": stock_avail or stock_total,
             "deriv_avail": deriv_avail,
+            "deriv_used": _to_float(deriv_blk.get("usedSecure"), 0.0),
+            "deriv_pending": _to_float(deriv_blk.get("pendingSecure"), 0.0),
+            "deriv_hold_tax_fee": _to_float(deriv_blk.get("holdTaxAndFee"), 0.0),
             "raw": data,
         }
         self._account_cache = dict(info)
@@ -967,6 +979,123 @@ class DNSEConnector:
         self._fee_profile_cache_ts[symbol_key] = time.time()
         return profile
 
+    def get_derivative_margin_capacity(
+        self,
+        symbol: str,
+        price: float,
+        *,
+        paper_mode: bool = False,
+        positions: Optional[List[BrokerPosition]] = None,
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """Ký quỹ một HĐ + cọc còn + sức mở do DNSE xác nhận.
+
+        REAL dùng ``/ppse`` cho qmax. PAPER tính sức mở mô phỏng từ
+        vốn paper trừ ký quỹ ước tính của các vị thế CKPS đang mở.
+        """
+        alias = str(symbol or "VN30F1M").upper()
+        px = max(0.0, float(price or 0.0))
+        profile = self.get_fee_profile(alias)
+        initial_rate = float(
+            getattr(profile, "initial_margin_rate", 0.0)
+            or getattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20)
+            or 0.20
+        )
+        point_value = float(
+            getattr(profile, "point_value", 0.0)
+            or getattr(config, "DNSE_POINT_VALUE", DNSE_POINT_VALUE)
+            or DNSE_POINT_VALUE
+        )
+        margin_per_contract = px * point_value * initial_rate if px > 0 else 0.0
+        account = self.get_account_info(paper_mode=paper_mode) or {}
+
+        if paper_mode:
+            used = 0.0
+            for pos in positions or self.get_positions(paper_mode=True):
+                pos_symbol = str(getattr(pos, "symbol", "") or "")
+                if self.market_type_for_symbol(pos_symbol) != "DERIVATIVE":
+                    continue
+                qty = abs(float(getattr(pos, "volume", 0.0) or 0.0))
+                pos_price = float(
+                    getattr(pos, "price_current", 0.0)
+                    or getattr(pos, "price_open", 0.0)
+                    or px
+                )
+                used += qty * pos_price * point_value * initial_rate
+            total = float(account.get("equity", 0.0) or 0.0)
+            remaining = max(0.0, total - used)
+            qmax = int(remaining // margin_per_contract) if margin_per_contract > 0 else 0
+            return {
+                "ok": margin_per_contract > 0,
+                "source": "PAPER_ESTIMATE",
+                "symbol": alias,
+                "price": px,
+                "initial_rate": initial_rate,
+                "margin_per_contract": margin_per_contract,
+                "remaining_secure": remaining,
+                "used_secure": used,
+                "qmax_buy": qmax,
+                "qmax_sell": qmax,
+                "loan_package_id": getattr(profile, "raw", {}).get("id") if isinstance(getattr(profile, "raw", {}), dict) else None,
+            }
+
+        remaining = float(account.get("deriv_avail", 0.0) or 0.0)
+        used = float(account.get("deriv_used", 0.0) or 0.0)
+        package = getattr(profile, "raw", {}) if isinstance(getattr(profile, "raw", {}), dict) else {}
+        package_id = package.get("id")
+        result = {
+            "ok": margin_per_contract > 0,
+            "source": "FORMULA",
+            "symbol": alias,
+            "price": px,
+            "initial_rate": initial_rate,
+            "margin_per_contract": margin_per_contract,
+            "remaining_secure": remaining,
+            "used_secure": used,
+            "pending_secure": float(account.get("deriv_pending", 0.0) or 0.0),
+            "qmax_buy": int(remaining // margin_per_contract) if margin_per_contract > 0 else 0,
+            "qmax_sell": int(remaining // margin_per_contract) if margin_per_contract > 0 else 0,
+            "loan_package_id": package_id,
+        }
+        if not package_id or px <= 0:
+            result["message"] = "DNSE chưa trả gói ký quỹ hoặc giá"
+            return result
+
+        real_symbol = self.resolve_symbol(alias)
+        cache_key = alias
+        ttl = 10.0
+        cached = self._ppse_cache.get(cache_key)
+        if cached and not force_refresh and (time.time() - self._ppse_cache_ts.get(cache_key, 0.0)) < ttl:
+            merged = dict(result)
+            merged.update(cached)
+            return merged
+        account_no = self.derivative_account_no or self.account_no
+        ok, data, status_code, message = self._request(
+            "GET",
+            f"/accounts/{account_no}/ppse",
+            params={
+                "marketType": "DERIVATIVE",
+                "symbol": real_symbol,
+                "loanPackageId": str(package_id),
+                "price": f"{px:g}",
+            },
+        )
+        payload = _unwrap_payload(data) if ok else {}
+        if ok and isinstance(payload, dict):
+            api_values = {
+                "ok": True,
+                "source": "DNSE_PPSE",
+                "qmax_buy": _to_int(payload.get("qmaxBuy"), 0),
+                "qmax_sell": _to_int(payload.get("qmaxSell"), 0),
+                "ppse_price": _to_float(payload.get("price"), px),
+            }
+            self._ppse_cache[cache_key] = dict(api_values)
+            self._ppse_cache_ts[cache_key] = time.time()
+            result.update(api_values)
+        else:
+            result["message"] = f"PPSE {status_code}: {message or 'không khả dụng'}"
+        return result
+
     def calculate_trade_fee(self, symbol: str, price: float, contracts: float, side: Any = None) -> float:
         return self.get_fee_profile(symbol).estimate_fee(price, contracts, side=side)
 
@@ -1009,8 +1138,10 @@ class DNSEConnector:
             raw=item,
         )
 
-    def get_positions(self) -> List[BrokerPosition]:
-        if self._is_paper_mode():
+    def get_positions(self, paper_mode: Optional[bool] = None) -> List[BrokerPosition]:
+        """Lấy vị thế theo mode; ``None`` giữ hành vi PAPER/REAL hiện tại."""
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return self._paper().get_positions()
         try:
             from core.dnse_ws import market_ws

@@ -10,6 +10,7 @@ import logging
 from typing import Callable, Any
 
 import config
+from core.money import format_vnd_full
 
 logger = logging.getLogger("SignalListener")
 
@@ -349,7 +350,7 @@ class SignalListener:
 
                         if hold_time >= min_hold and pnl_ok:
                             self.log_ui(
-                                f"  [REVERSE TACTIC] Đảo chiều {action} | PnL: ${profit_usd:.2f} -> Đóng lệnh #{p.ticket}",
+                                f"  [REVERSE TACTIC] Đảo chiều {action} | PnL: {format_vnd_full(profit_usd, signed=True)} -> Đóng lệnh #{p.ticket}",
                                 False,
                             )
 
@@ -371,7 +372,7 @@ class SignalListener:
                                 f"reverse_hold_{symbol}_{p.ticket}_{reason}"
                             ):
                                 self.log_ui(
-                                    f"⏳ [REVERSE TACTIC] Tín hiệu {action} nhưng giữ lệnh #{p.ticket} ({reason} | PnL: ${profit_usd:.2f})",
+                                    f"⏳ [REVERSE TACTIC] Tín hiệu {action} nhưng giữ lệnh #{p.ticket} ({reason} | PnL: {format_vnd_full(profit_usd, signed=True)})",
                                     False,
                                 )
         except Exception as e:
@@ -383,6 +384,23 @@ class SignalListener:
             return
 
         if not self._auto_trade_for(symbol):
+            if str(sig_class or "ENTRY").upper() == "ENTRY":
+                try:
+                    from core.signal_opportunities import record_signal
+
+                    order_setup = self.trade_manager.build_telegram_signal_order(
+                        symbol,
+                        action,
+                        context=context,
+                        market_mode=market_mode,
+                    )
+                    record_signal(
+                        signal,
+                        block_reason="BOT_OFF",
+                        order_setup=order_setup,
+                    )
+                except Exception as exc:
+                    logger.error(f"[Listener] Lưu gợi ý BOT lỗi: {exc}")
             try:
                 from telegram_notify.signal_bridge import maybe_send_signal_proposal
 
@@ -443,7 +461,12 @@ class SignalListener:
         if symbol in self.last_thinking_signal:
             del self.last_thinking_signal[symbol]
 
+        signal_paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+
         def run_bot_trade():
+            if bool(getattr(config, "PAPER_TRADING", True)) != signal_paper_mode:
+                self.log_ui("Bo tin hieu dang xu ly vi vua doi PAPER/REAL.", error=False)
+                return
             auto_log_enabled = self._should_log_bot_status(
                 f"signal_seen_{symbol}_{sig_class}_{action}"
             )
@@ -460,9 +483,27 @@ class SignalListener:
                 market_mode=market_mode,
                 signal_class=sig_class,
                 tactic_override=None,  # [FIX] Bot phải tự đọc bot_tsl từ Sandbox, KHÔNG dùng Panel TSL
+                expected_paper_mode=signal_paper_mode,
             )
 
             if "SUCCESS" not in result:
+                if str(sig_class or "ENTRY").upper() == "ENTRY":
+                    try:
+                        from core.signal_opportunities import record_signal
+
+                        order_setup = self.trade_manager.build_telegram_signal_order(
+                            symbol,
+                            action,
+                            context=context,
+                            market_mode=market_mode,
+                        )
+                        record_signal(
+                            signal,
+                            block_reason=str(result),
+                            order_setup=order_setup,
+                        )
+                    except Exception as exc:
+                        logger.error(f"[Listener] Lưu gợi ý bị chặn lỗi: {exc}")
                 # [FIX] Tường minh lý do lỗi
                 if "SAFEGUARD_FAIL" in result:
                     parts = result.split("|")

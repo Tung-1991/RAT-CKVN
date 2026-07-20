@@ -22,7 +22,12 @@ from core.trade_manager import TradeManager
 from core.storage_manager import load_brain_settings, load_state, save_brain_settings, save_state
 from core.signal_listener import SignalListener
 from core.data_engine import data_engine
-from core.money import format_vnd, money_unit_note
+from core.money import (
+    format_vnd,
+    money_display_scale,
+    money_unit_note,
+    set_money_display_zero_trim,
+)
 from core.position_classifier import is_bot_position, is_manual_position
 from core import margin_rules, pending_orders, settlement, stock_rules
 from signals.signal_generator import signal_generator
@@ -139,6 +144,8 @@ class BotUI(ctk.CTk):
 
         self.var_strict_mode = tk.BooleanVar(value=config.STRICT_MODE_DEFAULT)
         self.var_confirm_close = tk.BooleanVar(value=True)
+        # Chỉ ẩn/hiện dòng gợi ý trên bảng; cache và lịch sử vẫn được giữ nguyên.
+        self.var_show_bot_opportunities = tk.BooleanVar(value=True)
         self.var_account_type = tk.StringVar(value=config.DEFAULT_ACCOUNT_TYPE)
 
         self.var_manual_lot = tk.StringVar(value="")
@@ -179,6 +186,7 @@ class BotUI(ctk.CTk):
             "PULLBACK_ZONE": False,
         }
         self.running = True
+        self._mode_switching = False
         self.tsl_states_map = {}
         self.last_price_val = 0.0
         self.latest_market_context = {}
@@ -198,6 +206,7 @@ class BotUI(ctk.CTk):
         self.daemon_output_file = None
         self.log_cooldown_cache = {}
         self.var_advisor_export_days = tk.StringVar(value="7")
+        self.var_ckcs_report_days = tk.StringVar(value="15")
         self.var_advisor_mode = tk.StringVar(value="Manual Only")
         self.var_advisor_save_archive = tk.BooleanVar(value=False)
         self.var_advisor_fixed_time = tk.StringVar(value="")
@@ -209,6 +218,7 @@ class BotUI(ctk.CTk):
         self.advisor_last_export_status = "Never"
         self.advisor_last_error = ""
         self._advisor_worker_active = False
+        self._ckcs_report_worker_active = False
         self._advisor_last_trigger_check = 0.0
         self._advisor_last_trigger_fire = {}
 
@@ -401,6 +411,12 @@ class BotUI(ctk.CTk):
         try:
             existing_data = load_brain_settings()
             existing_data["AUTO_TRADE_ENABLED"] = bool(getattr(config, "AUTO_TRADE_ENABLED", False))
+            existing_data["MONEY_DISPLAY_ZERO_TRIM"] = getattr(
+                config, "MONEY_DISPLAY_ZERO_TRIM", "000"
+            )
+            existing_data["MONEY_DISPLAY_UNIT"] = getattr(
+                config, "MONEY_DISPLAY_UNIT", "K_VND"
+            )
             # Thuế là cấu hình pháp lý/env, không cho brain_settings cũ (từng
             # lưu 0 trước 01/07/2026) ghi đè ngược lên mức hiện hành.
             for legal_key in (
@@ -410,6 +426,7 @@ class BotUI(ctk.CTk):
             ):
                 existing_data.pop(legal_key, None)
             for key in (
+                "MONEY_DISPLAY_ZERO_TRIM",
                 "MONEY_DISPLAY_UNIT",
                 "PAPER_INITIAL_BALANCE",
                 "PAPER_SPREAD_POINTS",
@@ -444,6 +461,8 @@ class BotUI(ctk.CTk):
                 with open(BRAIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
                     bs = json.load(f)
                     for k, v in bs.items():
+                        if k in {"MONEY_DISPLAY_ZERO_TRIM", "MONEY_DISPLAY_UNIT"}:
+                            continue
                         if k in {
                             "DNSE_TAX_RATE",
                             "DNSE_STOCK_TAX_RATE",
@@ -456,6 +475,12 @@ class BotUI(ctk.CTk):
                                 self._merge_dict(current_val, v)
                             else:
                                 setattr(config, k, v)
+                    set_money_display_zero_trim(
+                        bs.get(
+                            "MONEY_DISPLAY_ZERO_TRIM",
+                            bs.get("MONEY_DISPLAY_UNIT", "000"),
+                        )
+                    )
             except Exception as e:
                 self.log_message(f"Lỗi Reload JSON: {e}", error=True)
 
@@ -727,7 +752,22 @@ class BotUI(ctk.CTk):
         self.on_direction_change(self.var_direction.get())
         # Grid preview removed
         self.refresh_manual_preview_tab()
-        threading.Thread(target=lambda: True).start()
+        # Đổi mã phải nạp ngay snapshot đã lưu, kể cả ngoài phiên. Trước đây đoạn này
+        # khởi tạo một thread rỗng nên UI bị kẹt ở "Đang nạp/chưa có giá" cho tới khi
+        # vòng nền chạy lại (hoặc lâu hơn nếu thị trường đã đóng cửa).
+        if hasattr(self, "running_tabs") and hasattr(self, "running_trees"):
+            market = "CKPS" if self._is_derivative_symbol(new_symbol) else "CKCS"
+            mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            scope = f"{market} {mode}"
+            if scope in self.running_trees:
+                self.running_tabs.set(scope)
+                self.tree = self.running_trees[scope]
+        if getattr(self, "connector", None) is not None and getattr(self, "trade_mgr", None) is not None:
+            threading.Thread(
+                target=self._render_cached_ui_snapshot,
+                args=(new_symbol,),
+                daemon=True,
+            ).start()
 
     def on_preset_change(self, value):
         try:
@@ -772,8 +812,17 @@ class BotUI(ctk.CTk):
             )
 
     def on_paper_mode_change(self, value):
-        config.PAPER_TRADING = (value == "PAPER")
-        self.log_message(f"🔄 Chuyển sang chế độ: {value}", target="bot")
+        requested_paper = str(value or "").upper() == "PAPER"
+        old_paper = bool(getattr(config, "PAPER_TRADING", True))
+        if requested_paper == old_paper:
+            return
+
+        # Đổi chế độ luôn thu hồi quyền tự mở lệnh. Người dùng phải bật BOT lại
+        # trong đúng mode mới; quản lý/đóng các vị thế đang có vẫn chạy như cũ.
+        self._mode_switching = True
+        self.set_auto_trade_enabled(False, reason="Đổi PAPER/REAL")
+        config.PAPER_TRADING = requested_paper
+        self.log_message(f"🔄 Chuyển sang chế độ: {'PAPER' if requested_paper else 'REAL'}", target="bot")
         # Ghi vào .env để NHỚ sau khi tắt/mở lại app.
         try:
             from core import env_utils
@@ -787,11 +836,22 @@ class BotUI(ctk.CTk):
                 self.connector.reset_session_caches()
                 if not config.PAPER_TRADING:
                     self.connector.connect()  # đảm bảo kết nối REAL
-                self.update_portfolio_table()  # refresh tổng tài sản ngay
+            # Runtime state tách riêng: PAPER không dùng chung PnL/TSL/ticket với REAL.
+            if getattr(self, "trade_mgr", None) is not None:
+                self.trade_mgr.state = load_state()
+            self.tsl_states_map = {}
+            self._ui_all_positions_snapshot = []
+            self.update_portfolio_table()  # refresh tổng tài sản ngay
+            if hasattr(self, "running_tabs"):
+                market = "CKPS" if self._is_derivative_symbol(self.cbo_symbol.get()) else "CKCS"
+                self.running_tabs.set(f"{market} {'PAPER' if config.PAPER_TRADING else 'REAL'}")
+                self.tree = self.running_trees[self.running_tabs.get()]
             tip = "" if config.PAPER_TRADING else " — nhớ OTP để đặt lệnh thật (⚙ ADVANCED → Gửi OTP email)."
             self.log_message(f"✅ Đã áp dụng {value} ngay (không cần restart){tip}", target="bot")
         except Exception as exc:
             self.log_message(f"Áp dụng {value} lỗi: {exc} — nếu số dư chưa đúng thì restart app.", error=True, target="bot")
+        finally:
+            self._mode_switching = False
 
     def on_market_type_change(self, value):
         if str(value or "").upper() in ("CK CƠ SỞ", "CK CO SO", "CKCS"):
@@ -805,6 +865,11 @@ class BotUI(ctk.CTk):
             self.cbo_symbol.configure(values=symbols)
             self.cbo_symbol.set(symbols[0])
         self.on_symbol_change(self.cbo_symbol.get())
+        if hasattr(self, "running_tabs"):
+            market = "CKPS" if self._is_derivative_symbol(self.cbo_symbol.get()) else "CKCS"
+            mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            self.running_tabs.set(f"{market} {mode}")
+            self.tree = self.running_trees[self.running_tabs.get()]
 
     def on_preview_group_change(self, value):
         preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
@@ -917,15 +982,15 @@ class BotUI(ctk.CTk):
         try:
             symbol = self.cbo_symbol.get()
             mode = self.var_manual_trade_mode.get()
-            entry = self._safe_float(self.var_manual_entry.get() or 0.0)
+            entry = self._price_input_to_internal(self.var_manual_entry.get(), symbol)
             from core.market_hours import market_session_phase
             phase, phase_label = market_session_phase(symbol)
             if entry > 0:
                 if phase == "OPEN":
-                    text = f"LO @{entry:g} -> DNSE"
+                    text = f"LO @{self._fmt_price(entry, symbol)} -> DNSE"
                     color = "#81C784"
                 else:
-                    text = f"LO @{entry:g} -> OPEN"
+                    text = f"LO @{self._fmt_price(entry, symbol)} -> OPEN"
                     color = "#FFD54F"
             elif mode in ("ATO", "ATC"):
                 action = "DNSE" if phase == mode else "VIEW"
@@ -954,17 +1019,17 @@ class BotUI(ctk.CTk):
             phase = market_session_phase(symbol)[0]
             market = bool(self.var_manual_market.get())
             mode = self.var_manual_order_mode.get() if hasattr(self, "var_manual_order_mode") else "NORMAL"
-            entry = self._safe_float(self.var_manual_entry.get() or 0.0)
+            entry = self._price_input_to_internal(self.var_manual_entry.get(), symbol)
             if mode in ("ATO", "ATC"):
                 if phase == mode:
                     text, color = f"→ Gửi {mode} ngay (đấu giá)", "#26C6DA"
                 else:
                     ref = self._last_auction_price(symbol, mode)
-                    reftxt = f" · giá {mode} gần nhất @{ref:g}" if ref > 0 else ""
+                    reftxt = f" · giá {mode} gần nhất @{self._fmt_price(ref, symbol)}" if ref > 0 else ""
                     text, color = f"→ Hẹn {mode} (cache bot){reftxt}", "#FFD54F"
             else:
                 price = entry if entry > 0 else float(getattr(self, "last_price_val", 0.0) or 0.0)
-                ptxt = f"@{price:g}" if price > 0 else ""
+                ptxt = f"@{self._fmt_price(price, symbol)}" if price > 0 else ""
                 if market and phase == "OPEN":
                     text, color = "→ Thị trường: khớp ngay mọi giá", "#81C784"
                 elif phase == "OPEN":
@@ -1024,10 +1089,10 @@ class BotUI(ctk.CTk):
                 send_now = True
             else:
                 # LO: cần giá cụ thể (trống -> điền giá đang chạy). Ngoài giờ -> hẹn LO (cache bot).
-                if self._safe_float(self.var_manual_entry.get() or 0.0) <= 0:
+                if self._price_input_to_internal(self.var_manual_entry.get(), symbol) <= 0:
                     live = float(getattr(self, "last_price_val", 0.0) or 0.0)
                     if live > 0:
-                        self.var_manual_entry.set(f"{live:g}")
+                        self.var_manual_entry.set(self._price_internal_to_input(live, symbol))
                 send_now = (phase == "OPEN")
 
         if send_now:
@@ -1054,14 +1119,37 @@ class BotUI(ctk.CTk):
             return "DYNAMIC"
         return "G2"
 
-    def _fmt_price(self, value):
+    def _fmt_price(self, value, symbol=None):
         try:
             value = float(value)
             if value <= 0:
                 return "--"
+            symbol = symbol or (self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else "")
+            if symbol and settlement.is_cash_stock(symbol):
+                shown = value * 1000.0 / money_display_scale()
+                scale = money_display_scale()
+                digits = 0 if scale <= 1 else (2 if scale <= 1000 else 6)
+                text = f"{shown:,.{digits}f}"
+                return text.rstrip("0").rstrip(".") if "." in text else text
             return f"{value:.2f}"
         except Exception:
             return "--"
+
+    def _price_input_to_internal(self, value, symbol=None):
+        """UI CKCS dùng VND/CP; bên trong và DNSE vẫn dùng giá bảng điện ÷1.000."""
+        raw = self._safe_float(value or 0.0)
+        symbol = symbol or (self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else "")
+        if symbol and settlement.is_cash_stock(symbol):
+            return raw * money_display_scale() / 1000.0
+        return raw
+
+    def _price_internal_to_input(self, value, symbol=None):
+        raw = self._safe_float(value or 0.0)
+        symbol = symbol or (self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else "")
+        if raw > 0 and symbol and settlement.is_cash_stock(symbol):
+            shown = raw * 1000.0 / money_display_scale()
+            return f"{shown:.6f}".rstrip("0").rstrip(".")
+        return f"{raw:g}" if raw > 0 else ""
 
     def _preview_color_for_status(self, status, direction=None):
         status = str(status or "").upper()
@@ -1471,7 +1559,10 @@ class BotUI(ctk.CTk):
         if not tick or not sym_info:
             return {"ready": False, "reason": "NO_TICK_OR_SYMBOL_INFO"}
 
-        manual_entry = self._safe_float(self.var_manual_entry.get() if hasattr(self, "var_manual_entry") else 0.0)
+        manual_entry = self._price_input_to_internal(
+            self.var_manual_entry.get() if hasattr(self, "var_manual_entry") else 0.0,
+            symbol,
+        )
         price = manual_entry if manual_entry > 0 else float(tick.ask if direction == "BUY" else tick.bid)
         c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
         vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 1.0)) or getattr(config, "MIN_LOT_SIZE", 1.0))
@@ -1480,8 +1571,8 @@ class BotUI(ctk.CTk):
         point = float(getattr(sym_info, "point", 0.00001) or 0.00001)
 
         manual_lot = self._safe_float(self.var_manual_lot.get() or 0.0)
-        manual_sl = self._safe_float(self.var_manual_sl.get() or 0.0)
-        manual_tp = self._safe_float(self.var_manual_tp.get() or 0.0)
+        manual_sl = self._price_input_to_internal(self.var_manual_sl.get(), symbol)
+        manual_tp = self._price_input_to_internal(self.var_manual_tp.get(), symbol)
         market_mode = str(context.get("market_mode", "ANY") or "ANY").upper()
 
         sl_source = "PERCENT"
@@ -2335,9 +2426,13 @@ class BotUI(ctk.CTk):
         if direction in ("BUY", "SELL"):
             self.on_direction_change(direction)
         if model.get("apply_tp", 0) > 0:
-            self.var_manual_tp.set(f"{float(model['apply_tp']):.2f}")
+            self.var_manual_tp.set(
+                self._price_internal_to_input(model["apply_tp"], model.get("symbol"))
+            )
         if model.get("apply_sl", 0) > 0:
-            self.var_manual_sl.set(f"{float(model['apply_sl']):.2f}")
+            self.var_manual_sl.set(
+                self._price_internal_to_input(model["apply_sl"], model.get("symbol"))
+            )
         self.log_message(
             f"[PREVIEW] Applied {model.get('source')} {model.get('symbol')} {direction} TP={self.var_manual_tp.get()} SL={self.var_manual_sl.get()}",
             target="manual",
@@ -2490,6 +2585,8 @@ class BotUI(ctk.CTk):
                 with open(BRAIN_SETTINGS_FILE, "r") as f:
                     bs = json.load(f)
                     for k, v in bs.items():
+                        if k in {"MONEY_DISPLAY_ZERO_TRIM", "MONEY_DISPLAY_UNIT"}:
+                            continue
                         if k in {
                             "DNSE_TAX_RATE",
                             "DNSE_STOCK_TAX_RATE",
@@ -2502,6 +2599,12 @@ class BotUI(ctk.CTk):
                                 self._merge_dict(current_val, v)
                             else:
                                 setattr(config, k, v)
+                    set_money_display_zero_trim(
+                        bs.get(
+                            "MONEY_DISPLAY_ZERO_TRIM",
+                            bs.get("MONEY_DISPLAY_UNIT", "000"),
+                        )
+                    )
                     ee_cfg = bs.get("entry_exit", {})
                     active_entry_tactics = set(ee_cfg.get("entry_tactics", ee_cfg.get("active_tactics", [])))
                     for key in self.entry_exit_tactic_states:
@@ -2628,6 +2731,45 @@ class BotUI(ctk.CTk):
         return format_vnd(value, signed=signed, suffix=suffix)
 
     @staticmethod
+    def _combined_display_pnl(realized_pnl, positions):
+        """PNL đầu trang = đã chốt + lãi/lỗ nổi; không sửa sổ backend."""
+        realized = float(realized_pnl or 0.0)
+        floating = 0.0
+        for position in positions or []:
+            floating += float(getattr(position, "profit", 0.0) or 0.0)
+            floating += float(getattr(position, "swap", 0.0) or 0.0)
+        return realized + floating, realized, floating
+
+    @staticmethod
+    def _responsive_money_font_size(text, base_size, min_size, comfortable_chars):
+        """Co chữ theo chuỗi thực tế; khung không đổi và không cắt mất số."""
+        longest = max((len(line) for line in str(text or "").splitlines()), default=0)
+        if longest <= comfortable_chars:
+            return int(base_size)
+        scaled = int(round(float(base_size) * float(comfortable_chars) / float(longest)))
+        return max(int(min_size), min(int(base_size), scaled))
+
+    def _set_money_label(
+        self,
+        label,
+        text,
+        *,
+        base_size,
+        min_size,
+        comfortable_chars,
+        family="Roboto",
+        weight="bold",
+        **options,
+    ):
+        if label is None:
+            return
+        size = self._responsive_money_font_size(
+            text, base_size, min_size, comfortable_chars
+        )
+        font = (family, size, weight) if weight else (family, size)
+        label.configure(text=text, font=font, **options)
+
+    @staticmethod
     def _fmt_qty(value):
         try:
             return f"{int(round(float(value or 0.0))):,}"
@@ -2638,7 +2780,7 @@ class BotUI(ctk.CTk):
         """Mở cửa sổ Danh mục cổ phiếu nắm giữ (CKCS)."""
         ui_popups.open_portfolio_popup(self)
 
-    def update_portfolio_table(self, acc=None, positions=None):
+    def update_portfolio_table(self, acc=None, positions=None, force_portfolio=False):
         """Cập nhật tách Tổng/Tiền/Giá trị CP (luôn) + nạp bảng danh mục (khi popup mở).
 
         Dùng get_positions() KHÔNG lọc magic (thấy cả cổ mua ngoài bot).
@@ -2651,7 +2793,12 @@ class BotUI(ctk.CTk):
                 account_info = acc
             else:
                 account_info = self.connector.get_account_info()
-            summary = portfolio.portfolio_summary(positions, account_info)
+            is_paper_account = str((account_info or {}).get("status", "")).upper() == "PAPER"
+            summary = (
+                portfolio.paper_portfolio_summary(positions, account_info)
+                if is_paper_account
+                else portfolio.portfolio_summary(positions, account_info)
+            )
         except Exception as exc:
             main_logger.debug("update_portfolio_table failed: %s", exc)
             return
@@ -2666,32 +2813,74 @@ class BotUI(ctk.CTk):
         # Balances cổ phiếu không trả sẵn NAV -> dùng tổng tự tính KHI đang giữ CP.
         # Không giữ CP (paper chưa khớp / TK phái sinh) -> giữ nguyên equity của broker.
         if assets["stock_value"] > 0 and getattr(self, "lbl_equity", None) is not None:
-            self.lbl_equity.configure(text=self._fmt_money(assets["total"]))
+            self._set_money_label(
+                self.lbl_equity,
+                self._fmt_money(assets["total"]),
+                base_size=32,
+                min_size=18,
+                comfortable_chars=8,
+            )
+
+        # Popup má»›i cÃ³ 4 scope Ä‘á»™c láº­p. Header chÃ­nh phÃ­a trÃªn váº«n theo mode
+        # Ä‘ang chá»n, cÃ²n popup Ä‘á»c cáº£ REAL/PAPER mÃ  khÃ´ng Ä‘á»•i config runtime.
+        if getattr(self, "portfolio_trees", None):
+            self._update_portfolio_scope_tables(force=bool(force_portfolio))
+            return
 
         # 2) Tách tài sản trong popup (nếu đang mở)
         if getattr(self, "lbl_port_total", None) is not None:
-            self.lbl_port_total.configure(text=f"Tổng tài sản: {self._fmt_money(assets['total'])}")
+            self._set_money_label(
+                self.lbl_port_total,
+                f"Tổng tài sản: {self._fmt_money(assets['total'])}",
+                base_size=16,
+                min_size=10,
+                comfortable_chars=24,
+            )
         if getattr(self, "lbl_port_cash", None) is not None:
-            self.lbl_port_cash.configure(text=f"Tiền mặt: {self._fmt_money(assets['cash'])}")
+            self._set_money_label(
+                self.lbl_port_cash,
+                f"Tiền mặt: {self._fmt_money(assets['cash'])}",
+                base_size=14,
+                min_size=9,
+                comfortable_chars=22,
+            )
         # Sức mua: chỉ hiện khi khác tiền mặt (có vay margin) -> đỡ rối cho cash-only.
         if getattr(self, "lbl_port_avail", None) is not None:
             _avail = assets.get("available_cash", assets.get("cash", 0.0))
             _txt = f"Sức mua: {self._fmt_money(_avail)}" if _avail > assets.get("cash", 0.0) + 1 else ""
-            self.lbl_port_avail.configure(text=_txt)
+            self._set_money_label(
+                self.lbl_port_avail, _txt,
+                base_size=12, min_size=9, comfortable_chars=22,
+            )
         if getattr(self, "lbl_port_stock", None) is not None:
-            self.lbl_port_stock.configure(text=f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}")
+            self._set_money_label(
+                self.lbl_port_stock,
+                f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}",
+                base_size=12, min_size=9, comfortable_chars=22,
+            )
         if getattr(self, "lbl_port_odd", None) is not None:
             _odd_val = assets.get("odd_lot_value", 0.0)
             _odd_n = assets.get("odd_lot_count", 0)
             _odd_txt = f"Lô lẻ: {self._fmt_money(_odd_val)} ({_odd_n} mã)" if _odd_n else "Lô lẻ: 0"
-            self.lbl_port_odd.configure(text=_odd_txt)
+            self._set_money_label(
+                self.lbl_port_odd, _odd_txt,
+                base_size=11, min_size=8, comfortable_chars=24,
+            )
         # Nợ vay & cổ tức sắp về: chỉ hiện khi > 0.
         if getattr(self, "lbl_port_debt", None) is not None:
             _debt = assets.get("debt", 0.0)
-            self.lbl_port_debt.configure(text=f"Nợ vay: {self._fmt_money(_debt)}" if _debt > 0 else "")
+            _debt_text = f"Nợ vay: {self._fmt_money(_debt)}" if _debt > 0 else ""
+            self._set_money_label(
+                self.lbl_port_debt, _debt_text,
+                base_size=11, min_size=8, comfortable_chars=22,
+            )
         if getattr(self, "lbl_port_dividend", None) is not None:
             _div = assets.get("dividend", 0.0)
-            self.lbl_port_dividend.configure(text=f"Cổ tức sắp về: {self._fmt_money(_div)}" if _div > 0 else "")
+            _div_text = f"Cổ tức sắp về: {self._fmt_money(_div)}" if _div > 0 else ""
+            self._set_money_label(
+                self.lbl_port_dividend, _div_text,
+                base_size=11, min_size=8, comfortable_chars=26,
+            )
 
         # 3) Bảng danh mục (chỉ khi popup đang mở -> tree_portfolio tồn tại)
         tree = getattr(self, "tree_portfolio", None)
@@ -2708,8 +2897,8 @@ class BotUI(ctk.CTk):
                     self._fmt_qty(h.quantity),
                     self._fmt_qty(h.sellable),
                     self._fmt_qty(h.pending) if h.pending else "—",
-                    self._fmt_money(h.avg_cost),
-                    self._fmt_money(h.market_price),
+                    self._fmt_price(h.avg_cost, h.symbol),
+                    self._fmt_price(h.market_price, h.symbol),
                     self._fmt_money(h.market_value),
                     f"{self._fmt_money(h.pnl, signed=True)} ({h.pnl_pct:+.2f}%)",
                     h.note,
@@ -2730,6 +2919,187 @@ class BotUI(ctk.CTk):
                 tree.delete(iid)
         except Exception as exc:
             main_logger.debug("portfolio tree render failed: %s", exc)
+
+    def _update_portfolio_scope_tables(self, force=False):
+        """Nạp bốn tab danh mục và thông tin ký quỹ CKPS."""
+        from core import portfolio
+
+        trees = getattr(self, "portfolio_trees", None) or {}
+        labels_by_scope = getattr(self, "portfolio_summary_labels", None) or {}
+        if not trees:
+            return
+
+        def is_derivative_position(pos):
+            raw = getattr(pos, "raw", {}) if isinstance(getattr(pos, "raw", {}), dict) else {}
+            market_type = str(raw.get("marketType") or raw.get("market") or "").upper()
+            return market_type == "DERIVATIVE" or self._is_derivative_symbol(getattr(pos, "symbol", ""))
+
+        now = time.time()
+        cached = getattr(self, "_portfolio_scope_cache", None)
+        if force or not cached or now - float(cached.get("time", 0.0) or 0.0) >= 5.0:
+            real_acc = self.connector.get_account_info(paper_mode=False) or {}
+            real_positions = self.connector.get_positions(paper_mode=False) or []
+            paper_acc = self.connector.get_account_info(paper_mode=True) or {}
+            paper_positions = self.connector.get_positions(paper_mode=True) or []
+
+            aliases = list(getattr(config, "CKPS_SYMBOLS", []) or ["VN30F1M"])
+            selected = str(self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else "").upper()
+            derivative_symbol = selected if self._is_derivative_symbol(selected) else str(aliases[0]).upper()
+            context_map = getattr(self, "latest_market_context", {}) or {}
+            context = context_map.get(derivative_symbol, {}) if isinstance(context_map, dict) else {}
+            derivative_price = float(
+                (context or {}).get("ask")
+                or (context or {}).get("current_price")
+                or (self.last_price_val if self._is_derivative_symbol(selected) else 0.0)
+                or 0.0
+            )
+            if derivative_price <= 0:
+                candidates = [
+                    pos for pos in (real_positions + paper_positions)
+                    if is_derivative_position(pos)
+                ]
+                if candidates:
+                    derivative_price = float(
+                        getattr(candidates[0], "price_current", 0.0)
+                        or getattr(candidates[0], "price_open", 0.0)
+                        or 0.0
+                    )
+            if derivative_price <= 0:
+                try:
+                    tick = self.connector.get_tick(derivative_symbol)
+                    derivative_price = float(getattr(tick, "ask", 0.0) or getattr(tick, "last", 0.0) or 0.0)
+                except Exception:
+                    derivative_price = 0.0
+
+            real_capacity = self.connector.get_derivative_margin_capacity(
+                derivative_symbol,
+                derivative_price,
+                paper_mode=False,
+                positions=real_positions,
+                # Nút Làm mới không được phép bỏ cache PPSE 10 giây,
+                # tránh người dùng bấm liên tục làm dồn API DNSE.
+                force_refresh=False,
+            )
+            paper_capacity = self.connector.get_derivative_margin_capacity(
+                derivative_symbol,
+                derivative_price,
+                paper_mode=True,
+                positions=paper_positions,
+                force_refresh=force,
+            )
+            cached = {
+                "time": now,
+                "real_acc": real_acc,
+                "real_positions": real_positions,
+                "paper_acc": paper_acc,
+                "paper_positions": paper_positions,
+                "real_capacity": real_capacity,
+                "paper_capacity": paper_capacity,
+            }
+            self._portfolio_scope_cache = cached
+
+        datasets = {
+            "CKPS REAL": (cached["real_acc"], cached["real_positions"], cached["real_capacity"]),
+            "CKCS REAL": (cached["real_acc"], cached["real_positions"], None),
+            "CKPS PAPER": (cached["paper_acc"], cached["paper_positions"], cached["paper_capacity"]),
+            "CKCS PAPER": (cached["paper_acc"], cached["paper_positions"], None),
+        }
+
+        def set_labels(scope, texts):
+            labels = labels_by_scope.get(scope, [])
+            for index, label in enumerate(labels):
+                label.configure(text=texts[index] if index < len(texts) else "")
+
+        for scope, (account, all_positions, capacity) in datasets.items():
+            tree = trees.get(scope)
+            if tree is None:
+                continue
+            for iid in tree.get_children(""):
+                tree.delete(iid)
+
+            if scope.startswith("CKCS"):
+                stock_positions = [
+                    pos for pos in all_positions
+                    if not is_derivative_position(pos)
+                ]
+                summary = (
+                    portfolio.paper_portfolio_summary(stock_positions, account)
+                    if scope.endswith("PAPER")
+                    else portfolio.portfolio_summary(stock_positions, account)
+                )
+                assets = summary["assets"]
+                extra = []
+                if assets.get("debt", 0.0) > 0:
+                    extra.append(f"Nợ vay: {self._fmt_money(assets['debt'])}")
+                if assets.get("dividend", 0.0) > 0:
+                    extra.append(f"Cổ tức chờ: {self._fmt_money(assets['dividend'])}")
+                set_labels(scope, [
+                    f"Tổng: {self._fmt_money(assets['total'])}",
+                    f"Tiền: {self._fmt_money(assets['cash'])}",
+                    f"Cổ phiếu: {self._fmt_money(assets['stock_value'])}",
+                    f"Sức mua: {self._fmt_money(assets.get('available_cash', 0.0))}",
+                    f"Lô lẻ: {self._fmt_money(assets.get('odd_lot_value', 0.0))} ({assets.get('odd_lot_count', 0)} mã)",
+                    " | ".join(extra),
+                ])
+                for holding in summary["holdings"]:
+                    tag = "odd_lot" if holding.is_odd_lot else (
+                        "profit_row" if holding.pnl > 0 else "loss_row" if holding.pnl < 0 else "flat_row"
+                    )
+                    tree.insert("", "end", iid=holding.symbol, values=(
+                        holding.symbol,
+                        self._fmt_qty(holding.quantity),
+                        self._fmt_qty(holding.sellable),
+                        self._fmt_qty(holding.pending) if holding.pending else "—",
+                        self._fmt_price(holding.avg_cost, holding.symbol),
+                        self._fmt_price(holding.market_price, holding.symbol),
+                        self._fmt_money(holding.market_value),
+                        f"{self._fmt_money(holding.pnl, signed=True)} ({holding.pnl_pct:+.2f}%)",
+                        holding.note,
+                    ), tags=(tag,))
+                continue
+
+            capacity = capacity or {}
+            source = str(capacity.get("source", "FORMULA") or "FORMULA")
+            source_text = "DNSE xác nhận" if source == "DNSE_PPSE" else (
+                "Mô phỏng PAPER" if source == "PAPER_ESTIMATE" else "Ước tính; PPSE chưa xác nhận"
+            )
+            set_labels(scope, [
+                f"Ký quỹ 1 HĐ: ~{self._fmt_money(capacity.get('margin_per_contract', 0.0))}",
+                f"Cọc còn lại{' (mô phỏng)' if scope.endswith('PAPER') else ''}: {self._fmt_money(capacity.get('remaining_secure', 0.0))}",
+                f"Sức mở: M {int(capacity.get('qmax_buy', 0) or 0)} / B {int(capacity.get('qmax_sell', 0) or 0)} HĐ",
+                f"Tỷ lệ KQ: {float(capacity.get('initial_rate', 0.0) or 0.0) * 100:.2f}%",
+                f"Cọc đã dùng: {self._fmt_money(capacity.get('used_secure', 0.0))}",
+                source_text,
+            ])
+            initial_rate = float(capacity.get("initial_rate", 0.0) or 0.0)
+            point_value = float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0)
+            derivative_positions = [
+                pos for pos in all_positions
+                if is_derivative_position(pos)
+            ]
+            for index, pos in enumerate(derivative_positions):
+                symbol = str(getattr(pos, "symbol", "") or "")
+                side = "BUY" if int(getattr(pos, "type", 0) or 0) == 0 else "SELL"
+                qty = abs(float(getattr(pos, "volume", 0.0) or 0.0))
+                entry = float(getattr(pos, "price_open", 0.0) or 0.0)
+                price = float(getattr(pos, "price_current", 0.0) or entry)
+                pnl = float(getattr(pos, "profit", 0.0) or 0.0) + float(getattr(pos, "commission", 0.0) or 0.0)
+                margin = qty * price * point_value * initial_rate
+                raw = getattr(pos, "raw", {}) if isinstance(getattr(pos, "raw", {}), dict) else {}
+                status = str(raw.get("status") or getattr(pos, "comment", "") or "OPEN")
+                iid = f"{scope}:{getattr(pos, 'ticket', index)}"
+                tree.insert("", "end", iid=iid, values=(
+                    symbol,
+                    side,
+                    f"{qty:g}",
+                    self._fmt_price(entry, symbol),
+                    self._fmt_price(price, symbol),
+                    self._fmt_price(float(getattr(pos, "sl", 0.0) or 0.0), symbol) if getattr(pos, "sl", 0.0) else "OFF",
+                    self._fmt_price(float(getattr(pos, "tp", 0.0) or 0.0), symbol) if getattr(pos, "tp", 0.0) else "OFF",
+                    self._fmt_money(margin),
+                    self._fmt_money(pnl, signed=True),
+                    status,
+                ), tags=("buy_row" if side == "BUY" else "sell_row",))
 
     def _is_derivative_symbol(self, symbol):
         connector = getattr(self, "connector", None)
@@ -2828,9 +3198,9 @@ class BotUI(ctk.CTk):
         tactic = self.get_current_tactic_string()
         ee_tactic = self.get_current_entry_exit_tactic_string()
         lot = self._safe_float(self.var_manual_lot.get() or 0.0)
-        entry_price = self._safe_float(self.var_manual_entry.get() or 0.0)
-        tp = self._safe_float(self.var_manual_tp.get() or 0.0)
-        sl = self._safe_float(self.var_manual_sl.get() or 0.0)
+        entry_price = self._price_input_to_internal(self.var_manual_entry.get(), symbol)
+        tp = self._price_input_to_internal(self.var_manual_tp.get(), symbol)
+        sl = self._price_input_to_internal(self.var_manual_sl.get(), symbol)
         ctx = self.latest_market_context.get(symbol, {})
         lot_source = "MANUAL_LOT" if lot > 0 else ""
         sl_source = "MANUAL_SL" if sl > 0 else ""
@@ -2937,6 +3307,8 @@ class BotUI(ctk.CTk):
             self.log_message(f"[LIMIT ORDER] Khong tao duoc cache: {exc}", error=True, target="manual")
 
     def _run_pending_order_scheduler(self):
+        if self.__dict__.get("_mode_switching", False):
+            return
         try:
             for rec in pending_orders.recover_stuck():
                 self.log_message(f"[HẸN LỆNH] Khôi phục lệnh kẹt {rec.get('symbol')} id={str(rec.get('id'))[:8]}", target="manual")
@@ -2947,7 +3319,22 @@ class BotUI(ctk.CTk):
             for item in pending_orders.purge_stale():
                 self.log_message(f"[HẸN LỆNH] Đã dọn lệnh chết {item.get('symbol')} id={str(item.get('id'))[:8]}", target="manual")
             from core.market_hours import market_session_phase
-            due_items = pending_orders.claim_due(market_session_phase)
+            def _quote(symbol, side):
+                ctx = self.latest_market_context.get(str(symbol or "").upper(), {}) or {}
+                key = "ask" if str(side or "BUY").upper() == "BUY" else "bid"
+                return float(ctx.get(key, ctx.get("current_price", 0.0)) or 0.0)
+
+            def _point(symbol):
+                try:
+                    return float(self.connector.get_symbol_info(symbol, poll_tick=False).point)
+                except Exception:
+                    return float(getattr(config, "DNSE_PRICE_POINT", 0.1) or 0.1)
+
+            due_items = pending_orders.claim_due(
+                market_session_phase,
+                quote_fn=_quote,
+                point_fn=_point,
+            )
             for item in due_items:
                 self._send_pending_order(item)
         except Exception as exc:
@@ -2955,6 +3342,12 @@ class BotUI(ctk.CTk):
 
     def _send_pending_order(self, item):
         order_id = str(item.get("id", ""))
+        item_mode = str(item.get("execution_mode", "PAPER") or "PAPER").upper()
+        current_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+        if item_mode != current_mode:
+            pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_MATCHING_MODE")
+            return
+        expected_paper_mode = item_mode == "PAPER"
         symbol = str(item.get("symbol", "")).upper()
         side = str(item.get("side", "BUY")).upper()
         entry_price = float(item.get("entry_price", 0.0) or 0.0)
@@ -2988,17 +3381,38 @@ class BotUI(ctk.CTk):
                 order_kind=order_kind,
                 manual_entry_price=entry_price,
                 entry_exit_tactic=str(item.get("manual_entry_tactic", "") or "OFF"),
+                expected_paper_mode=expected_paper_mode,
             )
             if "SUCCESS" in str(result):
                 dnse_order_id = str(result).split("|", 1)[1] if "|" in str(result) else ""
                 pending_orders.mark(order_id, pending_orders.SENT, str(result), dnse_order_id=dnse_order_id)
+                self._update_opportunity_order_result(item, "SENT", str(result))
                 self.log_message(f"[LIMIT ORDER] Da gui {side} {symbol} -> {result}", target="manual")
+            elif "MODE_CHANGED" in str(result):
+                pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_MATCHING_MODE")
             else:
                 pending_orders.mark(order_id, pending_orders.FAILED, str(result))
+                self._update_opportunity_order_result(item, "FAILED", str(result))
                 self.log_message(f"[LIMIT ORDER] Gui that bai {side} {symbol}: {result}", error=True, target="manual")
         except Exception as exc:
             pending_orders.mark(order_id, pending_orders.FAILED, str(exc))
+            self._update_opportunity_order_result(item, "FAILED", str(exc))
             self.log_message(f"[LIMIT ORDER] Exception {side} {symbol}: {exc}", error=True, target="manual")
+
+    def _update_opportunity_order_result(self, item, status, result):
+        """Cập nhật bản lịch sử gợi ý đã kích hoạt theo kết quả gửi lệnh."""
+        opportunity_id = str((item or {}).get("opportunity_id", "") or "")
+        if not opportunity_id:
+            return
+        try:
+            from core import signal_opportunities
+            signal_opportunities.update_history(
+                opportunity_id,
+                order_status=str(status),
+                order_result=str(result),
+            )
+        except Exception:
+            pass
 
     def _render_cached_ui_snapshot(self, sym):
         """Render account state while market-data endpoints are asleep."""
@@ -3124,6 +3538,9 @@ class BotUI(ctk.CTk):
 
     def bg_update_loop(self):
         while self.running:
+            if self.__dict__.get("_mode_switching", False):
+                time.sleep(0.1)
+                continue
             try:
                 sym = self.cbo_symbol.get()
                 from core.market_hours import (
@@ -3360,7 +3777,14 @@ class BotUI(ctk.CTk):
             balance = 1.0
 
         if acc:
-            self.lbl_equity.configure(text=self._fmt_money(acc["equity"]))
+            equity_text = self._fmt_money(acc["equity"])
+            self._set_money_label(
+                self.lbl_equity,
+                equity_text,
+                base_size=32,
+                min_size=18,
+                comfortable_chars=8,
+            )
             if hasattr(self, "lbl_money_unit_note"):
                 self.lbl_money_unit_note.configure(text=money_unit_note())
             # Dòng nhỏ: rõ đang xem ví CƠ SỞ (tiền) hay PHÁI SINH (ký quỹ) theo mã đang chọn.
@@ -3372,17 +3796,31 @@ class BotUI(ctk.CTk):
                 _wallet = f"PHÁI SINH · KQ {self._fmt_money(acc.get('deriv_avail', 0.0))}{_rtt_txt}"
             else:
                 _wallet = f"CƠ SỞ · Tiền {self._fmt_money(acc.get('stock_cash', acc.get('cash_available', acc.get('balance', 0.0))))}"
-            self.lbl_acc_info.configure(text=f"ID: {acc['login']}  ·  {_wallet}")
+            account_text = f"ID: {acc['login']}  ·  {_wallet}"
+            self._set_money_label(
+                self.lbl_acc_info,
+                account_text,
+                base_size=9,
+                min_size=7,
+                comfortable_chars=42,
+                weight="",
+            )
         # Danh mục CKCS + tách Tiền/CP/Tổng (read-only). Đặt sau khi set equity để
         # ghi đè bằng tổng tự tính (balances cổ phiếu không trả sẵn NAV).
         self.update_portfolio_table(
             acc,
             getattr(self, "_ui_all_positions_snapshot", positions),
         )
-        base_pnl = float(state.get("pnl_today", 0.0) or 0.0)
-        pnl = base_pnl
-        self.lbl_stats.configure(
-            text=f"PNL: {self._fmt_money(pnl, signed=True)}",
+        pnl, realized_pnl, floating_pnl = self._combined_display_pnl(
+            state.get("pnl_today", 0.0), positions
+        )
+        pnl_text = f"PNL: {self._fmt_money(pnl, signed=True)}"
+        self._set_money_label(
+            self.lbl_stats,
+            pnl_text,
+            base_size=17,
+            min_size=11,
+            comfortable_chars=14,
             text_color=COL_GREEN if pnl >= 0 else COL_RED,
         )
 
@@ -3483,7 +3921,7 @@ class BotUI(ctk.CTk):
         if tick:
             cur_price = tick.ask if d == "BUY" else tick.bid
             self.lbl_dashboard_price.configure(
-                text=f"{cur_price:.2f}",
+                text=self._fmt_price(cur_price, sym),
                 text_color=COL_GREEN if cur_price >= self.last_price_val else COL_RED,
             )
             self.last_price_val = cur_price
@@ -3493,7 +3931,9 @@ class BotUI(ctk.CTk):
                 fl = float(getattr(tick, "floor", 0.0) or 0.0)
                 ref = float(getattr(tick, "reference", 0.0) or 0.0)
                 if ce > 0 or fl > 0:
-                    self.lbl_band_info.configure(text=f"Trần {ce:.2f}  ·  TC {ref:.2f}  ·  Sàn {fl:.2f}")
+                    self.lbl_band_info.configure(
+                        text=f"Trần {self._fmt_price(ce, sym)}  ·  TC {self._fmt_price(ref, sym)}  ·  Sàn {self._fmt_price(fl, sym)}"
+                    )
                 else:
                     self.lbl_band_info.configure(text="")
             try:
@@ -3515,7 +3955,9 @@ class BotUI(ctk.CTk):
             ctx_px = float(sym_ctx.get("current_price", 0) or 0) if sym_ctx else 0.0
             if ctx_px > 0:
                 cur_price = ctx_px
-                self.lbl_dashboard_price.configure(text=f"{cur_price:.2f}", text_color="#9E9E9E")
+                self.lbl_dashboard_price.configure(
+                    text=self._fmt_price(cur_price, sym), text_color="#9E9E9E"
+                )
             else:
                 self.lbl_dashboard_price.configure(text="— chưa có giá", text_color="#757575")
             if hasattr(self, "lbl_band_info"):
@@ -3540,9 +3982,9 @@ class BotUI(ctk.CTk):
             # --- ĐOẠN CẦN THAY THẾ BẮT ĐẦU TỪ ĐÂY ---
             try:
                 mlot = float(self.var_manual_lot.get() or 0)
-                me = float(self.var_manual_entry.get() or 0)
-                msl = float(self.var_manual_sl.get() or 0)
-                mtp = float(self.var_manual_tp.get() or 0)
+                me = self._price_input_to_internal(self.var_manual_entry.get(), sym)
+                msl = self._price_input_to_internal(self.var_manual_sl.get(), sym)
+                mtp = self._price_input_to_internal(self.var_manual_tp.get(), sym)
             except:
                 mlot, me, msl, mtp = 0.0, 0.0, 0.0
             entry_calc_price = me if me > 0 else cur_price
@@ -3690,8 +4132,8 @@ class BotUI(ctk.CTk):
                     text_color="white" if mlot == 0 else "#FFD700",
                 )
 
-            # Hiển thị spread (theo đơn vị giá bảng điện) + phí giao dịch (nghìn VND).
-            from core.money import format_money_k
+            # Mọi số tiền hiển thị bằng VND nguyên con; giá nội bộ CKCS vẫn giữ
+            # đơn vị bảng điện (nghìn) để không thay đổi công thức/đặt lệnh DNSE.
             comm_total = self.calculate_trade_fee(sym, entry_calc_price, f_lot, side=d)
 
             # Spread chỉ hợp lệ khi có bid/ask THẬT (không phải fallback từ giá khớp),
@@ -3704,11 +4146,20 @@ class BotUI(ctk.CTk):
             else:
                 # ask-bid đã là đơn vị giá: điểm (phái sinh) / nghìn VND (cổ phiếu).
                 spread = ask_v - bid_v
-                spread_part = f"Spread: {spread:.2f}"
                 spread_cost = spread * f_lot * c_size  # quy ra VND: × khối lượng × giá trị 1 đơn vị giá
+                if settlement.is_cash_stock(sym):
+                    spread_part = (
+                        f"Spread: {self._fmt_money(spread * 1000.0)}/CP"
+                        f" ({self._fmt_money(spread_cost)})"
+                    )
+                else:
+                    spread_part = (
+                        f"Spread: {spread:.2f} điểm"
+                        f" ({self._fmt_money(spread_cost)})"
+                    )
 
             # Phí: luôn lấy giá trị tính được gần nhất (fallback profile), không treo "chờ DNSE".
-            fee_part = f"Phí GD: {format_money_k(abs(comm_total))}"
+            fee_part = f"Phí GD: {self._fmt_money(abs(comm_total))}"
             margin_part = ""
             try:
                 brain = self.trade_mgr._get_brain_settings(sym)
@@ -3721,7 +4172,14 @@ class BotUI(ctk.CTk):
                     margin_part = f" | M:{'FREE' if base_label == 'FREE_CASH' else 'EQ'} RTT:{rtt_txt}"
             except Exception:
                 margin_part = ""
-            self.lbl_fee_info.configure(text=f"{spread_part} | {fee_part}{margin_part}")
+            fee_info_text = f"{spread_part} | {fee_part}{margin_part}"
+            self._set_money_label(
+                self.lbl_fee_info,
+                fee_info_text,
+                base_size=13,
+                min_size=9,
+                comfortable_chars=42,
+            )
             # (Trạng thái T+2 Đã về/Chờ về hiển thị theo từng vị thế trong BẢNG LỆNH.)
 
             # 5. HIỂN THỊ RỦI RO LÊN GIAO DIỆN
@@ -3730,13 +4188,20 @@ class BotUI(ctk.CTk):
             if d == "SELL" and p_sl <= entry_calc_price: is_valid_sl = False
 
             if is_valid_sl:
-                self.lbl_prev_sl.configure(text=f"{p_sl:.2f}", text_color=COL_RED)
+                self.lbl_prev_sl.configure(text=self._fmt_price(p_sl, sym), text_color=COL_RED)
                 loss_dist = abs(entry_calc_price - p_sl)
                 loss_val = loss_dist * f_lot * c_size
                 loss_pct = (loss_val / balance) * 100 if balance > 0 else 0.0
                 loss_pct_txt = "--%" if balance <= 0 else (f"{loss_pct:.4f}%" if 0 < abs(loss_pct) < 0.01 else f"{loss_pct:.2f}%")
-                self.lbl_prev_risk.configure(
-                    text=f"-{self._fmt_money(loss_val)} ({loss_pct_txt})", text_color=COL_RED
+                risk_text = f"-{self._fmt_money(loss_val)} ({loss_pct_txt})"
+                self._set_money_label(
+                    self.lbl_prev_risk,
+                    risk_text,
+                    base_size=15,
+                    min_size=10,
+                    comfortable_chars=18,
+                    family="Consolas",
+                    text_color=COL_RED,
                 )
             else:
                 self.lbl_prev_sl.configure(text="LỖI", text_color=COL_WARN)
@@ -3749,13 +4214,20 @@ class BotUI(ctk.CTk):
                 is_valid_tp = False
 
             if is_valid_tp:
-                self.lbl_prev_tp.configure(text=f"{p_tp:.2f}", text_color=COL_GREEN)
+                self.lbl_prev_tp.configure(text=self._fmt_price(p_tp, sym), text_color=COL_GREEN)
                 prof_dist = abs(p_tp - entry_calc_price)
                 prof_val = prof_dist * f_lot * c_size
                 prof_pct = (prof_val / balance) * 100 if balance > 0 else 0.0
                 prof_pct_txt = "--%" if balance <= 0 else (f"{prof_pct:.4f}%" if 0 < abs(prof_pct) < 0.01 else f"{prof_pct:.2f}%")
-                self.lbl_prev_rew.configure(
-                    text=f"+{self._fmt_money(prof_val)} ({prof_pct_txt})", text_color=COL_GREEN
+                reward_text = f"+{self._fmt_money(prof_val)} ({prof_pct_txt})"
+                self._set_money_label(
+                    self.lbl_prev_rew,
+                    reward_text,
+                    base_size=15,
+                    min_size=10,
+                    comfortable_chars=18,
+                    family="Consolas",
+                    text_color=COL_GREEN,
                 )
             else:
                 self.lbl_prev_tp.configure(text="LỖI", text_color=COL_WARN)
@@ -3881,20 +4353,151 @@ class BotUI(ctk.CTk):
 
         self.refresh_manual_preview_tab()
 
-        existing_items = self.tree.get_children()
-        current_tickets_on_chart = []
+        running_trees = getattr(self, "running_trees", None) or {
+            ("CKPS PAPER" if getattr(config, "PAPER_TRADING", True) else "CKPS REAL"): self.tree
+        }
+        existing_by_scope = {name: set(tree.get_children()) for name, tree in running_trees.items()}
+        current_by_scope = {name: set() for name in running_trees}
+
+        def _running_scope(symbol, execution_mode):
+            market = "CKPS" if self._is_derivative_symbol(symbol) else "CKCS"
+            mode = "PAPER" if str(execution_mode or "PAPER").upper() == "PAPER" else "REAL"
+            return f"{market} {mode}"
+
+        def _upsert(scope, row_id, values, tag):
+            tree = running_trees.get(scope)
+            if tree is None:
+                return
+            current_by_scope[scope].add(str(row_id))
+            if str(row_id) in existing_by_scope[scope]:
+                tree.item(str(row_id), values=values, tags=(tag,))
+            else:
+                tree.insert("", "end", iid=str(row_id), values=values, tags=(tag,))
+
         child_to_parent = self.trade_mgr.state.get("child_to_parent", {})
         open_fee_total = 0.0  # [NEW] Tổng fee từ lệnh đang mở
         def _short_id(value):
             text = str(value or "")
             return text[:8] if len(text) > 8 else text
 
+        current_execution_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+        try:
+            from core import signal_opportunities
+
+            legacy_opportunities = []
+            show_opportunities = bool(self.var_show_bot_opportunities.get())
+            for item in signal_opportunities.list_active():
+                opp_id = str(item.get("id", "") or "")
+                if not opp_id:
+                    continue
+                symbol = str(item.get("symbol", "") or "").upper()
+                mode = str(item.get("execution_mode", "PAPER") or "PAPER").upper()
+                scope = _running_scope(symbol, mode)
+                created = float(item.get("first_seen_at", 0.0) or 0.0)
+                last_seen = float(item.get("last_seen_at", 0.0) or 0.0)
+                expire_at = float(item.get("expire_at", 0.0) or 0.0)
+                detected = float(item.get("detected_price", 0.0) or 0.0)
+                side = str(item.get("side", "BUY") or "BUY").upper()
+                count = int(item.get("signal_count", 1) or 1)
+                setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
+                if not setup:
+                    legacy_opportunities.append(item)
+                setup_ok = bool(setup.get("ok"))
+                entry = float(setup.get("price", detected) or detected or 0.0)
+                lot = float(setup.get("lot", 0.0) or 0.0)
+                sl = float(setup.get("sl", 0.0) or 0.0)
+                tp = float(setup.get("tp", 0.0) or 0.0)
+                risk_amount = float(setup.get("risk_amount", 0.0) or 0.0)
+                reward_amount = float(setup.get("reward_amount", 0.0) or 0.0)
+                risk_pct = float(setup.get("risk_pct", 0.0) or 0.0)
+                tactic = str(setup.get("tactic", "OFF") or "OFF")
+                ee_tactic = str(setup.get("entry_exit_tactic", "OFF") or "OFF")
+                unit = self._quantity_unit(symbol)
+                reason = str(item.get("block_reason", "BOT_OFF") or "BOT_OFF")
+                if len(reason) > 70:
+                    reason = reason[:67] + "..."
+                if setup_ok:
+                    order_text = (
+                        f"[CACHE][BOT] {side} {lot:g} {unit} {symbol} "
+                        f"@ {self._fmt_price(entry, symbol)}"
+                    )
+                    target_text = (
+                        f"SL {self._fmt_price(sl, symbol) if sl > 0 else 'OFF'}"
+                        f"  |  TP {self._fmt_price(tp, symbol) if tp > 0 else 'OFF'}"
+                    )
+                    risk_text = (
+                        f"-{self._fmt_money(risk_amount)} ({risk_pct:.2f}%)"
+                        f" | +{self._fmt_money(reward_amount)}"
+                    )
+                    price_text = (
+                        f"{setup.get('entry_mode', 'MARKET')} @{self._fmt_price(entry, symbol)}"
+                        f" | {setup.get('market_mode', item.get('market_mode', 'ANY'))}"
+                    )
+                    status_text = (
+                        f"GỢI Ý — CHƯA MUA | TSL={tactic} | E/E={ee_tactic} | {reason}"
+                    )
+                else:
+                    setup_error = str(setup.get("error", "CHƯA TÍNH ĐƯỢC LỆNH") or "CHƯA TÍNH ĐƯỢC LỆNH")
+                    order_text = f"[CACHE][BOT] {side} {symbol} @ {self._fmt_price(entry, symbol) if entry > 0 else '--'}"
+                    target_text = f"Chưa tính được SL/TP: {setup_error}"
+                    risk_text = f"gặp {count} lần | {item.get('market_mode', 'ANY')}"
+                    price_text = f"giá cuối {self._fmt_price(float(item.get('last_price', 0.0) or 0.0), symbol)}"
+                    status_text = f"GỢI Ý — CHƯA MUA | {reason}"
+                values = (
+                    f"[GỢI Ý] {_short_id(opp_id)}",
+                    datetime.fromtimestamp(created).strftime("%d/%m %H:%M") if created else "--",
+                    order_text,
+                    target_text,
+                    f"hết {datetime.fromtimestamp(expire_at).strftime('%d/%m %H:%M') if expire_at else '--'}",
+                    risk_text,
+                    price_text,
+                    status_text,
+                    "X",
+                )
+                if show_opportunities:
+                    _upsert(scope, f"OPP:{opp_id}", values, "bot_opportunity")
+
+            # Cache được tạo bởi phiên bản cũ chưa có lot/SL/TP. Tính bù
+            # tuần tự ở luồng nền để không đóng băng UI hay gọi dồn API.
+            if legacy_opportunities and not getattr(self, "_opportunity_backfill_running", False):
+                self._opportunity_backfill_running = True
+
+                def _backfill(rows):
+                    try:
+                        for legacy in rows:
+                            symbol = str(legacy.get("symbol", "") or "").upper()
+                            side = str(legacy.get("side", "BUY") or "BUY").upper()
+                            context = legacy.get("context", {}) if isinstance(legacy.get("context"), dict) else {}
+                            setup = self.trade_mgr.build_telegram_signal_order(
+                                symbol,
+                                side,
+                                context=context,
+                                market_mode=str(legacy.get("market_mode", "ANY") or "ANY"),
+                            )
+                            signal_opportunities.update_active(
+                                legacy.get("id"),
+                                order_setup=setup,
+                            )
+                    except Exception as exc:
+                        self.log_message(f"[GỢI Ý BOT] Tính bù lệnh cache lỗi: {exc}", error=True, target="bot")
+                    finally:
+                        self._opportunity_backfill_running = False
+
+                threading.Thread(
+                    target=_backfill,
+                    args=(list(legacy_opportunities),),
+                    daemon=True,
+                ).start()
+        except Exception:
+            pass
+
         for item in pending_orders.list_all():
+            item_mode = str(item.get("execution_mode", "PAPER")).upper()
             local_id = str(item.get("id", ""))
             if not local_id:
                 continue
             row_id = f"LOCAL:{local_id}"
-            current_tickets_on_chart.append(row_id)
+            scope = _running_scope(str(item.get("symbol", "") or ""), item_mode)
             status = str(item.get("status", "PENDING") or "PENDING").upper()
             side_txt = str(item.get("side", "BUY") or "BUY").upper()
             symbol = str(item.get("symbol", "") or "")
@@ -3914,10 +4517,10 @@ class BotUI(ctk.CTk):
                 plan = f"OPEN -> DNSE LO @{entry:g}" if entry > 0 else f"{target} -> DNSE {target}"
             time_str = datetime.fromtimestamp(created).strftime("%d/%m %H:%M") if created else "--"
             exp_str = datetime.fromtimestamp(expire_at).strftime("%d/%m %H:%M") if expire_at else "--"
-            price_txt = f"LO @{self._fmt_price(entry)}" if entry > 0 else f"{target} auction"
+            price_txt = f"LO @{self._fmt_price(entry, symbol)}" if entry > 0 else f"{target} auction"
             lot_txt = f"{lot:g} {unit}" if lot > 0 else f"AUTO {unit}"
-            sl_txt = self._fmt_price(sl) if sl > 0 else "AUTO"
-            tp_txt = self._fmt_price(tp) if tp > 0 else "AUTO"
+            sl_txt = self._fmt_price(sl, symbol) if sl > 0 else "AUTO"
+            tp_txt = self._fmt_price(tp, symbol) if tp > 0 else "AUTO"
             result_txt = str(item.get("result", "") or "")
             if len(result_txt) > 42:
                 result_txt = result_txt[:39] + "..."
@@ -3940,10 +4543,7 @@ class BotUI(ctk.CTk):
                 result_txt or f"{status} | {item.get('note', '')} | E/E={item.get('manual_entry_tactic', 'OFF')}",
                 "" if status == "SENDING" else "X",
             )
-            if row_id in existing_items:
-                self.tree.item(row_id, values=values_data, tags=(tag_to_apply,))
-            else:
-                self.tree.insert("", "end", iid=row_id, values=values_data, tags=(tag_to_apply,))
+            _upsert(scope, row_id, values_data, tag_to_apply)
 
         def _order_pick(order, *keys, default=""):
             for key in keys:
@@ -3956,9 +4556,9 @@ class BotUI(ctk.CTk):
             if not order_id:
                 continue
             row_id = f"ORDER:{order_id}"
-            current_tickets_on_chart.append(row_id)
             status = str(_order_pick(order, "orderStatus", "status", "state", default="ORDER")).upper()
             symbol = str(_order_pick(order, "symbol", "code", "stockSymbol", default=self.cbo_symbol.get()))
+            scope = _running_scope(symbol, current_execution_mode)
             side_raw = str(_order_pick(order, "side", "orderSide", "orderType", "type", default="")).upper()
             side_txt = "BUY" if side_raw in ("NB", "BUY", "0") else ("SELL" if side_raw in ("NS", "SELL", "1") else side_raw or "ORDER")
             qty = _order_pick(order, "quantity", "orderQuantity", "volume", "qty", default="")
@@ -3967,7 +4567,7 @@ class BotUI(ctk.CTk):
             order_kind = str(_order_pick(order, "orderType", "type", "orderKind", default="LO" if price > 0 else "")).upper()
             created_raw = _order_pick(order, "createdDate", "createdAt", "time", "createdTime", default="")
             tag_to_apply = "dnse_partial" if ("PART" in status or matched > 0) else "dnse_order"
-            price_txt = self._fmt_price(price) if price > 0 else (order_kind or "market")
+            price_txt = self._fmt_price(price, symbol) if price > 0 else (order_kind or "market")
             values_data = (
                 f"[DNSE] {_short_id(order_id)}",
                 str(created_raw)[5:16] if created_raw else "--",
@@ -3979,14 +4579,12 @@ class BotUI(ctk.CTk):
                 status,
                 "X",
             )
-            if row_id in existing_items:
-                self.tree.item(row_id, values=values_data, tags=(tag_to_apply,))
-            else:
-                self.tree.insert("", "end", iid=row_id, values=values_data, tags=(tag_to_apply,))
+            _upsert(scope, row_id, values_data, tag_to_apply)
 
         for p in positions:
             ticket_str = str(p.ticket)
-            current_tickets_on_chart.append(ticket_str)
+            position_mode = "PAPER" if ticket_str.upper().startswith("PAPER") or getattr(config, "PAPER_TRADING", True) else "REAL"
+            scope = _running_scope(p.symbol, position_mode)
 
             # [FREEZE FIX] Đọc số liệu đã gom sẵn ở thread nền -> KHÔNG gọi mạng trên thread UI.
             extra = (pos_extras or {}).get(ticket_str) or {}
@@ -4010,7 +4608,7 @@ class BotUI(ctk.CTk):
             # [NEW] Cộng fee lệnh đang mở vào tổng (spread + commission + |swap|)
             open_fee_total += spread_cost_usd + comm_total_usd + abs(swap_val)
 
-            fee_str = f"Spread -{abs(spread_cost_usd):,.0f} VND | Phí -{abs(comm_total_usd):,.0f} VND"
+            fee_str = f"Spread -{self._fmt_money(abs(spread_cost_usd))} | Phí -{self._fmt_money(abs(comm_total_usd))}"
 
             time_str = datetime.fromtimestamp(p.time).strftime("%d/%m %H:%M")
             is_buy = p.type == 0
@@ -4039,10 +4637,10 @@ class BotUI(ctk.CTk):
             if margin_meta or "[MARGIN][MANUAL]" in pos_comment:
                 margin_tag = "[MARGIN][MANUAL]"
 
-            order_str = f"{broker_tag}{origin_tag}{margin_tag} {icon} {side_txt} {p.volume:.0f} {p_unit} {p.symbol} @ {p.price_open:.2f}"
+            order_str = f"{broker_tag}{origin_tag}{margin_tag} {icon} {side_txt} {p.volume:.0f} {p_unit} {p.symbol} @ {self._fmt_price(p.price_open, p.symbol)}"
 
-            sl_txt = f"{p.sl:.2f}" if p.sl > 0 else "---"
-            tp_txt = f"{p.tp:.2f}" if p.tp > 0 else "---"
+            sl_txt = self._fmt_price(p.sl, p.symbol) if p.sl > 0 else "---"
+            tp_txt = self._fmt_price(p.tp, p.symbol) if p.tp > 0 else "---"
             targets_str = f"{sl_txt}  |  {tp_txt}"
 
             risk_usd = abs(p.price_open - p.sl) * p.volume * p_c_size if p.sl > 0 else 0
@@ -4153,22 +4751,23 @@ class BotUI(ctk.CTk):
                 "❌",
             )
 
-            if ticket_str in existing_items:
-                self.tree.item(ticket_str, values=values_data, tags=(tag_to_apply,))
-            else:
-                self.tree.insert(
-                    "", "end", iid=ticket_str, values=values_data, tags=(tag_to_apply,)
-                )
+            _upsert(scope, ticket_str, values_data, tag_to_apply)
 
-        for item in existing_items:
-            if item not in current_tickets_on_chart:
-                self.tree.delete(item)
+        for scope, tree in running_trees.items():
+            for row_id in existing_by_scope[scope]:
+                if row_id not in current_by_scope[scope]:
+                    tree.delete(row_id)
 
         # [NEW] Cập nhật FEE label = fee đã đóng (state) + fee lệnh đang mở (real-time)
         total_fee = state.get("fee_today", 0.0) + open_fee_total
         fee_disp = self._fmt_money(total_fee)
-        self.lbl_fee_today.configure(
-            text=(f"Phí: -{fee_disp}" if total_fee > 0 else f"Phí: {fee_disp}"),
+        fee_today_text = f"Phí: -{fee_disp}" if total_fee > 0 else f"Phí: {fee_disp}"
+        self._set_money_label(
+            self.lbl_fee_today,
+            fee_today_text,
+            base_size=13,
+            min_size=9,
+            comfortable_chars=12,
             text_color="#FFD700" if total_fee > 0 else "white",
         )
 
@@ -4180,12 +4779,10 @@ class BotUI(ctk.CTk):
             self.get_current_tactic_string(),
         )
         try:
-            ml, me, mt, ms = (
-                float(self.var_manual_lot.get() or 0),
-                float(self.var_manual_entry.get() or 0),
-                float(self.var_manual_tp.get() or 0),
-                float(self.var_manual_sl.get() or 0),
-            )
+            ml = float(self.var_manual_lot.get() or 0)
+            me = self._price_input_to_internal(self.var_manual_entry.get(), s)
+            mt = self._price_input_to_internal(self.var_manual_tp.get(), s)
+            ms = self._price_input_to_internal(self.var_manual_sl.get(), s)
         except:
             ml = me = mt = ms = 0.0
 
@@ -4245,6 +4842,7 @@ class BotUI(ctk.CTk):
             return
         if not self._ensure_trading_otp():
             return
+        expected_paper_mode = bool(getattr(config, "PAPER_TRADING", True))
 
         def run_trade_thread(risk_gate_ack=False):
             result = self.trade_mgr.execute_manual_trade(
@@ -4262,6 +4860,7 @@ class BotUI(ctk.CTk):
                 manual_entry_price=me,
                 entry_exit_tactic=self.get_current_entry_exit_tactic_string(),
                 risk_gate_ack=risk_gate_ack,
+                expected_paper_mode=expected_paper_mode,
             )
             # [RISK GATE] Vượt trần %NAV -> hỏi user trên Tk main thread rồi gọi lại với ack.
             # Con số user xác nhận = con số code thực thi vừa tính (không dùng preview).
@@ -4283,6 +4882,105 @@ class BotUI(ctk.CTk):
                 self.log_message(f"❌ THẤT BẠI: {result}", error=True)
 
         threading.Thread(target=run_trade_thread).start()
+
+    def _set_ckcs_raw_status(self, status, error=""):
+        self.ckcs_raw_last_status = status
+        self.ckcs_raw_last_error = error or ""
+        label = getattr(self, "lbl_ckcs_raw_status", None)
+        if label is not None:
+            try:
+                label.configure(
+                    text=f"{status}{(' | ' + error) if error else ''}",
+                    text_color="#D50000" if error else "#00C853",
+                )
+            except Exception:
+                pass
+
+    def _ckcs_report_worker(self):
+        try:
+            from ai_advisor.scan_report import export_ckcs_report
+
+            try:
+                days = max(1, int(self.var_ckcs_report_days.get() or 15))
+            except (TypeError, ValueError):
+                days = 15
+            result = export_ckcs_report(report_days=days)
+            if not result:
+                self.after(0, lambda: self._set_ckcs_raw_status(
+                    "Kho CKCS trống",
+                    "Bật lưu dữ liệu và để daemon chạy trong phiên trước.",
+                ))
+                return
+            message = (
+                f"Báo cáo OK | {result.get('symbols', 0)} mã | "
+                f"{result.get('days', days)} ngày | scan_report.md"
+            )
+            self.after(0, lambda m=message: self._set_ckcs_raw_status(m))
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): self._set_ckcs_raw_status("Tạo báo cáo lỗi", e))
+        finally:
+            self._ckcs_report_worker_active = False
+
+    def generate_ckcs_report_ui(self):
+        if self._ckcs_report_worker_active:
+            self._set_ckcs_raw_status("Đang tạo báo cáo...")
+            return
+        self._ckcs_report_worker_active = True
+        self._set_ckcs_raw_status("Đang tạo báo cáo...")
+        threading.Thread(target=self._ckcs_report_worker, daemon=True).start()
+
+    def copy_ckcs_report_ui(self):
+        try:
+            from ai_advisor import paths as advisor_paths
+
+            path = advisor_paths.scan_report_path()
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+            if not content.strip():
+                raise ValueError("scan_report.md đang trống")
+            private_content = ""
+            private_path = advisor_paths.research_private_context_path()
+            if os.path.isfile(private_path):
+                with open(private_path, "r", encoding="utf-8", errors="replace") as handle:
+                    private_content = handle.read().strip()
+            clipboard_content = content
+            if private_content:
+                clipboard_content = (
+                    "# PRIVATE CONTEXT DO NGƯỜI DÙNG CUNG CẤP\n\n"
+                    f"{private_content}\n\n"
+                    "# RAW DATA DO HỆ THỐNG TỔNG HỢP\n\n"
+                    f"{content}"
+                )
+            self.clipboard_clear()
+            self.clipboard_append(clipboard_content)
+            self.update()
+            self._set_ckcs_raw_status(
+                "Đã sao chép RAW + private context" if private_content else "Đã sao chép scan_report.md"
+            )
+        except Exception as exc:
+            self._set_ckcs_raw_status("Sao chép lỗi", str(exc))
+
+    def open_ckcs_report_file(self):
+        try:
+            from ai_advisor import paths as advisor_paths
+
+            path = advisor_paths.scan_report_path()
+            if not os.path.isfile(path):
+                raise FileNotFoundError("Chưa có scan_report.md — hãy tạo báo cáo trước")
+            os.startfile(path)
+            self._set_ckcs_raw_status("Đã mở scan_report.md")
+        except Exception as exc:
+            self._set_ckcs_raw_status("Mở file lỗi", str(exc))
+
+    def open_ckcs_research_folder(self):
+        try:
+            from ai_advisor import paths as advisor_paths
+
+            folder = advisor_paths.ensure_ckcs_research_dir()
+            os.startfile(os.path.abspath(folder))
+            self._set_ckcs_raw_status("Đã mở thư mục CKCS")
+        except Exception as exc:
+            self._set_ckcs_raw_status("Mở thư mục lỗi", str(exc))
 
     def _set_advisor_status(self, status, error=""):
         self.advisor_last_export_status = status
@@ -5006,7 +5704,8 @@ class BotUI(ctk.CTk):
             self.log_message("🔄 Đã xóa Cache và tạo Phiên/Group mới.", target="bot")
 
     def close_all_trades(self):
-        items = self.tree.get_children()
+        tree = self._current_running_tree()
+        items = [item for item in tree.get_children() if str(item).isdigit()]
         if not items:
             return
         if self.var_confirm_close.get() and not messagebox.askyesno(
@@ -5020,7 +5719,7 @@ class BotUI(ctk.CTk):
                 (
                     p
                     for p in self.connector.get_all_open_positions()
-                    if p.ticket == int(item)
+                    if str(p.ticket) == str(item)
                 ),
                 None,
             )
@@ -5041,8 +5740,186 @@ class BotUI(ctk.CTk):
                 return item
         return None
 
+    def _current_running_tree(self):
+        tabs = getattr(self, "running_tabs", None)
+        trees = getattr(self, "running_trees", None) or {}
+        if tabs and trees:
+            return trees.get(tabs.get(), self.tree)
+        return self.tree
+
+    def _delete_running_row_everywhere(self, row_id):
+        for tree in (getattr(self, "running_trees", None) or {"current": self.tree}).values():
+            try:
+                if tree.exists(str(row_id)):
+                    tree.delete(str(row_id))
+            except Exception:
+                pass
+
+    def on_show_bot_opportunities_change(self):
+        """Ẩn/hiện gợi ý mà không xóa cache hay lịch sử của chúng."""
+        visible = bool(self.var_show_bot_opportunities.get())
+        if not visible:
+            for tree in (getattr(self, "running_trees", None) or {}).values():
+                for row_id in list(tree.get_children("")):
+                    if str(row_id).startswith("OPP:"):
+                        tree.delete(row_id)
+        try:
+            from core import signal_opportunities, storage_manager
+
+            brain = storage_manager.load_brain_settings()
+            settings = signal_opportunities.normalize_settings(brain.get("opportunity_settings", {}))
+            settings["show_in_running_table"] = visible
+            brain["opportunity_settings"] = settings
+            storage_manager.save_brain_settings(brain)
+        except Exception as exc:
+            main_logger.debug("save opportunity visibility failed: %s", exc)
+
+    def show_running_color_legend(self):
+        ui_popups.show_running_color_legend(self)
+
+    def _opportunity_row_item(self, row_id):
+        if not str(row_id).startswith("OPP:"):
+            return None
+        try:
+            from core import signal_opportunities
+            return signal_opportunities.get(str(row_id).split(":", 1)[1])
+        except Exception:
+            return None
+
+    def open_opportunity_popup(self, row_id):
+        item = self._opportunity_row_item(row_id)
+        if not item:
+            return
+        from core import signal_opportunities
+
+        settings = signal_opportunities.load_settings()
+        symbol = str(item.get("symbol", "") or "").upper()
+        side = str(item.get("side", "BUY") or "BUY").upper()
+        setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
+        top = ctk.CTkToplevel(self)
+        top.title(f"Kích hoạt gợi ý {side} {symbol}")
+        top.geometry("620x750")
+        top.transient(self)
+        top.grab_set()
+
+        ctk.CTkLabel(top, text=f"GỢI Ý BOT — {side} {symbol}", font=("Roboto", 18, "bold"), text_color="#CE93D8").pack(pady=(16, 4))
+        ctk.CTkLabel(
+            top,
+            text="Đây là lệnh BOT đã tính đủ nhưng chưa gửi mua. Kiểm tra/chỉnh rồi bấm KÍCH HOẠT.",
+            text_color="#B0BEC5",
+        ).pack(pady=(0, 12))
+        form = ctk.CTkFrame(top, fg_color="#252526")
+        form.pack(fill="x", padx=18, pady=6)
+
+        def field(row, label, value):
+            ctk.CTkLabel(form, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=7)
+            entry = ctk.CTkEntry(form, width=210, justify="center")
+            entry.insert(0, str(value))
+            entry.grid(row=row, column=1, sticky="w", padx=8, pady=7)
+            return entry
+
+        ctk.CTkLabel(form, text="Kiểu vào:").grid(row=0, column=0, sticky="w", padx=12, pady=7)
+        cbo_mode = ctk.CTkOptionMenu(form, values=["MARKET", "LIMIT"], width=210)
+        cbo_mode.set(str(setup.get("entry_mode") or settings["default_order_mode"]).upper())
+        cbo_mode.grid(row=0, column=1, sticky="w", padx=8, pady=7)
+        default_price = float(setup.get("price", item.get("last_price", item.get("detected_price", 0.0))) or 0.0)
+        e_price = field(1, "Giá LIMIT chờ:", self._fmt_price(default_price, symbol) if default_price > 0 else "")
+        e_slip = field(2, "Chệch tối đa (bước giá):", settings["default_slippage_ticks"])
+        default_lot = float(setup.get("lot", 0.0) or 0.0)
+        default_sl = float(setup.get("sl", 0.0) or 0.0)
+        default_tp = float(setup.get("tp", 0.0) or 0.0)
+        e_lot = field(3, f"Số lượng ({self._quantity_unit(symbol)}; 0=AUTO):", f"{default_lot:g}")
+        e_sl = field(4, "SL (0=AUTO):", self._fmt_price(default_sl, symbol) if default_sl > 0 else "0")
+        e_tp = field(5, "TP (0=AUTO):", self._fmt_price(default_tp, symbol) if default_tp > 0 else "0")
+        e_hours = field(6, "Hết hạn sau (giờ):", settings["retention_hours"])
+        e_tactic = field(7, "Quản lý lệnh (TSL):", str(setup.get("tactic", "OFF") or "OFF"))
+        e_ee = field(8, "Cách vào/thoát (E/E):", str(setup.get("entry_exit_tactic", "OFF") or "OFF"))
+        ctk.CTkLabel(
+            form,
+            text=(
+                "MARKET: mua theo giá đang chạy. LIMIT: chỉ kích hoạt khi giá chạm vùng đã đặt; "
+                "giá gửi được làm tròn về bước giá gần nhất và không vượt mức chệch."
+            ),
+            wraplength=500,
+            justify="left",
+            text_color="#FFD54F",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 12))
+        lbl = ctk.CTkLabel(top, text="", text_color="#E57373")
+        lbl.pack(pady=4)
+
+        def activate():
+            try:
+                entry_mode = cbo_mode.get().upper()
+                trigger = self._price_input_to_internal(e_price.get(), symbol) if entry_mode == "LIMIT" else 0.0
+                if entry_mode == "LIMIT" and trigger <= 0:
+                    raise ValueError("LIMIT phải có giá chờ lớn hơn 0")
+                lot = float(e_lot.get() or 0.0)
+                sl = self._price_input_to_internal(e_sl.get(), symbol)
+                tp = self._price_input_to_internal(e_tp.get(), symbol)
+                ticks = max(0, int(e_slip.get() or 0))
+                hours = max(0.05, float(e_hours.get() or settings["retention_hours"]))
+                tactic = str(e_tactic.get() or "OFF").strip().upper()
+                entry_exit_tactic = str(e_ee.get() or "OFF").strip().upper()
+                plan = (
+                    f"WAIT @{trigger:g} ±{ticks} tick -> DNSE LO gần nhất"
+                    if entry_mode == "LIMIT" else "OPEN -> giá đang chạy"
+                )
+                pending = pending_orders.add_order(
+                    symbol=symbol,
+                    side=side,
+                    preset=getattr(config, "DEFAULT_PRESET", "SCALPING"),
+                    lot=lot,
+                    entry_price=trigger,
+                    sl=sl,
+                    tp=tp,
+                    target="OPEN",
+                    note=f"TSL={tactic}",
+                    expire_hours=hours,
+                    manual_entry_tactic=entry_exit_tactic,
+                    lot_source="BOT_RISK" if lot > 0 else "AUTO_RISK",
+                    sl_source=str(setup.get("sl_source", "BOT_PREVIEW") or "BOT_PREVIEW"),
+                    tp_source=str(setup.get("tp_source", "BOT_PREVIEW") or "BOT_PREVIEW"),
+                    entry_source="BOT_OPPORTUNITY",
+                    plan=plan,
+                    execution_mode=item.get("execution_mode", "PAPER"),
+                    entry_mode=entry_mode,
+                    wait_for_trigger=(entry_mode == "LIMIT"),
+                    trigger_price=trigger,
+                    slippage_ticks=ticks,
+                    opportunity_id=item.get("id", ""),
+                )
+                signal_opportunities.finalize(
+                    item.get("id"),
+                    signal_opportunities.ACTIVATED,
+                    "Người dùng kích hoạt",
+                    pending_order_id=pending.get("id"),
+                    selected_entry_mode=entry_mode,
+                    selected_trigger_price=trigger,
+                    selected_slippage_ticks=ticks,
+                )
+                self._delete_running_row_everywhere(row_id)
+                self.log_message(f"[GỢI Ý BOT] Đã kích hoạt {side} {symbol}: {plan}", target="manual")
+                top.destroy()
+            except Exception as exc:
+                lbl.configure(text=f"Không kích hoạt được: {exc}")
+
+        ctk.CTkButton(top, text="KÍCH HOẠT", height=42, fg_color="#6A1B9A", command=activate).pack(fill="x", padx=18, pady=(8, 4))
+        ctk.CTkButton(top, text="ĐÓNG", height=34, fg_color="#455A64", command=top.destroy).pack(fill="x", padx=18, pady=4)
+
     def _handle_running_table_action(self, row_id, confirm=True):
         row_id = str(row_id or "")
+        if row_id.startswith("OPP:"):
+            item = self._opportunity_row_item(row_id)
+            if not item:
+                return
+            if confirm and not messagebox.askyesno(
+                "Xóa gợi ý BOT", f"Xóa gợi ý {item.get('side')} {item.get('symbol')}?", parent=self
+            ):
+                return
+            from core import signal_opportunities
+            signal_opportunities.dismiss(item.get("id"))
+            self._delete_running_row_everywhere(row_id)
+            return
         if row_id.startswith("LOCAL:"):
             item = self._pending_row_item(row_id)
             if not item:
@@ -5054,7 +5931,7 @@ class BotUI(ctk.CTk):
             if status in pending_orders.FINAL_STATUSES:
                 pending_orders.delete_final(order_id)
                 try:
-                    self.tree.delete(row_id)
+                    self._delete_running_row_everywhere(row_id)
                 except Exception:
                     pass
                 return
@@ -5066,7 +5943,7 @@ class BotUI(ctk.CTk):
             pending_orders.cancel(order_id)
             pending_orders.delete_final(order_id)
             try:
-                self.tree.delete(row_id)
+                self._delete_running_row_everywhere(row_id)
             except Exception:
                 pass
             self.log_message(f"[PENDING] Cancelled + removed local order {order_id[:8]}", target="manual")
@@ -5119,7 +5996,8 @@ class BotUI(ctk.CTk):
             threading.Thread(target=self.connector.close_position, args=(p,), daemon=True).start()
 
     def close_selected_trades(self):
-        selected = self.tree.selection()
+        tree = self._current_running_tree()
+        selected = tree.selection()
         if not selected:
             return
         if self.var_confirm_close.get() and not messagebox.askyesno(
@@ -5130,16 +6008,18 @@ class BotUI(ctk.CTk):
             self._handle_running_table_action(item, confirm=False)
 
     def on_tree_click(self, event):
-        region = self.tree.identify("region", event.x, event.y)
+        tree = event.widget
+        region = tree.identify("region", event.x, event.y)
         if region == "cell":
-            col = self.tree.identify_column(event.x)
-            row_id = self.tree.identify_row(event.y)
+            col = tree.identify_column(event.x)
+            row_id = tree.identify_row(event.y)
             if row_id and col == "#9":
                 self._handle_running_table_action(row_id, confirm=True)
 
     def on_tree_right_click(self, event):
-        row_id = self.tree.identify_row(event.y)
-        selected = self.tree.selection()
+        tree = event.widget
+        row_id = tree.identify_row(event.y)
+        selected = tree.selection()
         menu = Menu(self, tearoff=0, font=("Arial", 14))
 
         if len(selected) > 1:
@@ -5149,8 +6029,19 @@ class BotUI(ctk.CTk):
             )
         else:
             if row_id:
-                self.tree.selection_set(row_id)
-                if str(row_id).startswith("LOCAL:"):
+                tree.selection_set(row_id)
+                if str(row_id).startswith("OPP:"):
+                    item = self._opportunity_row_item(row_id) or {}
+                    menu.add_command(
+                        label=f"Điều chỉnh / Kích hoạt {item.get('side', '')} {item.get('symbol', '')}",
+                        command=lambda row_id=row_id: self.open_opportunity_popup(row_id),
+                    )
+                    menu.add_separator()
+                    menu.add_command(
+                        label="Xóa gợi ý",
+                        command=lambda row_id=row_id: self._handle_running_table_action(row_id),
+                    )
+                elif str(row_id).startswith("LOCAL:"):
                     item = self._pending_row_item(row_id) or {}
                     status = str(item.get("status", "")).upper()
                     if status == "FAILED":
@@ -5191,6 +6082,10 @@ class BotUI(ctk.CTk):
                         label="Dong vi the nay",
                         command=lambda: self.close_selected_trades(),
                     )
+
+        if menu.index("end") is not None:
+            menu.add_separator()
+        menu.add_command(label="Chú thích màu và loại dòng", command=self.show_running_color_legend)
 
         menu.post(event.x_root, event.y_root)
 

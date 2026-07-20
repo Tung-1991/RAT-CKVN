@@ -173,6 +173,52 @@ def test_off_hours_real_account_apis_stay_live_while_price_is_cache_only(monkeyp
     assert calls == ["account", "positions", "orders"]
 
 
+def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monkeypatch):
+    calls = []
+
+    class ImmediateThread:
+        def __init__(self, target, args=(), daemon=None, **_kwargs):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    class Tabs:
+        def __init__(self):
+            self.selected = ""
+
+        def set(self, value):
+            self.selected = value
+
+    app = main.BotUI.__new__(main.BotUI)
+    app.connector = object()
+    app.trade_mgr = object()
+    app.running_tabs = Tabs()
+    app.running_trees = {"CKCS PAPER": object(), "CKPS PAPER": object()}
+    app.tree = None
+    app.var_direction = SimpleNamespace(get=lambda: "BUY")
+    app.lbl_dashboard_price = SimpleNamespace(configure=lambda **_kwargs: None)
+    app.lbl_manual_qty_title = SimpleNamespace(configure=lambda **_kwargs: None)
+    app.lbl_prev_lot = SimpleNamespace(configure=lambda **_kwargs: None)
+    app.lbl_preview_symbol = SimpleNamespace(configure=lambda **_kwargs: None)
+    app._quantity_unit = lambda _symbol: "CP"
+    app._quantity_label = lambda _symbol: "Cổ phiếu"
+    app._is_derivative_symbol = lambda symbol: str(symbol).startswith("VN30F")
+    app._save_brain_live_config = lambda: None
+    app.on_direction_change = lambda _value: None
+    app.refresh_manual_preview_tab = lambda: None
+    app._render_cached_ui_snapshot = lambda symbol: calls.append(symbol)
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    monkeypatch.setattr(main.threading, "Thread", ImmediateThread)
+
+    main.BotUI.on_symbol_change(app, "AAA")
+
+    assert calls == ["AAA"]
+    assert app.running_tabs.selected == "CKCS PAPER"
+    assert app.tree is app.running_trees["CKCS PAPER"]
+
+
 def test_manual_trade_closed_session_checks_hours_before_account(monkeypatch):
     manager = TradeManager.__new__(TradeManager)
     manager.connector = SimpleNamespace(get_account_info=lambda: pytest.fail("account network call"))
@@ -439,6 +485,10 @@ def test_external_package_contains_only_sanitized_copies(monkeypatch, tmp_path):
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
     Workbook().save(paths.export_path())
+    external_root = tmp_path / "account" / "advisor" / "external_package"
+    external_root.mkdir(parents=True, exist_ok=True)
+    (external_root / "scan_summary.md").write_text("stale", encoding="utf-8")
+    (external_root / "scan_report.md").write_text("stale", encoding="utf-8")
     result = exporter.write_external_package()
     external_context = (tmp_path / "account" / "advisor" / "external_package" / "user_context.md").read_text(encoding="utf-8")
     manifest = json.loads((tmp_path / "account" / "advisor" / "external_package" / "package_manifest.json").read_text(encoding="utf-8"))
@@ -446,6 +496,11 @@ def test_external_package_contains_only_sanitized_copies(monkeypatch, tmp_path):
     assert "C:\\Users" not in external_context
     assert manifest["model"] == "gpt-5.6"
     assert result["files"]
+    assert not (external_root / "scan_summary.md").exists()
+    assert not (external_root / "scan_report.md").exists()
+    assert not {"scan_summary.md", "scan_report.md"} & {
+        item["name"] for item in manifest["files"]
+    }
 
 
 def test_config_snapshot_redacts_recursive_sensitive_values():

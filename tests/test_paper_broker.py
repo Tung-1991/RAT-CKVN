@@ -37,6 +37,9 @@ def test_paper_open_modify_close_buy(monkeypatch, tmp_path):
     assert close.ok is True
     assert broker.get_positions() == []
     assert account["balance"] > 100000000.0
+    closed = broker.get_closed_trade(result.position_id)
+    assert closed["symbol"] == "VN30F1M"
+    assert closed["profit"] > 0
 
 
 def test_paper_sell_stop_take_profit(monkeypatch, tmp_path):

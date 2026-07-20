@@ -758,40 +758,79 @@ def load_state() -> Dict[str, Any]:
         "be_sl_locks": {},
         "rev_confirmations": {},
         "current_session_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "cooldown_until": 0.0
+        "cooldown_until": 0.0,
+        "state_mode": "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL",
     }
-    
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
 
-    if not os.path.exists(STATE_FILE):
+    state_file = _mode_state_file()
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+
+    # bot_state.json là file cũ dùng chung. Chỉ nhập một lần vào đúng chế độ
+    # dựa trên ticket; tuyệt đối không để PAPER và REAL tiếp tục ghi đè nhau.
+    source_file = state_file
+    if not os.path.exists(source_file) and os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as legacy_file:
+                legacy_state = json.load(legacy_file)
+            tickets = list(legacy_state.get("active_trades", []) or [])
+            tickets.extend((legacy_state.get("trade_symbols", {}) or {}).keys())
+            has_paper = any(str(ticket).upper().startswith("PAPER-") for ticket in tickets)
+            has_real = any(not str(ticket).upper().startswith("PAPER-") for ticket in tickets)
+            paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+            if (paper_mode and (has_paper or not has_real)) or ((not paper_mode) and has_real):
+                source_file = STATE_FILE
+        except Exception:
+            source_file = state_file
+
+    if not os.path.exists(source_file):
         return apply_state_defaults(default_state)
 
     try:
-        with open(STATE_FILE, "r") as f:
+        with open(source_file, "r", encoding="utf-8") as f:
             state = json.load(f)
             apply_state_defaults(state)
+            state["state_mode"] = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            if source_file == STATE_FILE and state["state_mode"] == "PAPER":
+                # PNL PAPER cũ từng có thể bị tính sai hệ số. Sổ PaperBroker mới là
+                # nguồn thật và sẽ đồng bộ lại; không mang con số legacy sang file mới.
+                state["pnl_today"] = 0.0
+                state["fee_today"] = 0.0
+                state["bot_pnl_today"] = 0.0
             changed = rollover_daily_session(state)
             changed = release_expired_safeguard_brakes(state) or changed
-            if changed:
+            if changed or source_file != state_file:
                 save_state(state)
             return state
     except:
         return apply_state_defaults(default_state)
 
+
+def _mode_state_file(paper: Any = None) -> str:
+    """Runtime state riêng cho PAPER/REAL; STATE_FILE vẫn là đường dẫn legacy."""
+    is_paper = bool(getattr(config, "PAPER_TRADING", True)) if paper is None else bool(paper)
+    stem, ext = os.path.splitext(STATE_FILE)
+    return f"{stem}.{'paper' if is_paper else 'real'}{ext or '.json'}"
+
+
 def save_state(state: Dict[str, Any]):
     with _state_lock:
         try:
-            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-            if os.path.exists(STATE_FILE):
-                with open(STATE_FILE, "r", encoding="utf-8") as current_file:
+            state_mode = str(state.get("state_mode", "") or "").upper()
+            if state_mode not in ("PAPER", "REAL"):
+                state_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            state_file = _mode_state_file(state_mode == "PAPER")
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
+            state["state_mode"] = state_mode
+            if os.path.exists(state_file):
+                with open(state_file, "r", encoding="utf-8") as current_file:
                     current_state = json.load(current_file)
                 _merge_timestamp_map(state, current_state, "last_dca_pca_close_time")
                 _merge_timestamp_map(state, current_state, "last_dca_pca_signal_time")
 
-            tmp_file = f"{STATE_FILE}.tmp"
+            tmp_file = f"{state_file}.tmp"
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=4, ensure_ascii=False)
-            os.replace(tmp_file, STATE_FILE)
+            os.replace(tmp_file, state_file)
         except:
             pass
 
@@ -896,6 +935,21 @@ def load_brain_settings() -> Dict[str, Any]:
         "G2_TIMEFRAME": getattr(config, "G2_TIMEFRAME", "15m"),
         "G3_TIMEFRAME": getattr(config, "G3_TIMEFRAME", "15m"),
         "BOT_ACTIVE_SYMBOLS": copy.deepcopy(getattr(config, "BOT_ACTIVE_SYMBOLS", [])),
+        "SCAN_SNAPSHOT_ENABLED": bool(getattr(config, "SCAN_SNAPSHOT_ENABLED", True)),
+        "SCAN_SNAPSHOT_INTERVAL_MINUTES": float(
+            getattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15)
+        ),
+        "SCAN_SNAPSHOT_RETENTION_DAYS": int(
+            getattr(config, "SCAN_SNAPSHOT_RETENTION_DAYS", 250)
+        ),
+        "SCAN_SNAPSHOT_SYMBOLS": copy.deepcopy(
+            getattr(
+                config,
+                "SCAN_SNAPSHOT_SYMBOLS",
+                list(getattr(config, "CKPS_SYMBOLS", []) or [])
+                + list(getattr(config, "CKCS_WATCHLIST", []) or []),
+            )
+        ),
         "voting_rules": copy.deepcopy(sandbox_defaults.get("voting_rules", {
             "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "PASS"},
             "G1": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
@@ -924,6 +978,7 @@ def load_brain_settings() -> Dict[str, Any]:
         "entry_exit": copy.deepcopy(default_entry_exit),
         "manual_margin": copy.deepcopy(getattr(config, "MANUAL_MARGIN_CONFIG", {})),
         "market_calendar": copy.deepcopy(getattr(config, "MARKET_CALENDAR_DEFAULT", {})),
+        "opportunity_settings": copy.deepcopy(getattr(config, "BOT_OPPORTUNITY_DEFAULT", {})),
         "bot_safeguard": copy.deepcopy(getattr(config, "BOT_SAFEGUARD", {})),
         "TSL_CONFIG": copy.deepcopy(getattr(config, "TSL_CONFIG", {})),
         "TSL_LOGIC_MODE": getattr(config, "TSL_LOGIC_MODE", "STATIC"),
@@ -966,6 +1021,8 @@ def load_brain_settings() -> Dict[str, Any]:
                 # brain_settings sẽ strip mất -> toggle live của daemon chết, chỉ còn fallback env.
                 "SCAN_SNAPSHOT_ENABLED",
                 "SCAN_SNAPSHOT_INTERVAL_MINUTES",
+                "SCAN_SNAPSHOT_RETENTION_DAYS",
+                "SCAN_SNAPSHOT_SYMBOLS",
             ]:
                 if key in data:
                     default_brain[key] = copy.deepcopy(data[key])
@@ -1003,6 +1060,7 @@ def load_brain_settings() -> Dict[str, Any]:
                 "pca_config",
                 "manual_margin",
                 "market_calendar",
+                "opportunity_settings",
                 "bot_safeguard",
                 "TSL_CONFIG",
                 "symbol_configs",
@@ -1044,6 +1102,13 @@ def _normalize_brain_settings_shape(data: Dict[str, Any]) -> Dict[str, Any]:
         data["market_calendar"] = normalize_settings(data.get("market_calendar", {}))
     except Exception:
         data["market_calendar"] = copy.deepcopy(getattr(config, "MARKET_CALENDAR_DEFAULT", {}))
+
+    try:
+        from core.signal_opportunities import normalize_settings as normalize_opportunity_settings
+
+        data["opportunity_settings"] = normalize_opportunity_settings(data.get("opportunity_settings", {}))
+    except Exception:
+        data["opportunity_settings"] = copy.deepcopy(getattr(config, "BOT_OPPORTUNITY_DEFAULT", {}))
 
     indicators = data.get("indicators", {})
     if not isinstance(indicators, dict):

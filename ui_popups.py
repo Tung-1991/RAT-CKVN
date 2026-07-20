@@ -15,10 +15,13 @@ import config
 import csv
 import os
 import json
+from datetime import datetime
 
 from core.money import (
+    format_vnd_full,
     money_input_from_display,
     money_input_to_display,
+    money_setting_hint,
     unit_from_display,
     unit_to_display,
 )
@@ -96,8 +99,9 @@ def open_advisor_popup(app):
 
     tabs = ctk.CTkTabview(root)
     tabs.pack(fill="both", expand=True, padx=6, pady=(2, 6))
-    tab_run = tabs.add("Run")
-    tab_edit = tabs.add("Edit")
+    tab_run = tabs.add("BOT ADVISOR")
+    tab_ckcs = tabs.add("CKCS RAW DATA")
+    tab_edit = tabs.add("CÀI ĐẶT")
     tab_telegram = tabs.add("Telegram")
     edit_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_edit, fg_color="transparent"))
     edit_body.pack(fill="both", expand=True, padx=0, pady=0)
@@ -145,90 +149,189 @@ def open_advisor_popup(app):
         checkbox_height=18,
     ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 4))
 
-    # --- [SCAN SNAPSHOT] Kho lưu kết quả quét watchlist cho AI Advisor ---
-    var_scan_snapshot = tk.BooleanVar(value=bool(getattr(config, "SCAN_SNAPSHOT_ENABLED", False)))
+    def _show_advisor_file_help():
+        messagebox.showinfo(
+            "Các file BOT Advisor",
+            "BẤM ‘TẠO GÓI BOT ADVISOR’ ĐỂ LÀM MỚI GÓI:\n\n"
+            "• technical_settings.json: setting BOT hiện tại — app tự tạo lại.\n"
+            "• advisor_export.xlsx: lịch sử/kết quả giao dịch — app tự tạo lại.\n"
+            "• package_manifest.json: danh sách file, model và thời điểm tạo — app tự tạo.\n\n"
+            "FILE NỘI DUNG ĐƯỢC GIỮ VÀ SAO CHÉP VÀO GÓI:\n\n"
+            "• advisor_prompt.md: luật giao việc cho AI.\n"
+            "• advisor_flow.md: giải thích nghiệp vụ/cấu trúc BOT.\n"
+            "• user_context.md: câu hỏi, mục tiêu Ngài muốn AI đánh giá BOT.\n"
+            "• expert_context.md: nhận định/tài liệu chuyên gia để AI đối chiếu.\n\n"
+            "Bốn file MD trên sửa tại tab CÀI ĐẶT. Nút Generate không xóa nội dung Ngài đã điền.",
+            parent=top,
+        )
+
+    ctk.CTkButton(
+        settings,
+        text="❓ CÁC FILE GÓI BOT LÀ GÌ?",
+        height=29,
+        fg_color="#455A64",
+        hover_color="#546E7A",
+        command=_show_advisor_file_help,
+    ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+
+    # --- Kho dữ liệu CKCS độc lập; không gọi LLM và không tác động BOT ---
+    ckcs_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_ckcs, fg_color="transparent"))
+    ckcs_body.pack(fill="both", expand=True, padx=8, pady=8)
+
+    warning = ctk.CTkFrame(ckcs_body, fg_color="#3A2E08", corner_radius=6)
+    warning.pack(fill="x", padx=6, pady=(0, 10))
+    ctk.CTkLabel(
+        warning,
+        text="CKCS RAW DATA chỉ thu thập và xuất báo cáo; không chọn mã, không gọi LLM và không tác động BOT.",
+        font=("Roboto", 11, "bold"),
+        text_color="#FFD54F",
+        wraplength=560,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=8)
+
+    ckcs_settings = ctk.CTkFrame(ckcs_body, fg_color="#252526", corner_radius=6)
+    ckcs_settings.pack(fill="x", padx=6, pady=(0, 10))
+    ckcs_settings.grid_columnconfigure(1, weight=1)
+    var_scan_snapshot = tk.BooleanVar(value=bool(getattr(config, "SCAN_SNAPSHOT_ENABLED", True)))
+    e_scan_interval = ctk.CTkEntry(ckcs_settings, width=110, height=28)
+    e_scan_interval.insert(0, f"{getattr(config, 'SCAN_SNAPSHOT_INTERVAL_MINUTES', 15):g}")
+    e_retention_days = ctk.CTkEntry(ckcs_settings, width=110, height=28)
+    e_retention_days.insert(0, str(getattr(config, "SCAN_SNAPSHOT_RETENTION_DAYS", 250)))
 
     def _save_scan_snapshot():
         try:
             enabled = bool(var_scan_snapshot.get())
-            try:
-                interval = max(1.0, float(e_scan_interval.get() or 15))
-            except ValueError:
-                interval = 15.0
+            interval = max(1.0, float(e_scan_interval.get() or 15))
+            retention = max(1, int(e_retention_days.get() or 250))
             from core import env_utils
+            import core.storage_manager as storage_manager
+
             env_utils.update_env({
                 "SCAN_SNAPSHOT_ENABLED": "true" if enabled else "false",
                 "SCAN_SNAPSHOT_INTERVAL_MINUTES": str(interval),
+                "SCAN_SNAPSHOT_RETENTION_DAYS": str(retention),
             })
             config.SCAN_SNAPSHOT_ENABLED = enabled
             config.SCAN_SNAPSHOT_INTERVAL_MINUTES = interval
-            # Ghi vào brain_settings để daemon (process riêng) nhận live không cần restart
-            import core.storage_manager as storage_manager
-            cfg_path = storage_manager.BRAIN_SETTINGS_FILE
-            data = {}
-            if os.path.exists(cfg_path):
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+            config.SCAN_SNAPSHOT_RETENTION_DAYS = retention
+            data = storage_manager.load_brain_settings()
             data["SCAN_SNAPSHOT_ENABLED"] = enabled
             data["SCAN_SNAPSHOT_INTERVAL_MINUTES"] = interval
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
+            data["SCAN_SNAPSHOT_RETENTION_DAYS"] = retention
+            storage_manager.save_brain_settings(data)
             storage_manager.invalidate_settings_cache()
-            if hasattr(app, "_set_advisor_status"):
-                app._set_advisor_status(f"Scan snapshot: {'ON' if enabled else 'OFF'} ({interval:g} phút/mẫu)")
-        except Exception as exc:  # noqa: BLE001
-            if hasattr(app, "_set_advisor_status"):
-                app._set_advisor_status(f"Lỗi lưu scan snapshot: {exc}")
+            app._set_ckcs_raw_status(
+                f"Đã lưu | {'ON' if enabled else 'OFF'} | {interval:g} phút | giữ {retention} ngày"
+            )
+        except Exception as exc:
+            app._set_ckcs_raw_status("Lưu setting lỗi", str(exc))
 
+    ctk.CTkLabel(
+        ckcs_settings, text="THU THẬP CÁC MÃ ĐÃ CHỌN", font=("Roboto", 13, "bold"), text_color="#80DEEA"
+    ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
     ctk.CTkCheckBox(
-        settings,
-        text="Lưu kho quét watchlist cho AI (daemon ghi snapshot)",
+        ckcs_settings,
+        text="Bật lưu dữ liệu quét trong phiên",
         variable=var_scan_snapshot,
-        command=_save_scan_snapshot,
         font=("Roboto", 12, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 4))
-
-    ctk.CTkLabel(settings, text="Chu kỳ lưu mẫu (phút)", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=6, column=0, sticky="w", pady=6)
-    scan_interval_row = ctk.CTkFrame(settings, fg_color="transparent")
-    scan_interval_row.grid(row=6, column=1, sticky="e", pady=6)
-    e_scan_interval = ctk.CTkEntry(scan_interval_row, width=70, height=28)
-    e_scan_interval.insert(0, f"{getattr(config, 'SCAN_SNAPSHOT_INTERVAL_MINUTES', 15):g}")
-    e_scan_interval.pack(side="left")
-    ctk.CTkButton(scan_interval_row, text="Lưu", width=50, height=28, fg_color="#424242", hover_color="#616161", command=_save_scan_snapshot).pack(side="left", padx=(6, 0))
-
-    lbl_scan_status = ctk.CTkLabel(settings, text="Kho quét: —", font=("Roboto", 11), text_color="#B0BEC5", anchor="w")
-    lbl_scan_status.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 2))
+    ).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=6)
     ctk.CTkLabel(
-        settings,
-        text="Snapshot EOD chốt sau 14:45 — đặt 'Giờ cố định' gửi API sau mốc đó (vd 15:05).",
-        font=("Roboto", 10),
-        text_color="#FBC02D",
+        ckcs_settings,
+        text="Chọn/bỏ từng mã tại Advanced → Cache & Mã.",
+        font=("Roboto", 10, "bold"),
+        text_color="#90CAF9",
+    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 5))
+    ctk.CTkLabel(ckcs_settings, text="Chu kỳ cập nhật (phút)", font=("Roboto", 11, "bold")).grid(row=3, column=0, sticky="w", padx=10, pady=5)
+    e_scan_interval.grid(row=3, column=1, sticky="e", padx=10, pady=5)
+    ctk.CTkLabel(ckcs_settings, text="Số ngày giữ dữ liệu", font=("Roboto", 11, "bold")).grid(row=4, column=0, sticky="w", padx=10, pady=5)
+    e_retention_days.grid(row=4, column=1, sticky="e", padx=10, pady=5)
+    ctk.CTkButton(
+        ckcs_settings, text="LƯU SETTING", height=30, fg_color="#00695C", hover_color="#004D40", command=_save_scan_snapshot
+    ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 10))
+
+    status_box = ctk.CTkFrame(ckcs_body, fg_color="#252526", corner_radius=6)
+    status_box.pack(fill="x", padx=6, pady=(0, 10))
+    app.lbl_ckcs_raw_status = ctk.CTkLabel(
+        status_box,
+        text=getattr(app, "ckcs_raw_last_status", "Kho CKCS: đang đọc..."),
+        font=("Roboto", 11, "bold"),
+        text_color="#B0BEC5",
         anchor="w",
-    ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        justify="left",
+        wraplength=560,
+    )
+    app.lbl_ckcs_raw_status.pack(fill="x", padx=10, pady=9)
+
+    report_box = ctk.CTkFrame(ckcs_body, fg_color="#252526", corner_radius=6)
+    report_box.pack(fill="x", padx=6, pady=(0, 10))
+    report_box.grid_columnconfigure(1, weight=1)
+    ctk.CTkLabel(report_box, text="BÁO CÁO GỬI LLM", font=("Roboto", 13, "bold"), text_color="#80DEEA").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+    ctk.CTkLabel(report_box, text="Số ngày giao dịch muốn xuất", font=("Roboto", 11, "bold")).grid(row=1, column=0, sticky="w", padx=10, pady=6)
+    ctk.CTkEntry(report_box, textvariable=app.var_ckcs_report_days, width=110, height=28, placeholder_text="VD: 15").grid(row=1, column=1, sticky="e", padx=10, pady=6)
+    ctk.CTkLabel(
+        report_box,
+        text="Gửi LLM: scan_report.md + private_context.md",
+        font=("Consolas", 11, "bold"),
+        text_color="#FFD54F",
+    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
+    def _open_private_context():
+        from ai_advisor import paths as advisor_paths
+
+        advisor_paths.ensure_ckcs_research_dir()
+        path = advisor_paths.research_private_context_path()
+        if not os.path.isfile(path):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "# PRIVATE CONTEXT — THÔNG TIN RIÊNG CHO VIỆC CHỌN MÃ\n\n"
+                    "## Tin tức / dữ liệu chuyên gia\n\n"
+                    "Điền nội dung tại đây.\n\n"
+                    "## Nhận định cá nhân\n\n"
+                    "Điền nội dung tại đây.\n\n"
+                    "## Mục tiêu và giới hạn đầu tư\n\n"
+                    "Ví dụ: thời gian nắm giữ, mức vốn, ngành muốn ưu tiên hoặc tránh.\n"
+                )
+        open_advisor_file_editor(app, path, "private_context.md — CKCS RAW DATA")
+
+    ctk.CTkButton(
+        report_box,
+        text="📝 MỞ / ĐIỀN PRIVATE CONTEXT",
+        height=32,
+        fg_color="#8D6E00",
+        hover_color="#A67C00",
+        command=_open_private_context,
+    ).grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 7))
+    ctk.CTkButton(
+        report_box, text="TẠO / LÀM MỚI BÁO CÁO", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_ckcs_report_ui
+    ).grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
+    report_buttons = ctk.CTkFrame(report_box, fg_color="transparent")
+    report_buttons.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+    for index in range(3):
+        report_buttons.grid_columnconfigure(index, weight=1)
+    ctk.CTkButton(report_buttons, text="SAO CHÉP CHO LLM", height=30, command=app.copy_ckcs_report_ui).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+    ctk.CTkButton(report_buttons, text="MỞ FILE", height=30, fg_color="#424242", command=app.open_ckcs_report_file).grid(row=0, column=1, sticky="ew", padx=4)
+    ctk.CTkButton(report_buttons, text="MỞ THƯ MỤC", height=30, fg_color="#424242", command=app.open_ckcs_research_folder).grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
     def _refresh_scan_status():
         try:
-            if not lbl_scan_status.winfo_exists():
+            if not app.lbl_ckcs_raw_status.winfo_exists():
                 return
-            from ai_advisor import scan_cache
-            cache = scan_cache.load_cache()
-            syms = cache.get("symbols", {})
-            if syms:
-                total_signals = sum(
-                    len(day.get("signals", []))
-                    for node in syms.values()
-                    for day in node.get("days", {}).values()
-                )
-                lbl_scan_status.configure(
-                    text=f"Kho quét: {len(syms)} mã | {total_signals} tín hiệu | cập nhật {cache.get('updated_at') or '—'}"
-                )
-            else:
-                lbl_scan_status.configure(text="Kho quét: trống (bật switch + daemon chạy trong phiên)")
+            from ai_advisor.scan_cache import recorder
+
+            current = recorder.status()
+            app.lbl_ckcs_raw_status.configure(
+                text=(
+                    f"Kho RAW: {current['symbols']} mã đã lưu | {current['days']} ngày | "
+                    f"đang chọn {current.get('selected_symbols', 0)} mã | "
+                    f"hôm nay {current['today_status']} ({current['today_samples']} lượt cập nhật) | "
+                    f"cập nhật {current['updated_at'] or '—'}"
+                ),
+                text_color="#B0BEC5",
+            )
             top.after(2000, _refresh_scan_status)
         except Exception:
-            pass
+            top.after(5000, _refresh_scan_status)
 
     _refresh_scan_status()
 
@@ -273,7 +376,7 @@ def open_advisor_popup(app):
 
     buttons = ctk.CTkFrame(tab_run, fg_color="transparent")
     buttons.pack(fill="x", padx=10, pady=(10, 8))
-    ctk.CTkButton(buttons, text="Generate Advisor Package", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
+    ctk.CTkButton(buttons, text="TẠO GÓI BOT ADVISOR", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
     ctk.CTkButton(buttons, text="Open Folder", width=105, height=34, fg_color="#424242", hover_color="#616161", command=app.open_advisor_folder).pack(side="left", padx=5)
     ctk.CTkButton(buttons, text="Send API", width=100, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
 
@@ -869,7 +972,9 @@ def open_advisor_file_editor(app, path, title):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             status.configure(text="Saved", text_color="#00C853")
-            if hasattr(app, "_set_advisor_status"):
+            if "CKCS RAW DATA" in title and hasattr(app, "_set_ckcs_raw_status"):
+                app._set_ckcs_raw_status("Đã lưu private_context.md")
+            elif hasattr(app, "_set_advisor_status"):
                 app._set_advisor_status(f"{title} saved")
         except Exception as exc:
             status.configure(text=f"Save failed: {exc}", text_color="#D50000")
@@ -1111,6 +1216,14 @@ def open_symbol_config_popup(app, symbol, on_change=None):
         variable=var_reject_lot,
         font=("Roboto", 11),
     ).grid(row=10, column=0, columnspan=2, sticky="w", pady=10)
+    ctk.CTkLabel(
+        f_grid,
+        text=money_setting_hint(),
+        text_color="#FFD54F",
+        font=("Arial", 11, "italic"),
+        wraplength=580,
+        justify="left",
+    ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(2, 8))
 
     def save_sym():
         try:
@@ -1676,6 +1789,14 @@ def open_bot_setting_popup(app):
     e_risk_gate_cs = ctk.CTkEntry(f_sg_content, width=55, justify="center")
     e_risk_gate_cs.insert(0, str(safe_cfg.get("RISK_GATE_MAX_PCT_CS", getattr(config, "BOT_SAFEGUARD", {}).get("RISK_GATE_MAX_PCT_CS", 3.0))))
     e_risk_gate_cs.grid(row=6, column=4, sticky="w", padx=2, pady=(6, 5))
+    ctk.CTkLabel(
+        f_sg_content,
+        text=money_setting_hint(),
+        text_color="#FFD54F",
+        font=("Arial", 11, "italic"),
+        wraplength=760,
+        justify="left",
+    ).grid(row=7, column=0, columnspan=7, sticky="w", padx=10, pady=(4, 6))
 
     # --- [GROUP 3: 🛡️ ĐIỀU KIỆN VẬN HÀNH (OPERATIONAL)] ---
     f_op = ctk.CTkFrame(f_safety, border_width=1, border_color="#2196F3")
@@ -2051,6 +2172,85 @@ def build_cache_and_symbols_tab(app, parent):
     e_ckcs.insert(0, env_utils.get_env_value("DNSE_CKCS_WATCHLIST", "") or "")
     e_ckcs.pack(fill="x", padx=18, pady=(0, 10))
 
+    # --- Danh sách mã RAW DATA độc lập với quyền trade của BOT ---
+    import core.storage_manager as storage_manager
+
+    brain_now = storage_manager.load_brain_settings()
+    raw_setting = brain_now.get("SCAN_SNAPSHOT_SYMBOLS", _build_watch_symbols())
+    initial_raw = {
+        str(item).strip().upper()
+        for item in (raw_setting or [])
+        if str(item).strip()
+    }
+    raw_vars = {}
+    f_raw = ctk.CTkFrame(frame, fg_color="#232D33", corner_radius=8)
+    f_raw.pack(fill="x", padx=12, pady=(0, 10))
+    ctk.CTkLabel(
+        f_raw,
+        text="MÃ ĐƯỢC QUÉT VÀ GHI VÀO RAW DATA",
+        font=("Roboto", 12, "bold"),
+        text_color="#80DEEA",
+    ).pack(anchor="w", padx=10, pady=(8, 2))
+    ctk.CTkLabel(
+        f_raw,
+        text="Độc lập với quyền đặt lệnh BOT. Mặc định chọn toàn bộ mã hiện có, kể cả VN30F.",
+        font=("Roboto", 10, "bold"),
+        text_color="#B0BEC5",
+        wraplength=560,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=(0, 6))
+    raw_grid = ctk.CTkFrame(f_raw, fg_color="transparent")
+    raw_grid.pack(fill="x", padx=8, pady=(0, 4))
+
+    def _raw_available_symbols():
+        ckcs = [str(item).strip().upper() for item in e_ckcs.get().split(",") if str(item).strip()]
+        ckps = [str(item).strip().upper() for item in (getattr(config, "CKPS_SYMBOLS", []) or []) if str(item).strip()]
+        return list(dict.fromkeys(ckps + ckcs))
+
+    def _rebuild_raw_symbol_buttons(select_new=True):
+        previous = {symbol: bool(var.get()) for symbol, var in raw_vars.items()}
+        for child in raw_grid.winfo_children():
+            child.destroy()
+        raw_vars.clear()
+        for index, symbol in enumerate(_raw_available_symbols()):
+            selected = previous.get(symbol, symbol in initial_raw if not previous else bool(select_new))
+            var = ctk.BooleanVar(value=selected)
+            raw_vars[symbol] = var
+            ctk.CTkCheckBox(
+                raw_grid,
+                text=symbol,
+                variable=var,
+                width=120,
+                checkbox_width=18,
+                checkbox_height=18,
+            ).grid(row=index // 4, column=index % 4, sticky="w", padx=6, pady=4)
+
+    _rebuild_raw_symbol_buttons(select_new=False)
+    raw_actions = ctk.CTkFrame(f_raw, fg_color="transparent")
+    raw_actions.pack(fill="x", padx=8, pady=(2, 8))
+    ctk.CTkButton(
+        raw_actions,
+        text="CHỌN TẤT CẢ",
+        width=115,
+        height=27,
+        command=lambda: [var.set(True) for var in raw_vars.values()],
+    ).pack(side="left", padx=(0, 5))
+    ctk.CTkButton(
+        raw_actions,
+        text="BỎ TẤT CẢ",
+        width=105,
+        height=27,
+        fg_color="#616161",
+        command=lambda: [var.set(False) for var in raw_vars.values()],
+    ).pack(side="left", padx=5)
+    ctk.CTkButton(
+        raw_actions,
+        text="CẬP NHẬT TỪ Ô WATCHLIST",
+        height=27,
+        fg_color="#455A64",
+        command=_rebuild_raw_symbol_buttons,
+    ).pack(side="left", padx=5)
+
     # --- Cache & Market Data ---
     ctk.CTkLabel(frame, text="CACHE & MARKET DATA", font=FONT_BOLD, text_color="#FFD54F").pack(pady=(4, 2))
     _add_popup_hint(
@@ -2173,6 +2373,12 @@ def build_cache_and_symbols_tab(app, parent):
             config.DNSE_WS_ENCODING = ws_enc
             config.DNSE_WS_BOARD_ID = ws_board
             config.CKCS_WATCHLIST = ckcs_list
+            raw_symbols = [symbol for symbol, var in raw_vars.items() if var.get()]
+            config.SCAN_SNAPSHOT_SYMBOLS = raw_symbols
+            brain = storage_manager.load_brain_settings()
+            brain["SCAN_SNAPSHOT_SYMBOLS"] = raw_symbols
+            if not storage_manager.save_brain_settings(brain):
+                raise OSError("Không lưu được danh sách mã RAW DATA")
             try:
                 if hasattr(app, "on_market_type_change") and hasattr(app, "cbo_market_type"):
                     app.on_market_type_change(app.cbo_market_type.get())
@@ -2187,10 +2393,20 @@ def build_cache_and_symbols_tab(app, parent):
             try:
                 from core.data_engine import data_engine
                 if config.DNSE_WS_ENABLED:
-                    data_engine.set_stream_symbols(list(getattr(config, "BOT_ACTIVE_SYMBOLS", [])) + ckcs_list)
+                    data_engine.set_stream_symbols(
+                        list(dict.fromkeys(
+                            list(getattr(config, "BOT_ACTIVE_SYMBOLS", [])) + raw_symbols
+                        ))
+                    )
             except Exception:
                 pass
-            lbl_msg.configure(text=f"Đã lưu. CKCS = {','.join(ckcs_list) or '—'}. Dropdown Mã CK đã cập nhật.", text_color="#81C784")
+            lbl_msg.configure(
+                text=(
+                    f"Đã lưu watchlist {len(ckcs_list)} mã; RAW DATA chọn "
+                    f"{len(raw_symbols)}/{len(raw_vars)} mã."
+                ),
+                text_color="#81C784",
+            )
         except Exception as exc:  # noqa: BLE001
             lbl_msg.configure(text=f"Lỗi lưu: {exc}", text_color="#E57373")
 
@@ -2341,9 +2557,9 @@ def build_manual_margin_tab(app, parent):
             rtt_txt = "UNKNOWN" if rtt is None else f"{float(rtt):.1f}%"
             lbl_snap.configure(
                 text=(
-                    f"cash_available={snap.get('cash_available', 0):,.0f} | "
-                    f"buying_power={snap.get('buying_power', 0):,.0f} | "
-                    f"margin_debt={snap.get('margin_debt', 0):,.0f} | RTT={rtt_txt}"
+                    f"cash_available={format_vnd_full(snap.get('cash_available', 0))} | "
+                    f"buying_power={format_vnd_full(snap.get('buying_power', 0))} | "
+                    f"margin_debt={format_vnd_full(snap.get('margin_debt', 0))} | RTT={rtt_txt}"
                 )
             )
         except Exception as exc:
@@ -2461,6 +2677,7 @@ def build_market_calendar_tab(app, parent):
     var_use_dnse = tk.BooleanVar(value=settings["use_dnse_working_dates"])
     var_expiry = tk.BooleanVar(value=settings["avoid_vn30_expiry_entry"])
     var_rebalance = tk.BooleanVar(value=settings["avoid_vn30_rebalance_entry"])
+    var_ckcs_open_delay = tk.BooleanVar(value=settings["avoid_ckcs_open_entry"])
     ctk.CTkCheckBox(
         config_box,
         text="Tự lấy ngày giao dịch/lễ Tết từ DNSE",
@@ -2479,6 +2696,18 @@ def build_market_calendar_tab(app, parent):
         variable=var_rebalance,
         font=("Roboto", 12, "bold"),
     ).pack(anchor="w", padx=12, pady=5)
+    delay_row = ctk.CTkFrame(config_box, fg_color="transparent")
+    delay_row.pack(fill="x", padx=12, pady=5)
+    ctk.CTkCheckBox(
+        delay_row,
+        text="BOT CKCS chờ sau ATO",
+        variable=var_ckcs_open_delay,
+        font=("Roboto", 12, "bold"),
+    ).pack(side="left")
+    e_ckcs_delay = ctk.CTkEntry(delay_row, width=65, justify="center")
+    e_ckcs_delay.insert(0, str(settings["ckcs_entry_delay_minutes"]))
+    e_ckcs_delay.pack(side="left", padx=(12, 5))
+    ctk.CTkLabel(delay_row, text="phút (09:15 + số phút)", text_color="#B0BEC5").pack(side="left")
 
     ctk.CTkLabel(
         config_box,
@@ -2517,6 +2746,8 @@ def build_market_calendar_tab(app, parent):
                 "avoid_vn30_expiry_entry": var_expiry.get(),
                 "avoid_vn30_rebalance_entry": var_rebalance.get(),
                 "vn30_rebalance_dates": market_calendar.parse_date_text(txt_rebalance.get("1.0", "end")),
+                "avoid_ckcs_open_entry": var_ckcs_open_delay.get(),
+                "ckcs_entry_delay_minutes": int(e_ckcs_delay.get() or 0),
             })
             brain = storage_manager.load_brain_settings()
             brain["market_calendar"] = next_settings
@@ -2538,6 +2769,202 @@ def build_market_calendar_tab(app, parent):
     refresh_status()
 
 
+def build_bot_opportunity_tab(app, parent):
+    """Cấu hình kho gợi ý BOT khi tín hiệu chưa được phép thành lệnh."""
+    from core import signal_opportunities, storage_manager
+
+    body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=8, pady=8)
+    settings = signal_opportunities.normalize_settings(
+        storage_manager.load_brain_settings().get("opportunity_settings", {})
+    )
+
+    ctk.CTkLabel(body, text="GỢI Ý BOT TRÊN RUNNING TABLE", font=FONT_BOLD, text_color="#CE93D8").pack(anchor="w", padx=12, pady=(10, 4))
+    ctk.CTkLabel(
+        body,
+        text=(
+            "BOT tắt hoặc lệnh bị chặn: tín hiệu được giữ thành dòng GỢI Ý, chưa gửi DNSE. "
+            "Chỉ khi chuột phải và KÍCH HOẠT thì nó mới trở thành lệnh MARKET/LIMIT."
+        ),
+        text_color="#B0BEC5",
+        wraplength=570,
+        justify="left",
+    ).pack(anchor="w", padx=12, pady=(0, 10))
+
+    var_enabled = tk.BooleanVar(value=settings["enabled"])
+    var_history = tk.BooleanVar(value=settings["history_enabled"])
+    var_show_running = tk.BooleanVar(value=settings["show_in_running_table"])
+    ctk.CTkCheckBox(body, text="Bật kho gợi ý BOT", variable=var_enabled).pack(anchor="w", padx=12, pady=5)
+    ctk.CTkCheckBox(body, text="Hiện gợi ý trên bảng lệnh đang chạy", variable=var_show_running).pack(anchor="w", padx=12, pady=5)
+    ctk.CTkCheckBox(body, text="Ghi lịch sử gợi ý theo ngày", variable=var_history).pack(anchor="w", padx=12, pady=5)
+
+    grid = ctk.CTkFrame(body, fg_color="#252526")
+    grid.pack(fill="x", padx=12, pady=10)
+    ctk.CTkLabel(grid, text="Giữ gợi ý (giờ):").grid(row=0, column=0, sticky="w", padx=10, pady=8)
+    e_hours = ctk.CTkEntry(grid, width=80, justify="center")
+    e_hours.insert(0, str(settings["retention_hours"]))
+    e_hours.grid(row=0, column=1, sticky="w", padx=5, pady=8)
+    ctk.CTkLabel(grid, text="Kiểu kích hoạt mặc định:").grid(row=1, column=0, sticky="w", padx=10, pady=8)
+    cbo_mode = ctk.CTkOptionMenu(grid, values=["MARKET", "LIMIT"], width=110)
+    cbo_mode.set(settings["default_order_mode"])
+    cbo_mode.grid(row=1, column=1, sticky="w", padx=5, pady=8)
+    ctk.CTkLabel(grid, text="LIMIT chệch tối đa (bước giá):").grid(row=2, column=0, sticky="w", padx=10, pady=8)
+    e_ticks = ctk.CTkEntry(grid, width=80, justify="center")
+    e_ticks.insert(0, str(settings["default_slippage_ticks"]))
+    e_ticks.grid(row=2, column=1, sticky="w", padx=5, pady=8)
+
+    lbl = ctk.CTkLabel(body, text="", text_color="#81C784")
+    lbl.pack(anchor="w", padx=12, pady=4)
+
+    def save():
+        try:
+            next_settings = signal_opportunities.normalize_settings({
+                "enabled": var_enabled.get(),
+                "show_in_running_table": var_show_running.get(),
+                "retention_hours": float(e_hours.get()),
+                "history_enabled": var_history.get(),
+                "default_order_mode": cbo_mode.get(),
+                "default_slippage_ticks": int(e_ticks.get()),
+            })
+            brain = storage_manager.load_brain_settings()
+            brain["opportunity_settings"] = next_settings
+            if not storage_manager.save_brain_settings(brain):
+                raise RuntimeError("Không ghi được brain_settings.json")
+            app.var_show_bot_opportunities.set(next_settings["show_in_running_table"])
+            app.on_show_bot_opportunities_change()
+            lbl.configure(text="Đã lưu cấu hình gợi ý BOT.", text_color="#81C784")
+        except Exception as exc:
+            lbl.configure(text=f"Lỗi: {exc}", text_color="#E57373")
+
+    ctk.CTkButton(body, text="LƯU CẤU HÌNH GỢI Ý", height=38, fg_color="#6A1B9A", command=save).pack(fill="x", padx=12, pady=(4, 12))
+
+
+def build_money_display_tab(app, parent):
+    """Một setting duy nhất cho mọi số tiền trên UI, TSL, E/E và lịch sử."""
+    from core import env_utils, storage_manager
+    from core.money import normalize_zero_trim, set_money_display_zero_trim
+
+    body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=8, pady=8)
+
+    ctk.CTkLabel(
+        body,
+        text="RÚT GỌN SỐ TIỀN HIỂN THỊ",
+        font=("Roboto", 16, "bold"),
+        text_color="#4FC3F7",
+    ).pack(anchor="w", padx=12, pady=(12, 4))
+    ctk.CTkLabel(
+        body,
+        text=(
+            "Chỉ thay cách nhìn trên màn hình. Giá trị lưu, tính rủi ro, phí, "
+            "PNL và lệnh gửi DNSE vẫn giữ nguyên VND thật. Setting này áp dụng "
+            "chung cho các nhãn đọc trên dashboard, TSL, E/E, popup, log và lịch sử. "
+            "Mọi ô setting tiền luôn nhập đủ VND thật và không bị nhân/chia theo lựa chọn này."
+        ),
+        wraplength=570,
+        justify="left",
+        text_color="#B0BEC5",
+    ).pack(anchor="w", padx=12, pady=(0, 14))
+
+    current = normalize_zero_trim()
+    display_current = "Không bỏ" if current == "NONE" else current
+    var_trim = tk.StringVar(value=display_current)
+    selector = ctk.CTkSegmentedButton(
+        body,
+        values=["Không bỏ", "000", "000 000"],
+        variable=var_trim,
+        height=38,
+        font=("Roboto", 13, "bold"),
+    )
+    selector.pack(fill="x", padx=12, pady=(0, 14))
+
+    preview = ctk.CTkLabel(
+        body,
+        text="",
+        justify="left",
+        anchor="w",
+        font=("Consolas", 13),
+        text_color="#E0F2F1",
+    )
+    preview.pack(fill="x", padx=12, pady=(0, 14))
+
+    ctk.CTkLabel(
+        body,
+        text=(
+            "QUY TẮC Ô SETTING: luôn nhập đủ VND thật. Ví dụ muốn 500.000 VND "
+            "phải nhập 500000 ở mọi chế độ hiển thị. Không tự thêm hoặc bớt số 0."
+        ),
+        wraplength=570,
+        justify="left",
+        text_color="#FFB300",
+        font=("Roboto", 11, "bold"),
+    ).pack(fill="x", padx=12, pady=(0, 14))
+
+    def _selected_trim():
+        value = str(var_trim.get() or "000")
+        return "NONE" if value == "Không bỏ" else value
+
+    def refresh_preview(*_args):
+        trim = _selected_trim()
+        scale = 1.0 if trim == "NONE" else (1000000.0 if trim == "000 000" else 1000.0)
+
+        def f(value):
+            amount = float(value) / scale
+            digits = 0 if scale == 1 else (3 if scale == 1000 else 6)
+            text = f"{amount:,.{digits}f}"
+            return text.rstrip("0").rstrip(".") if "." in text else text
+
+        rule = (
+            "Không bỏ số 0: 1 = 1 VND"
+            if trim == "NONE"
+            else f"Bỏ {trim}: 1 = {int(scale):,} VND"
+        )
+        preview.configure(
+            text=(
+                f"{rule}\n\n"
+                f"1.000 VND       → {f(1000)}\n"
+                f"220.000 VND     → {f(220000)}\n"
+                f"-191.847 VND    → {f(-191847)}\n"
+                f"99.337.000 VND  → {f(99337000)}"
+            )
+        )
+
+    selector.configure(command=lambda _value: refresh_preview())
+    refresh_preview()
+
+    status = ctk.CTkLabel(body, text="", text_color="#81C784")
+    status.pack(fill="x", padx=12, pady=(2, 6))
+
+    def save_display():
+        try:
+            trim = set_money_display_zero_trim(_selected_trim())
+            brain = storage_manager.load_brain_settings()
+            brain["MONEY_DISPLAY_ZERO_TRIM"] = trim
+            brain["MONEY_DISPLAY_UNIT"] = getattr(config, "MONEY_DISPLAY_UNIT", "K_VND")
+            if not storage_manager.save_brain_settings(brain):
+                raise RuntimeError("Không ghi được brain_settings.json")
+            env_utils.update_env({"MONEY_DISPLAY_ZERO_TRIM": trim})
+            if hasattr(app, "lbl_money_unit_note"):
+                from core.money import money_unit_note
+                app.lbl_money_unit_note.configure(text=money_unit_note())
+            status.configure(
+                text="Đã áp dụng ngay. Popup đang mở cần đóng/mở lại để vẽ lại số.",
+                text_color="#81C784",
+            )
+            app.log_message(f"[DISPLAY] Rút gọn tiền = {trim}", target="manual")
+        except Exception as exc:
+            status.configure(text=f"Lỗi lưu hiển thị: {exc}", text_color="#E57373")
+
+    ctk.CTkButton(
+        body,
+        text="LƯU VÀ ÁP DỤNG HIỂN THỊ",
+        height=40,
+        fg_color="#2E7D32",
+        hover_color="#1B5E20",
+        command=save_display,
+    ).pack(fill="x", padx=12, pady=(4, 14))
+
+
 def open_advanced_tools_popup(app):
     """Trung tâm cài đặt hệ thống: tài khoản DNSE/.env + xác thực OTP (trading-token)."""
     import os
@@ -2555,12 +2982,16 @@ def open_advanced_tools_popup(app):
     tab_sys = tabs.add("Hệ thống")
     tab_cache = tabs.add("Cache & Mã")
     tab_margin = tabs.add("Margin CKCS")
+    tab_display = tabs.add("HIỂN THỊ")
     tab_calendar = tabs.add("LỊCH THỊ TRƯỜNG")
+    tab_opportunities = tabs.add("GỢI Ý BOT")
 
     # Tab 2: gom cache + watchlist CKCS
     build_cache_and_symbols_tab(app, tab_cache)
     build_manual_margin_tab(app, tab_margin)
+    build_money_display_tab(app, tab_display)
     build_market_calendar_tab(app, tab_calendar)
+    build_bot_opportunity_tab(app, tab_opportunities)
 
     # Tab 1: tài khoản / cấu hình / OTP
     body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_sys, fg_color="transparent"))
@@ -2759,6 +3190,7 @@ def open_advanced_tools_popup(app):
 def build_paper_config_tab(app, parent):
     """Tab Paper: chỉ vốn ảo + reset. Phí/spread/cách tính đều mô phỏng như tài khoản thật."""
     from core import env_utils
+    from core.money import money_input_from_display, money_input_to_display, money_setting_hint, money_unit_note
 
     frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
     frame.pack(fill="both", expand=True, padx=6, pady=6)
@@ -2774,14 +3206,22 @@ def build_paper_config_tab(app, parent):
 
     ctk.CTkLabel(frame, text="Vốn ảo ban đầu (VND):").pack(anchor="w")
     e_bal = ctk.CTkEntry(frame, justify="center", width=240)
-    e_bal.insert(0, str(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0)))
+    e_bal.insert(0, money_input_to_display(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0), "VND"))
     e_bal.pack(anchor="w", pady=(2, 8))
+    ctk.CTkLabel(
+        frame,
+        text=money_setting_hint(),
+        font=("Arial", 11, "italic"),
+        text_color="#FFD54F",
+        wraplength=460,
+        justify="left",
+    ).pack(anchor="w", pady=(0, 8))
 
     lbl_msg = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=460, justify="left")
 
     def _save_balance():
         try:
-            bal = float(e_bal.get() or 0)
+            bal = money_input_from_display(e_bal.get(), "VND")
         except ValueError:
             lbl_msg.configure(text="Vốn ảo phải là số.", text_color="#E57373")
             return
@@ -2791,11 +3231,11 @@ def build_paper_config_tab(app, parent):
             lbl_msg.configure(text=f"Không ghi được .env: {exc}", text_color="#E57373")
             return
         config.PAPER_INITIAL_BALANCE = bal
-        lbl_msg.configure(text=f"Đã lưu vốn ảo: {bal:,.0f} VND.", text_color="#81C784")
+        lbl_msg.configure(text=f"Đã lưu vốn ảo: {format_vnd_full(bal)} ({money_unit_note()}).", text_color="#81C784")
 
     def _reset_paper():
         try:
-            bal = float(e_bal.get() or 0) or None
+            bal = money_input_from_display(e_bal.get(), "VND") or None
         except ValueError:
             bal = None
         try:
@@ -2862,7 +3302,7 @@ def open_preset_config_popup(app):
     e_risk.insert(0, str(data.get("RISK_PERCENT", 0.3)))
     e_risk.pack()
     lbl_h_risk = ctk.CTkLabel(
-        body, text="~ -$0.00", text_color="#CFD8DC", font=("Roboto", 11)
+        body, text="~ -0", text_color="#CFD8DC", font=("Roboto", 11)
     )
     lbl_h_risk.pack(pady=(0, 5))
     ctk.CTkLabel(body, text="Stop Loss (%):").pack()
@@ -2879,7 +3319,7 @@ def open_preset_config_popup(app):
     e_tp.insert(0, str(data.get("TP_RR_RATIO", 2.0)))
     e_tp.pack()
     lbl_h_tp = ctk.CTkLabel(
-        body, text="~ +$0.00", text_color="#CFD8DC", font=("Roboto", 11)
+        body, text="~ +0", text_color="#CFD8DC", font=("Roboto", 11)
     )
     lbl_h_tp.pack(pady=(0, 10))
 
@@ -3024,13 +3464,13 @@ def open_preset_config_popup(app):
             )
             risk_usd = eq * (r / 100)
             lbl_h_risk.configure(
-                text=f"(~ Mất ${risk_usd:.2f} nếu dính SL)", text_color="#EF5350"
+                text=f"(~ Mất {format_vnd_full(risk_usd)} nếu dính SL)", text_color="#EF5350"
             )
             # [SANDBOX-FETCH] Hint SL theo đúng mode đang chọn (không chỉ Percent)
             mode_disp = str(var_manual_sl_mode.get() or "Percent")
             if mode_disp == "Percent":
                 lbl_h_sl.configure(
-                    text=f"(~ Đặt SL quanh {cp * (1 - s / 100):.2f} cho BUY)",
+                    text=f"(~ Đặt SL quanh {app._fmt_price(cp * (1 - s / 100), app.cbo_symbol.get())} cho BUY)",
                     text_color="#CFD8DC",
                 )
             else:
@@ -3069,7 +3509,7 @@ def open_preset_config_popup(app):
                         text_color="#FFB74D",
                     )
             lbl_h_tp.configure(
-                text=f"(~ Lãi ${risk_usd * t:.2f} nếu chạm TP)", text_color="#66BB6A"
+                text=f"(~ Lãi {format_vnd_full(risk_usd * t)} nếu chạm TP)", text_color="#66BB6A"
             )
         except ValueError:
             pass
@@ -3508,13 +3948,17 @@ def open_tsl_popup(app, override_symbol=None):
     e_cash_buffer.pack(side="left", padx=2)
     lbl_cash_min_lock = ctk.CTkLabel(f_cash_r3, text="Min Lock:")
     lbl_cash_min_lock.pack(side="left", padx=(10, 2))
-    # Min Lock không có dropdown unit -> luôn là tiền (nghìn VND trên UI)
+    # Min Lock không có dropdown unit -> luôn là tiền theo setting HIỂN THỊ.
     e_cash_min_lock = ctk.CTkEntry(f_cash_r3, width=55)
     e_cash_min_lock.insert(0, money_input_to_display(tsl_cfg.get("BE_CASH_MIN_LOCK", 0.0), "VND"))
     e_cash_min_lock.pack(side="left", padx=2)
     lbl_cash_help = ctk.CTkLabel(
         f_cash,
-        text="SOFT LOCK: khóa = target - buffer; Min Lock là sàn khóa tối thiểu nếu kết quả còn dương. Tiền VND nhập theo NGHÌN (khớp dashboard): 500 = 500.000đ = 5 điểm PS/HĐ.",
+        text=(
+            "SOFT LOCK: khóa = target - buffer; Min Lock là sàn khóa tối thiểu nếu kết quả còn dương. "
+            "Ô setting tiền luôn nhập đủ VND thật: muốn 500.000 VND phải nhập 500000. "
+            "Lựa chọn bỏ 000 chỉ áp dụng cho số hiển thị, không tác động số nhập."
+        ),
         text_color="#B0BEC5",
         font=("Arial", 11, "italic"),
         wraplength=820,
@@ -3645,7 +4089,7 @@ def open_tsl_popup(app, override_symbol=None):
                 value = 0.0
             entry.insert(0, str(value))
         else:
-            # Tiền hiện theo nghìn VND; unit R/%Equity giữ nguyên số
+            # Ô setting tiền luôn dùng VND thật; unit R/%Equity giữ nguyên số.
             entry.insert(0, money_input_to_display(value, unit))
         entry.pack(side="left", padx=(0, 6))
         unit_menu = ctk.CTkOptionMenu(group, values=["VND", "R", "%Equity"], width=92)
@@ -3654,7 +4098,7 @@ def open_tsl_popup(app, override_symbol=None):
         return entry, unit_menu
     ctk.CTkLabel(
         f_anti,
-        text="⚠️ Đơn vị 'VND' nhập theo NGHÌN đồng (khớp dashboard). VD 250 = 250.000đ = 2.5 điểm PS/HĐ.",
+        text="⚠️ Ô VND luôn nhập đủ tiền thật: 500.000 VND nhập 500000. Bỏ 000 chỉ đổi số hiển thị, không đổi setting.",
         font=("Roboto", 10, "italic"), text_color="#FFB300",
     ).pack(anchor="w", padx=8, pady=(2, 0))
     f_anti_grid = ctk.CTkFrame(f_anti, fg_color="transparent")
@@ -3970,18 +4414,18 @@ def open_edit_popup(app, ticket):
     )
     ctk.CTkLabel(top, text="NEW SL:", font=FONT_BOLD).pack(pady=(10, 2))
     e_sl = ctk.CTkEntry(top, justify="center")
-    e_sl.insert(0, str(pos.sl))
+    e_sl.insert(0, app._price_internal_to_input(pos.sl, pos.symbol))
     e_sl.pack()
     lbl_h_sl = ctk.CTkLabel(
-        top, text="~ -$0.00", text_color="gray", font=("Roboto", 11)
+        top, text="~ -0", text_color="gray", font=("Roboto", 11)
     )
     lbl_h_sl.pack(pady=(0, 5))
     ctk.CTkLabel(top, text="NEW TP:", font=FONT_BOLD).pack(pady=(5, 2))
     e_tp = ctk.CTkEntry(top, justify="center")
-    e_tp.insert(0, str(pos.tp))
+    e_tp.insert(0, app._price_internal_to_input(pos.tp, pos.symbol))
     e_tp.pack()
     lbl_h_tp = ctk.CTkLabel(
-        top, text="~ +$0.00", text_color="gray", font=("Roboto", 11)
+        top, text="~ +0", text_color="gray", font=("Roboto", 11)
     )
     lbl_h_tp.pack(pady=(0, 5))
     # Khung chứa Live Tactic Preview
@@ -4011,18 +4455,25 @@ def open_edit_popup(app, ticket):
 
     def live_edit(*args):
         try:
-            nsl, ntp = float(e_sl.get() or 0), float(e_tp.get() or 0)
+            nsl = app._price_input_to_internal(e_sl.get(), pos.symbol)
+            ntp = app._price_input_to_internal(e_tp.get(), pos.symbol)
+            try:
+                contract_size = float(app.connector.get_symbol_info(pos.symbol, poll_tick=False).trade_contract_size or 1.0)
+            except TypeError:
+                contract_size = float(app.connector.get_symbol_info(pos.symbol).trade_contract_size or 1.0)
+            except Exception:
+                contract_size = 100000.0 if str(pos.symbol).upper().startswith("VN30F") else 1000.0
             if nsl > 0:
                 dist = abs(pos.price_open - nsl)
-                loss = dist * pos.volume * 1.0  # Simple Contract Size
+                loss = dist * pos.volume * contract_size
                 lbl_h_sl.configure(
-                    text=f"~ -${loss:.2f} ({loss / bal * 100:.2f}%)",
+                    text=f"~ -{format_vnd_full(loss)} ({loss / bal * 100:.2f}%)",
                     text_color="#EF5350",
                 )
             if ntp > 0:
                 p_dist = abs(pos.price_open - ntp)
-                prof = p_dist * pos.volume * 1.0
-                lbl_h_tp.configure(text=f"~ +${prof:.2f}", text_color="#66BB6A")
+                prof = p_dist * pos.volume * contract_size
+                lbl_h_tp.configure(text=f"~ +{format_vnd_full(prof)}", text_color="#66BB6A")
             else:
                 lbl_h_tp.configure(text="~ Thả rông (Vô cực)", text_color="#29B6F6")
             # Cập nhật Live Trigger Price Preview
@@ -4037,7 +4488,7 @@ def open_edit_popup(app, ticket):
                             if is_buy
                             else pos.price_open + (trig_r * r_dist)
                         )
-                        preview_txts.append(f"BE_SL Loss @ {trig_p:.2f}")
+                        preview_txts.append(f"BE_SL Loss @ {app._fmt_price(trig_p, pos.symbol)}")
                     if states["STEP"]:
                         sz = config.TSL_CONFIG.get("STEP_R_SIZE", 1.0)
                         trig_p = (
@@ -4045,7 +4496,7 @@ def open_edit_popup(app, ticket):
                             if is_buy
                             else pos.price_open - (sz * r_dist)
                         )
-                        preview_txts.append(f"Step 1 @ {trig_p:.2f}")
+                        preview_txts.append(f"Step 1 @ {app._fmt_price(trig_p, pos.symbol)}")
                     if states["PNL"] and config.TSL_CONFIG.get("PNL_LEVELS"):
                         lvl = config.TSL_CONFIG["PNL_LEVELS"][0]
                         preview_txts.append(f"PNL @ Lãi {lvl[0]}%")
@@ -4138,13 +4589,14 @@ def open_edit_popup(app, ticket):
     def do_tp():
         try:
             rr = config.PRESETS.get(getattr(config, "DEFAULT_PRESET", "SCALPING"), {}).get("TP_RR_RATIO", 1.5)
+            sl_value = app._price_input_to_internal(e_sl.get(), pos.symbol)
             tp = pos.price_open + (
-                abs(pos.price_open - float(e_sl.get())) * rr
+                abs(pos.price_open - sl_value) * rr
                 if is_buy
-                else -abs(pos.price_open - float(e_sl.get())) * rr
+                else -abs(pos.price_open - sl_value) * rr
             )
             e_tp.delete(0, "end")
-            e_tp.insert(0, f"{tp:.5f}")
+            e_tp.insert(0, app._price_internal_to_input(tp, pos.symbol))
             live_edit()
         except:
             pass
@@ -4294,7 +4746,11 @@ def open_edit_popup(app, ticket):
         try:
             if not app._ensure_trading_otp():
                 return
-            app.connector.modify_position(ticket, float(e_sl.get()), float(e_tp.get()))
+            app.connector.modify_position(
+                ticket,
+                app._price_input_to_internal(e_sl.get(), pos.symbol),
+                app._price_input_to_internal(e_tp.get(), pos.symbol),
+            )
             act = []
             for k, v in states.items():
                 if v:
@@ -4346,10 +4802,11 @@ def show_history_popup(app):
     # 4 tab tách theo loại thị trường (PS/CKCS) × thật/paper. Phân loại từ ticket + symbol.
     SCOPES = ["Phái sinh", "CKCS", "Paper-PS", "Paper-CKCS"]
     scope_tabs = {name: history_tabs.add(name) for name in SCOPES}
+    opportunity_tab = history_tabs.add("Gợi ý BOT")
 
     cols = (
         "Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP",
-        "Fee", "PnL ($)", "MAE", "MFE", "Trigger", "Reason",
+        "Fee", "PnL", "MAE", "MFE", "Trigger", "Reason",
     )
     widths = [300, 150, 130, 130, 130, 145, 145, 145, 110, 120, 120, 120, 330, 360]
 
@@ -4391,6 +4848,28 @@ def show_history_popup(app):
 
     trees = {name: make_tree(scope_tabs[name]) for name in SCOPES}
 
+    opp_cols = (
+        "First", "Last", "Mode", "Market", "Symbol", "Side", "Price", "Qty",
+        "SL", "TP", "Risk / Reward", "TSL", "Count", "Blocked", "Result",
+    )
+    opp_frame = ctk.CTkFrame(opportunity_tab, fg_color="transparent")
+    opp_frame.pack(fill="both", expand=True, padx=6, pady=6)
+    opportunity_tree = ttk.Treeview(opp_frame, columns=opp_cols, show="tree headings", style="History.Treeview")
+    opp_y = ttk.Scrollbar(opp_frame, orient="vertical", command=opportunity_tree.yview)
+    opp_x = ttk.Scrollbar(opp_frame, orient="horizontal", command=opportunity_tree.xview)
+    opportunity_tree.configure(yscrollcommand=opp_y.set, xscrollcommand=opp_x.set)
+    opportunity_tree.grid(row=0, column=0, sticky="nsew")
+    opp_y.grid(row=0, column=1, sticky="ns")
+    opp_x.grid(row=1, column=0, sticky="ew")
+    opp_frame.grid_rowconfigure(0, weight=1)
+    opp_frame.grid_columnconfigure(0, weight=1)
+    opportunity_tree.heading("#0", text="Ngày")
+    opportunity_tree.column("#0", width=180, minwidth=180, anchor="w", stretch=False)
+    opp_widths = [150, 150, 100, 100, 110, 90, 120, 100, 120, 120, 220, 240, 90, 360, 300]
+    for col, width in zip(opp_cols, opp_widths):
+        opportunity_tree.heading(col, text=col)
+        opportunity_tree.column(col, width=width, minwidth=width, anchor="center", stretch=False)
+
     from core.storage_manager import MASTER_LOG_FILE
     csv_path = MASTER_LOG_FILE
 
@@ -4399,7 +4878,7 @@ def show_history_popup(app):
 
     def to_float(val, default=0.0):
         try:
-            return float(str(val).replace("$", "").replace(",", "").strip())
+            return float(str(val).replace("$", "").replace("VND", "").replace(",", "").strip())
         except (TypeError, ValueError):
             return default
 
@@ -4417,9 +4896,11 @@ def show_history_popup(app):
             if tree.winfo_exists():
                 for item in tree.get_children():
                     tree.delete(item)
+        for item in opportunity_tree.get_children():
+            opportunity_tree.delete(item)
 
     def fmt_money(val):
-        return f"-${abs(val):.2f}" if val < 0 else f"${val:.2f}"
+        return format_vnd_full(val, signed=True)
 
     def insert_sessions(tree, sessions, current_balance):
         sorted_sessions = sorted(sessions.keys(), reverse=True)
@@ -4454,7 +4935,7 @@ def show_history_popup(app):
             if sid in balance_map:
                 start, end = balance_map[sid]
                 arrow = "▲" if end - start >= 0 else "▼"
-                balance_text = f"${start:,.0f} {arrow} ${end:,.0f}"
+                balance_text = f"{format_vnd_full(start)} {arrow} {format_vnd_full(end)}"
             else:
                 balance_text = ""
 
@@ -4489,6 +4970,54 @@ def show_history_popup(app):
         except Exception:
             current_balance = None
         clear_trees()
+        try:
+            from core import signal_opportunities
+            records = signal_opportunities.list_history(include_active=True)
+            by_day = {}
+            for item in records:
+                day = str(item.get("date") or datetime.fromtimestamp(float(item.get("first_seen_at", 0) or 0)).strftime("%Y-%m-%d"))
+                by_day.setdefault(day, []).append(item)
+            for day in sorted(by_day, reverse=True):
+                rows = by_day[day]
+                parent = opportunity_tree.insert("", "end", text=f"{day} — {len(rows)} gợi ý", open=(day == sorted(by_day, reverse=True)[0]))
+                for item in sorted(rows, key=lambda x: float(x.get("first_seen_at", 0) or 0), reverse=True):
+                    first = float(item.get("first_seen_at", 0) or 0)
+                    last = float(item.get("last_seen_at", first) or first)
+                    setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
+                    price = float(setup.get("price", item.get("detected_price", 0)) or 0)
+                    lot = float(setup.get("lot", 0) or 0)
+                    sl = float(setup.get("sl", 0) or 0)
+                    tp = float(setup.get("tp", 0) or 0)
+                    risk = float(setup.get("risk_amount", 0) or 0)
+                    reward = float(setup.get("reward_amount", 0) or 0)
+                    result = str(item.get("order_status") or item.get("status") or "")
+                    if item.get("order_result"):
+                        result += f" | {item.get('order_result')}"
+                    opportunity_tree.insert(
+                        parent,
+                        "end",
+                        text="",
+                        values=(
+                            datetime.fromtimestamp(first).strftime("%H:%M:%S") if first else "--",
+                            datetime.fromtimestamp(last).strftime("%H:%M:%S") if last else "--",
+                            item.get("execution_mode", ""),
+                            item.get("market_type", ""),
+                            item.get("symbol", ""),
+                            item.get("side", ""),
+                            f"{price:g}" if price else "--",
+                            f"{lot:g}" if lot else "--",
+                            f"{sl:g}" if sl else "OFF",
+                            f"{tp:g}" if tp else "OFF",
+                            f"-{format_vnd_full(risk)} | +{format_vnd_full(reward)}" if risk or reward else "--",
+                            setup.get("tactic", "--"),
+                            item.get("signal_count", 1),
+                            item.get("block_reason", ""),
+                            result,
+                        ),
+                    )
+        except Exception as exc:
+            if hasattr(app, "log_message"):
+                app.log_message(f"[HISTORY] Load gợi ý BOT lỗi: {exc}", target="manual")
         if not os.path.exists(csv_path):
             return
         try:
@@ -4649,7 +5178,7 @@ def open_minibrain_popup(app, title, mb_cfg, on_save_callback):
     ).pack(pady=10)
 
 
-def open_portfolio_popup(app):
+def _open_stock_portfolio_popup_legacy(app):
     """Cửa sổ Danh mục cổ phiếu nắm giữ (CKCS) — read-only.
 
     Liệt kê mọi mã đang giữ (gộp lô cùng mã), sắp theo giá trị giảm dần, kèm
@@ -4735,6 +5264,222 @@ def open_portfolio_popup(app):
 
     top.protocol("WM_DELETE_WINDOW", _on_close)
     app.update_portfolio_table()
+
+
+# Phiên bản danh mục hợp nhất: khai báo sau hàm cũ để giữ tương thích
+# cho các plugin/import cũ nhưng thay giao diện thực tế bằng bốn tab.
+def show_running_color_legend(app):
+    """Chú thích màu và thao tác chuột phải của bảng lệnh đang chạy."""
+    current = getattr(app, "running_color_legend_popup", None)
+    try:
+        if current is not None and current.winfo_exists():
+            current.lift()
+            current.focus_force()
+            return
+    except Exception:
+        pass
+
+    top = ctk.CTkToplevel(app)
+    top.title("Chú thích bảng lệnh đang chạy")
+    top.geometry("720x610")
+    top.minsize(620, 470)
+    _bring_popup_to_front(top)
+    app.running_color_legend_popup = top
+
+    ctk.CTkLabel(
+        top,
+        text="MÀU DÒNG & TRẠNG THÁI",
+        font=("Roboto", 18, "bold"),
+        text_color="#E0E0E0",
+    ).pack(anchor="w", padx=18, pady=(16, 4))
+    ctk.CTkLabel(
+        top,
+        text="Màu chỉ giúp nhận dạng loại dòng. Trạng thái ghi trên chính dòng mới là kết quả cuối cùng.",
+        text_color="#B0BEC5",
+        justify="left",
+        wraplength=670,
+    ).pack(anchor="w", padx=18, pady=(0, 10))
+
+    body = ctk.CTkScrollableFrame(top, fg_color="#202020")
+    body.pack(fill="both", expand=True, padx=14, pady=8)
+    legend = [
+        ("#40205c", "GỢI Ý BOT / CACHE", "BOT đã tính giá, số lượng, SL/TP nhưng chưa gửi mua/bán. Chuột phải để chỉnh và kích hoạt."),
+        ("#5c5417", "LỆNH LIMIT / LỆNH HẸN ĐANG CHỜ", "Đã được người dùng kích hoạt nhưng còn chờ giá LIMIT hoặc chờ đúng phiên để gửi."),
+        ("#0b4f5c", "ĐANG GỬI", "App đang gửi lệnh tới DNSE; không bấm gửi lại."),
+        ("#123f6b", "DNSE ĐÃ NHẬN", "DNSE đã nhận lệnh và đang chờ khớp."),
+        ("#6a3f08", "KHỚP MỘT PHẦN", "Một phần khối lượng đã khớp, phần còn lại vẫn đang chờ."),
+        ("#5c3a17", "CKCS ĐÃ KHỚP", "Cổ phiếu đã mua; xem cột trạng thái để biết đang chờ T+2 hay đã về."),
+        ("#234d20", "VỊ THẾ BUY / LONG", "Lệnh đang mở theo chiều mua. Màu xanh không có nghĩa chắc chắn đang lãi."),
+        ("#5c1a1b", "VỊ THẾ SELL / SHORT HOẶC LỆNH LỖI", "Xem chữ trên dòng để phân biệt vị thế SELL với lệnh gửi thất bại."),
+        ("#303030", "ĐÃ HỦY / HẾT HẠN", "Lệnh chờ đã bị hủy hoặc quá thời gian hiệu lực."),
+    ]
+    for color, title, detail in legend:
+        row = ctk.CTkFrame(body, fg_color="#292929", corner_radius=6)
+        row.pack(fill="x", padx=5, pady=4)
+        swatch = ctk.CTkFrame(row, width=38, height=46, fg_color=color, corner_radius=5)
+        swatch.pack(side="left", padx=8, pady=7)
+        swatch.pack_propagate(False)
+        text_frame = ctk.CTkFrame(row, fg_color="transparent")
+        text_frame.pack(side="left", fill="x", expand=True, padx=(2, 8), pady=5)
+        ctk.CTkLabel(text_frame, text=title, font=("Roboto", 12, "bold"), anchor="w").pack(fill="x")
+        ctk.CTkLabel(
+            text_frame,
+            text=detail,
+            text_color="#C7C7C7",
+            anchor="w",
+            justify="left",
+            wraplength=590,
+        ).pack(fill="x")
+
+    ctk.CTkLabel(
+        top,
+        text=(
+            "Chuột phải: GỢI Ý = chỉnh/kích hoạt hoặc xóa; LIMIT đang chờ = hủy; "
+            "lệnh DNSE = hủy; vị thế đang mở = sửa SL/TP/TSL/E-E hoặc đóng vị thế."
+        ),
+        text_color="#FFD180",
+        justify="left",
+        wraplength=680,
+    ).pack(fill="x", padx=18, pady=(4, 14))
+
+    def _close():
+        app.running_color_legend_popup = None
+        top.destroy()
+
+    top.protocol("WM_DELETE_WINDOW", _close)
+
+
+def open_portfolio_popup(app):
+    """Danh mục tách CKPS/CKCS và REAL/PAPER, chỉ đọc."""
+    existing = getattr(app, "portfolio_popup", None)
+    if existing is not None:
+        try:
+            if existing.winfo_exists():
+                _bring_popup_to_front(existing)
+                app.update_portfolio_table(force_portfolio=True)
+                return
+        except Exception:
+            pass
+
+    top = ctk.CTkToplevel(app)
+    top.title("Danh mục & sức mua")
+    top.geometry("1500x680")
+    top.minsize(1100, 460)
+    _bring_popup_to_front(top)
+    app.portfolio_popup = top
+
+    header = ctk.CTkFrame(top, fg_color="#1a1a1a", corner_radius=8)
+    header.pack(fill="x", padx=8, pady=(8, 4))
+    ctk.CTkLabel(
+        header,
+        text="DANH MỤC & SỨC MỞ",
+        font=("Roboto", 16, "bold"),
+        text_color="#E0E0E0",
+    ).pack(side="left", padx=12, pady=8)
+    ctk.CTkButton(
+        header,
+        text="⟳ Làm mới",
+        width=110,
+        height=28,
+        command=lambda: app.update_portfolio_table(force_portfolio=True),
+    ).pack(side="right", padx=10)
+
+    scopes = ["CKPS REAL", "CKCS REAL", "CKPS PAPER", "CKCS PAPER"]
+    tabs = ctk.CTkTabview(top, fg_color="#242424")
+    tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+    frames = {scope: tabs.add(scope) for scope in scopes}
+    app.portfolio_tabs = tabs
+    app.portfolio_trees = {}
+    app.portfolio_summary_labels = {}
+
+    def make_summary(parent):
+        bar = ctk.CTkFrame(parent, fg_color="#1a1a1a", corner_radius=6)
+        bar.pack(fill="x", padx=2, pady=(2, 6))
+        labels = []
+        colors = ["#00C853", "#90CAF9", "#FFCC80", "#80DEEA", "#FFD7A0", "#A5D6A7"]
+        for color in colors:
+            label = ctk.CTkLabel(
+                bar,
+                text="--",
+                font=("Roboto", 13, "bold"),
+                text_color=color,
+            )
+            label.pack(side="left", padx=10, pady=7)
+            labels.append(label)
+        return labels
+
+    def make_tree(parent, derivative=False):
+        holder = ctk.CTkFrame(parent, fg_color="#2b2b2b")
+        holder.pack(fill="both", expand=True)
+        if derivative:
+            cols = ("Symbol", "Side", "Qty", "Entry", "Price", "SL", "TP", "Margin", "PnL", "Status")
+            headers = ("Mã", "Chiều", "HĐ", "Giá vào", "Giá hiện tại", "SL", "TP", "Ký quỹ ước tính", "Lãi/Lỗ", "Trạng thái")
+            widths = (150, 100, 90, 150, 170, 130, 130, 210, 190, 240)
+        else:
+            cols = ("Symbol", "Qty", "Sellable", "Pending", "AvgCost", "Price", "Value", "PnL", "Note")
+            headers = ("Mã", "KL sở hữu", "KL bán được", "Chờ về", "Giá vốn", "Giá hiện tại", "Giá trị", "Lãi/Lỗ (%)", "Ghi chú")
+            widths = (150, 170, 190, 140, 170, 170, 230, 250, 340)
+        tree = ttk.Treeview(
+            holder,
+            columns=cols,
+            show="headings",
+            style="Treeview",
+            selectmode="browse",
+        )
+        for tag, bg, fg in (
+            ("profit_row", "#234d20", "#e0e0e0"),
+            ("loss_row", "#5c1a1b", "#e0e0e0"),
+            ("flat_row", "#2b2b2b", "#e0e0e0"),
+            ("odd_lot", "#5c3a17", "#FFD7A0"),
+            ("buy_row", "#234d20", "#e0e0e0"),
+            ("sell_row", "#5c1a1b", "#e0e0e0"),
+        ):
+            tree.tag_configure(tag, background=bg, foreground=fg)
+        for col, heading, width in zip(cols, headers, widths):
+            tree.heading(col, text=heading)
+            tree.column(
+                col,
+                width=width,
+                minwidth=width,
+                anchor="w" if col in ("Note", "Status") else "center",
+                stretch=False,
+            )
+        scroll_y = ttk.Scrollbar(holder, orient="vertical", command=tree.yview)
+        scroll_x = ttk.Scrollbar(holder, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        scroll_x.grid(row=1, column=0, sticky="ew")
+        holder.grid_rowconfigure(0, weight=1)
+        holder.grid_columnconfigure(0, weight=1)
+        return tree
+
+    for scope in scopes:
+        app.portfolio_summary_labels[scope] = make_summary(frames[scope])
+        app.portfolio_trees[scope] = make_tree(
+            frames[scope],
+            derivative=scope.startswith("CKPS"),
+        )
+    initial_scope = (
+        ("CKPS" if app._is_derivative_symbol(app.cbo_symbol.get()) else "CKCS")
+        + (" PAPER" if getattr(config, "PAPER_TRADING", True) else " REAL")
+    )
+    tabs.set(initial_scope)
+    app.tree_portfolio = None
+
+    def _on_close():
+        app.portfolio_popup = None
+        app.tree_portfolio = None
+        app.portfolio_tabs = None
+        app.portfolio_trees = {}
+        app.portfolio_summary_labels = {}
+        try:
+            top.destroy()
+        except Exception:
+            pass
+
+    top.protocol("WM_DELETE_WINDOW", _on_close)
+    app.update_portfolio_table(force_portfolio=True)
 
 
 

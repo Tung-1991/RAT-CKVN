@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import uuid
+import math
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional
 
@@ -67,6 +68,15 @@ def _normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
     item.setdefault("tp_source", "")
     item.setdefault("entry_source", "")
     item.setdefault("plan", "")
+    mode = str(item.get("entry_mode", "LIMIT" if item["entry_price"] > 0 else "MARKET") or "MARKET").upper()
+    item["entry_mode"] = mode if mode in ("MARKET", "LIMIT") else "MARKET"
+    item["wait_for_trigger"] = bool(item.get("wait_for_trigger", False))
+    item["trigger_price"] = float(item.get("trigger_price", item["entry_price"]) or 0.0)
+    item["slippage_ticks"] = max(0, int(item.get("slippage_ticks", 0) or 0))
+    item.setdefault("opportunity_id", "")
+    # Lệnh hẹn cũ chưa có mode được coi là PAPER để không thể vô tình gửi tiền thật.
+    mode = str(item.get("execution_mode", "PAPER") or "PAPER").strip().upper()
+    item["execution_mode"] = mode if mode in ("PAPER", "REAL") else "PAPER"
     return item
 
 
@@ -110,6 +120,12 @@ def add_order(
     tp_source: str = "",
     entry_source: str = "",
     plan: str = "",
+    execution_mode: Optional[str] = None,
+    entry_mode: Optional[str] = None,
+    wait_for_trigger: bool = False,
+    trigger_price: float = 0.0,
+    slippage_ticks: int = 0,
+    opportunity_id: str = "",
 ) -> Dict[str, Any]:
     created_at = _now()
     hours = _expire_hours() if expire_hours is None else max(0.01, float(expire_hours))
@@ -134,6 +150,14 @@ def add_order(
             "tp_source": tp_source,
             "entry_source": entry_source,
             "plan": plan,
+            "execution_mode": execution_mode or (
+                "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            ),
+            "entry_mode": entry_mode or ("LIMIT" if float(entry_price or 0.0) > 0 else "MARKET"),
+            "wait_for_trigger": wait_for_trigger,
+            "trigger_price": trigger_price or entry_price,
+            "slippage_ticks": slippage_ticks,
+            "opportunity_id": opportunity_id,
         }
     )
     with _LOCK:
@@ -278,17 +302,26 @@ def recover_stuck(max_age_sec: float = 600.0, now: Optional[float] = None) -> Li
     return deepcopy(recovered)
 
 
-def claim_due(phase_fn: Callable[[str], Any], now: Optional[float] = None, limit: int = 20) -> List[Dict[str, Any]]:
+def claim_due(
+    phase_fn: Callable[[str], Any],
+    now: Optional[float] = None,
+    limit: int = 20,
+    quote_fn: Optional[Callable[[str, str], Optional[float]]] = None,
+    point_fn: Optional[Callable[[str], float]] = None,
+) -> List[Dict[str, Any]]:
     now = _now() if now is None else float(now)
     due: List[Dict[str, Any]] = []
     with _LOCK:
         items = _read_unlocked()
         changed = False
+        current_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
         for item in items:
             if len(due) >= limit:
                 break
             status = str(item.get("status", "")).upper()
             if status != PENDING:
+                continue
+            if str(item.get("execution_mode", "PAPER")).upper() != current_mode:
                 continue
             if float(item.get("expire_at", 0.0) or 0.0) <= now:
                 item["status"] = EXPIRED
@@ -301,6 +334,36 @@ def claim_due(phase_fn: Callable[[str], Any], now: Optional[float] = None, limit
             except Exception:
                 phase = ""
             target = str(item.get("target", "") or "").upper()
+            if item.get("wait_for_trigger"):
+                trigger = float(item.get("trigger_price", 0.0) or 0.0)
+                if trigger <= 0 or quote_fn is None:
+                    continue
+                try:
+                    quote = float(quote_fn(str(item.get("symbol", "")), str(item.get("side", "BUY"))) or 0.0)
+                except Exception:
+                    quote = 0.0
+                if quote <= 0:
+                    continue
+                try:
+                    point = max(1e-9, float(point_fn(str(item.get("symbol", ""))) if point_fn else 0.1))
+                except Exception:
+                    point = 0.1
+                tolerance = int(item.get("slippage_ticks", 0) or 0) * point
+                side = str(item.get("side", "BUY") or "BUY").upper()
+                touched = quote <= trigger + tolerance if side == "BUY" else quote >= trigger - tolerance
+                if not touched:
+                    continue
+                # BUY làm tròn lên, SELL làm tròn xuống để LO gần giá đang chạy nhưng
+                # không vượt quá vùng chệch người dùng cho phép.
+                if side == "BUY":
+                    nearest = math.ceil((quote - 1e-12) / point) * point
+                    nearest = min(nearest, trigger + tolerance)
+                else:
+                    nearest = math.floor((quote + 1e-12) / point) * point
+                    nearest = max(nearest, trigger - tolerance)
+                item["entry_price"] = round(nearest, 10)
+                item["wait_for_trigger"] = False
+                item["result"] = f"TRIGGERED quote={quote:g} limit={nearest:g}"
             if (
                 (target == "ATO" and phase == "ATO")
                 or (target == "ATC" and phase == "ATC")

@@ -143,6 +143,12 @@ def test_build_telegram_signal_order_uses_sandbox_defaults(monkeypatch):
     assert result["lot"] == 1.0
     assert result["sl"] == 1978.0
     assert result["tp"] > 2000.0
+    assert result["entry_mode"] == "MARKET"
+    assert result["tactic"] == "BE+STEP_R+SWING+AUTO_DCA+REV_C"
+    assert result["entry_exit_tactic"] in ("OFF", "FALLBACK_R->AUTO")
+    assert result["risk_amount"] > 0
+    assert result["reward_amount"] > 0
+    assert "gate_action" in result
 
 
 def test_strict_risk_cost_includes_both_sides_and_spread(monkeypatch):

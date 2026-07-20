@@ -170,6 +170,7 @@ class PaperBroker:
                         data.setdefault("realized_pnl", 0.0)
                         data.setdefault("next_ticket", 1)
                         data.setdefault("positions", [])
+                        data.setdefault("closed_trades", {})
                         return data
         except Exception:
             pass
@@ -178,6 +179,7 @@ class PaperBroker:
             "realized_pnl": 0.0,
             "next_ticket": 1,
             "positions": [],
+            "closed_trades": {},
         }
 
     def _save_state(self):
@@ -191,9 +193,32 @@ class PaperBroker:
             "realized_pnl": 0.0,
             "next_ticket": 1,
             "positions": [],
+            "closed_trades": {},
         }
         self._save_state()
         return self.get_account_info()
+
+    def _record_closed_trade(self, position: BrokerPosition, reason: str) -> None:
+        ticket = str(position.ticket)
+        closed = self.state.setdefault("closed_trades", {})
+        closed[ticket] = {
+            "ticket": ticket,
+            "symbol": position.symbol,
+            "volume": float(position.volume or 0.0),
+            "price_open": float(position.price_open or 0.0),
+            "price_close": float(position.price_current or 0.0),
+            "profit": float(position.profit or 0.0),
+            "reason": str(reason or "CLOSED"),
+            "closed_at": time.time(),
+        }
+        # Chỉ cần giữ lịch sử gần nhất để file PAPER không phình vô hạn.
+        if len(closed) > 500:
+            ordered = sorted(closed.items(), key=lambda item: item[1].get("closed_at", 0.0))
+            self.state["closed_trades"] = dict(ordered[-500:])
+
+    def get_closed_trade(self, ticket: Any) -> Optional[Dict[str, Any]]:
+        item = self.state.get("closed_trades", {}).get(str(ticket))
+        return dict(item) if isinstance(item, dict) else None
 
     def _get_tick(self, symbol: str) -> Optional[BrokerTick]:
         if self.tick_provider:
@@ -298,6 +323,7 @@ class PaperBroker:
                     survivors.append(pos)
                     continue
                 self.state["realized_pnl"] = float(self.state.get("realized_pnl", 0.0) or 0.0) + broker_pos.profit
+                self._record_closed_trade(broker_pos, "SL" if hit_sl else "TP")
                 changed = True
             else:
                 survivors.append(pos)
@@ -440,6 +466,7 @@ class PaperBroker:
                     )
                 closed = self._position_from_state(pos)
                 self.state["realized_pnl"] = float(self.state.get("realized_pnl", 0.0) or 0.0) + closed.profit
+                self._record_closed_trade(closed, comment or "MANUAL_CLOSE")
             else:
                 survivors.append(pos)
         self.state["positions"] = survivors

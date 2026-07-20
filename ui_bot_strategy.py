@@ -13,6 +13,7 @@ import config
 from core.money import (
     money_input_from_display,
     money_input_to_display,
+    money_setting_hint,
     unit_from_display,
     unit_to_display,
 )
@@ -1601,7 +1602,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         if rev_profit_unit in ("%R", "PERCENT_R"):
             _rev_profit_str = str(rev_profit_value / 100.0)
         else:
-            # Tiền hiện theo nghìn VND (khớp dashboard); unit R/%Equity giữ nguyên
+            # Ô setting tiền luôn nhập VND thật; kiểu hiển thị không đổi giá trị nhập.
             _rev_profit_str = money_input_to_display(rev_profit_value, rev_profit_unit)
         self.var_rev_profit = ctk.StringVar(value=_rev_profit_str)
         ctk.CTkEntry(
@@ -1648,7 +1649,8 @@ class BotStrategyUI(ctk.CTkToplevel):
             f_rev_time,
             text=(
                 "REV_C: khi signal đảo chiều, lệnh lời chỉ cắt nếu PnL >= Min Profit; "
-                "lệnh âm chỉ cắt nếu PnL <= Max Loss. Giá trị 0 = bỏ qua điều kiện phía đó."
+                "lệnh âm chỉ cắt nếu PnL <= Max Loss. Giá trị 0 = bỏ qua điều kiện phía đó.\n"
+                + money_setting_hint()
             ),
             font=("Arial", 11, "italic"),
             text_color="#B0BEC5",

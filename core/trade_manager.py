@@ -24,6 +24,7 @@ from core.storage_manager import (
 from core.market_hours import is_symbol_trade_window_open
 from core.position_classifier import is_bot_position, is_manual_position
 from core.entry_exit_engine import evaluate_entry_exit, format_decision
+from core.money import format_vnd_full
 
 
 class TradeManager:
@@ -556,7 +557,7 @@ class TradeManager:
 
                 if hold_time >= min_hold_time and pnl_ok:
                     self.log(
-                        f"  [REVERSE] Tín hiệu đảo chiều ({new_direction}) | PnL: ${profit_usd:.2f}! Cắt lệnh #{p.ticket} (Hold: {hold_time:.0f}s)",
+                        f"  [REVERSE] Tín hiệu đảo chiều ({new_direction}) | PnL: {format_vnd_full(profit_usd, signed=True)}! Cắt lệnh #{p.ticket} (Hold: {hold_time:.0f}s)",
                         target="bot",
                     )
                     self.state["exit_reasons"][str(p.ticket)] = (
@@ -594,8 +595,14 @@ class TradeManager:
     # 1. HÀM THỰC THI LỆNH CHO BOT (HỖ TRỢ ENTRY, DCA, PCA, DYNAMIC SL & STRICT RISK)
     # ====================================================================================
     def execute_bot_trade(
-        self, direction, symbol, context, market_mode="ANY", signal_class="ENTRY", tactic_override=None
+        self, direction, symbol, context, market_mode="ANY", signal_class="ENTRY",
+        tactic_override=None, expected_paper_mode=None,
     ):
+        if (
+            expected_paper_mode is not None
+            and bool(getattr(config, "PAPER_TRADING", True)) != bool(expected_paper_mode)
+        ):
+            return "SAFEGUARD_FAIL|MODE_CHANGED|Da doi PAPER/REAL; bo tin hieu cu."
         config.SYMBOL = symbol
         self._sync_state_lifecycle()
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
@@ -942,6 +949,11 @@ class TradeManager:
         _lo_price = current_price if (_entry_ord == "LO" and not order_kind and current_price > 0) else 0.0
         if _lo_price > 0:
             self.log(f"[LO] {symbol}: đặt limit @{_lo_price:g} (không đuổi giá market).", target="bot")
+        if (
+            expected_paper_mode is not None
+            and bool(getattr(config, "PAPER_TRADING", True)) != bool(expected_paper_mode)
+        ):
+            return "SAFEGUARD_FAIL|MODE_CHANGED|Da doi PAPER/REAL; khong gui lenh cu."
         result = self.connector.place_order(
             symbol, order_type, lot_size, sl_price, tp_price, bot_magic, comment,
             order_kind=order_kind, price=_lo_price,
@@ -1111,7 +1123,13 @@ class TradeManager:
         manual_entry_price=0.0,
         entry_exit_tactic="OFF",
         risk_gate_ack=False,  # True = user đã xác nhận popup RISK GATE, cho qua CONFIRM
+        expected_paper_mode=None,
     ):
+        if (
+            expected_paper_mode is not None
+            and bool(getattr(config, "PAPER_TRADING", True)) != bool(expected_paper_mode)
+        ):
+            return "SAFEGUARD_FAIL|MODE_CHANGED|Da doi PAPER/REAL; bo lenh hen cu."
         config.SYMBOL = symbol
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
@@ -1340,6 +1358,11 @@ class TradeManager:
         magics = storage_manager.get_magic_numbers()
         manual_magic = magics.get("manual_magic", 8888)
 
+        if (
+            expected_paper_mode is not None
+            and bool(getattr(config, "PAPER_TRADING", True)) != bool(expected_paper_mode)
+        ):
+            return "SAFEGUARD_FAIL|MODE_CHANGED|Da doi PAPER/REAL; khong gui lenh hen cu."
         result = self.connector.place_order(
             symbol,
             order_type,
@@ -1411,6 +1434,7 @@ class TradeManager:
         return f"API_ERROR|{err}|{msg}".rstrip("|")
 
     def execute_telegram_sandbox_order(self, symbol, side, lot, sl, tp, bypass_checklist=False):
+        expected_paper_mode = bool(getattr(config, "PAPER_TRADING", True))
         symbol = str(symbol or "").strip().upper()
         side = str(side or "").strip().upper()
         try:
@@ -1484,6 +1508,8 @@ class TradeManager:
 
         magics = storage_manager.get_magic_numbers()
         manual_magic = magics.get("manual_magic", 8888)
+        if bool(getattr(config, "PAPER_TRADING", True)) != expected_paper_mode:
+            return "TELEGRAM_FAIL|MODE_CHANGED|Đã đổi PAPER/REAL; không gửi lệnh cũ"
         result = self.connector.place_order(
             symbol,
             order_type,
@@ -1660,6 +1686,24 @@ class TradeManager:
         if max_lot_cap > 0:
             lot = min(float(lot), max_lot_cap)
 
+        # Bản gợi ý phải dùng đúng số lượng mà BOT thật sẽ dùng,
+        # kể cả trần vốn/tỷ trọng riêng của CKCS.
+        capped = risk_gate.apply_stock_caps(
+            symbol,
+            lot,
+            price,
+            acc_info,
+            sym_info,
+            safeguard_cfg,
+            log=self.log,
+            log_target="bot",
+        )
+        if capped.get("error"):
+            return {"ok": False, "error": str(capped["error"])}
+        lot = float(capped.get("lot", lot) or 0.0)
+        if lot <= 0:
+            return {"ok": False, "error": "LOT_CALC_FAILED"}
+
         use_swing_tp = safeguard_cfg.get("BOT_USE_SWING_TP", False)
         use_rr_tp = safeguard_cfg.get("BOT_USE_RR_TP", True)
         ee_exit_tactic = str(entry_exit_cfg.get("exit_tactic", "")).upper()
@@ -1678,6 +1722,63 @@ class TradeManager:
         else:
             tp_price = 0.0
 
+        bot_tactic = str(
+            risk_tsl.get("bot_tsl", getattr(config, "BOT_DEFAULT_TSL", "BE+STEP_R+SWING"))
+            or "OFF"
+        )
+        dca_cfg = brain.get("dca_config", getattr(config, "DCA_CONFIG", {})) or {}
+        pca_cfg = brain.get("pca_config", getattr(config, "PCA_CONFIG", {})) or {}
+        if dca_cfg.get("ENABLED", False) and "AUTO_DCA" not in bot_tactic:
+            bot_tactic += "+AUTO_DCA"
+        if pca_cfg.get("ENABLED", False) and "AUTO_PCA" not in bot_tactic:
+            bot_tactic += "+AUTO_PCA"
+        if safeguard_cfg.get("CLOSE_ON_REVERSE", False) and "REV_C" not in bot_tactic:
+            bot_tactic += "+REV_C"
+
+        entry_exit_tactic = "OFF"
+        if (
+            ee_decision
+            and ee_decision.get("status") == "READY"
+            and entry_exit_cfg.get("enabled")
+            and not entry_exit_cfg.get("preview_only", True)
+        ):
+            entry_exit_tactic = str(ee_decision.get("entry_tactic") or "OFF")
+            if ee_decision.get("exit_tactic"):
+                entry_exit_tactic += f"->{ee_decision['exit_tactic']}"
+
+        contract_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
+        risk_amount = self._calc_risk_usd(symbol, order_type, lot, price, sl_price)
+        reward_amount = 0.0
+        if tp_price:
+            try:
+                profit_side = "LONG" if order_type == 0 else "SHORT"
+                broker_reward = abs(float(
+                    self.connector.calculate_profit(symbol, profit_side, lot, price, tp_price) or 0.0
+                ))
+            except Exception:
+                broker_reward = 0.0
+            formula_reward = abs(float(tp_price) - float(price)) * lot * contract_size
+            reward_amount = max(broker_reward, formula_reward)
+
+        gate = risk_gate.evaluate(
+            symbol,
+            price,
+            sl_price,
+            lot,
+            contract_size,
+            float(acc_info.get("equity", 0.0) or 0.0),
+            risk_gate.settings_from_brain(brain),
+            source="BOT",
+        )
+        entry_order_type = str(
+            safeguard_cfg.get(
+                "BOT_ENTRY_ORDER_TYPE",
+                getattr(config, "BOT_ENTRY_ORDER_TYPE", "MARKET"),
+            )
+            or "MARKET"
+        ).upper()
+        entry_mode = "LIMIT" if entry_order_type == "LO" else "MARKET"
+
         digits = int(getattr(sym_info, "digits", 2) or 2)
         return {
             "ok": True,
@@ -1688,6 +1789,21 @@ class TradeManager:
             "tp": round(float(tp_price), digits) if tp_price else 0.0,
             "price": float(price),
             "market_mode": market_mode,
+            "entry_mode": entry_mode,
+            "tactic": bot_tactic,
+            "entry_exit_tactic": entry_exit_tactic,
+            "risk_amount": float(risk_amount),
+            "reward_amount": float(reward_amount),
+            "risk_pct": (
+                float(risk_amount) / float(acc_info.get("equity", 0.0) or 0.0) * 100.0
+                if float(acc_info.get("equity", 0.0) or 0.0) > 0 else 0.0
+            ),
+            "gate_action": str(gate.get("action", "OK")),
+            "gate_message": str(gate.get("msg", "")),
+            "sl_source": f"SWING_{sl_group}",
+            "tp_source": "ENTRY_EXIT" if ee_tp_override is not None else (
+                "SWING" if use_swing_tp else "RR" if use_rr_tp else "OFF"
+            ),
         }
 
     def update_trade_tactic(self, ticket, tactic_str):
@@ -1713,7 +1829,14 @@ class TradeManager:
             self._sync_state_lifecycle()
             current_positions = self.connector.get_all_open_positions()
             current_tickets = [str(p.ticket) for p in current_positions]
-            tracked_tickets = list(self.state.get("active_trades", []))
+            paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+            # PAPER và REAL dùng chung danh sách quản lý để đổi mode không làm mất
+            # chiến thuật, nhưng tuyệt đối không được coi ticket của mode kia là vừa đóng.
+            tracked_tickets = [
+                ticket
+                for ticket in self.state.get("active_trades", [])
+                if str(ticket).upper().startswith("PAPER-") == paper_mode
+            ]
 
             # XỬ LÝ ĐÓNG LỆNH & CHỐT RỔ BẢO VỆ MẸ-CON
             closed_tickets = [t for t in tracked_tickets if str(t) not in current_tickets]
@@ -1730,9 +1853,37 @@ class TradeManager:
                     if isinstance(all_market_contexts, dict) and sym in all_market_contexts:
                         close_p = float(all_market_contexts[sym].get("current_price", open_p))
                     
-                    # Mô phỏng tính PnL cho VN30 (1 giá = 100,000 VND)
-                    diff = (close_p - open_p) if dir_str == "BUY" else (open_p - close_p)
-                    real_pnl = diff * getattr(config, "DNSE_POINT_VALUE", 100000.0) * vol
+                    if paper_mode:
+                        # PAPER broker là nguồn duy nhất biết giá đóng và phí thật của lệnh.
+                        # Không có biên nhận nghĩa là ticket theo dõi cũ/stale, không được
+                        # tự bịa PNL từ giá hiện tại.
+                        closed_info = None
+                        try:
+                            closed_info = self.connector.get_paper_closed_trade(s_ticket)
+                        except Exception:
+                            closed_info = None
+                        real_pnl = float((closed_info or {}).get("profit", 0.0) or 0.0)
+                        if not closed_info:
+                            self.log(
+                                f"[PAPER] Bỏ ticket theo dõi cũ #{s_ticket}; không ghi PNL vì không có giao dịch đóng.",
+                                target="bot-log",
+                            )
+                    else:
+                        try:
+                            real_pnl = float(
+                                self.connector.calculate_profit(
+                                    sym, dir_str, vol, open_p, close_p
+                                )
+                                or 0.0
+                            )
+                        except Exception:
+                            point_value = (
+                                getattr(self.connector.get_symbol_info(sym), "trade_contract_size", 1.0)
+                                if self.connector
+                                else 1.0
+                            )
+                            diff = (close_p - open_p) if dir_str == "BUY" else (open_p - close_p)
+                            real_pnl = diff * float(point_value or 1.0) * vol
                     
                     # [FIX] Phân loại lệnh dựa trên magic number thay vì gán cứng
                     _magic = int(self.state.get("trade_magics", {}).get(s_ticket, 0))
@@ -1759,7 +1910,7 @@ class TradeManager:
                     
                     pnl_sign = "+" if real_pnl >= 0 else ""
                     self.log(
-                        f"[DNSE] Đóng lệnh {dir_str} {sym} #{ticket} ({exit_reason}) | PnL tạm tính: {pnl_sign}{real_pnl:,.0f} VND",
+                        f"[DNSE] Đóng lệnh {dir_str} {sym} #{ticket} ({exit_reason}) | PnL tạm tính: {format_vnd_full(real_pnl, signed=True)}",
                         target="bot",
                     )
 
@@ -1830,6 +1981,20 @@ class TradeManager:
                         del self.state["child_to_parent"][s_ticket]
 
                 save_state(self.state)
+
+            if paper_mode:
+                # Sửa cả state cũ từng bị nhân sai hệ số CKPS cho cổ phiếu: PNL
+                # trên dashboard phải khớp sổ PAPER, không lấy số tự ước lượng.
+                try:
+                    paper_realized = float(
+                        (self.connector.get_account_info() or {}).get("realized_pnl", 0.0)
+                        or 0.0
+                    )
+                    if float(self.state.get("pnl_today", 0.0) or 0.0) != paper_realized:
+                        self.state["pnl_today"] = paper_realized
+                        save_state(self.state)
+                except Exception:
+                    pass
 
             import core.storage_manager as storage_manager
 
@@ -1998,7 +2163,7 @@ class TradeManager:
                             
                         # Kích hoạt Watermark
                         if highest >= wm_trigger and current_pnl > 0 and current_pnl <= (highest - wm_dd):
-                            self.log(f"💧 [WATERMARK] {sym} Sụt giảm từ đỉnh (+${highest:.2f}) xuống (+${current_pnl:.2f})! Đạt giới hạn Drawdown (${wm_dd:.2f}). KÍCH HOẠT ĐÓNG TOÀN BỘ!", target="bot")
+                            self.log(f"💧 [WATERMARK] {sym} Sụt giảm từ đỉnh ({format_vnd_full(highest, signed=True)}) xuống ({format_vnd_full(current_pnl, signed=True)})! Đạt giới hạn Drawdown ({format_vnd_full(wm_dd)}). KÍCH HOẠT ĐÓNG TOÀN BỘ!", target="bot")
                             
                             def _close_watermark_seq(positions, symbol):
                                 for p in positions:
@@ -2084,7 +2249,7 @@ class TradeManager:
                         total_basket_pnl = sum((p.profit + p.swap + getattr(p, "commission", 0.0)) for p in basket_pos)
                         
                         if total_basket_pnl <= -max_basket_loss:
-                            self.log(f"🔥 [BASKET DRAWDOWN] Rổ {sym} (Mẹ #{parent_str}) âm vượt ngưỡng (-${max_basket_loss:.2f})! PnL hiện tại: ${total_basket_pnl:.2f}. CẮT SẠCH CẢ RỔ!", target="bot")
+                            self.log(f"🔥 [BASKET DRAWDOWN] Rổ {sym} (Mẹ #{parent_str}) âm vượt ngưỡng (-{format_vnd_full(max_basket_loss)})! PnL hiện tại: {format_vnd_full(total_basket_pnl, signed=True)}. CẮT SẠCH CẢ RỔ!", target="bot")
                             
                             def _close_basket_seq(b_pos):
                                 for p in b_pos:
@@ -2162,7 +2327,7 @@ class TradeManager:
         # Option 1: Hard Cash Stop (Dynamic Threshold)
         if profit_usd <= -dynamic_threshold:
             self.log(
-                f"🔥 [ANTI CASH] Đạt ngưỡng Hard Stop (-${hard_stop_usd} + Phí ${initial_cost:.2f})! Cắt lỗ lệnh #{pos.ticket}",
+                f"🔥 [ANTI CASH] Đạt ngưỡng Hard Stop (-{format_vnd_full(hard_stop_usd)} + Phí {format_vnd_full(initial_cost)})! Cắt lỗ lệnh #{pos.ticket}",
                 target="bot",
             )
             self.state["exit_reasons"][str(pos.ticket)] = "Anti_Cash_Hard_Stop"
@@ -2237,7 +2402,7 @@ class TradeManager:
         if profit_usd <= -dynamic_threshold:
             close_by_anti_cash(
                 "Anti_Cash_Hard_Stop",
-                f"🔥 [ANTI CASH] Hard Stop #{pos.ticket}: PnL ${profit_usd:.2f} <= -${dynamic_threshold:.2f} (-${hard_stop_limit:.2f} + phí ${initial_cost:.2f}).",
+                f"🔥 [ANTI CASH] Hard Stop #{pos.ticket}: PnL {format_vnd_full(profit_usd, signed=True)} <= -{format_vnd_full(dynamic_threshold)} (-{format_vnd_full(hard_stop_limit)} + phí {format_vnd_full(initial_cost)}).",
             )
             return
 
@@ -2265,13 +2430,13 @@ class TradeManager:
                 if mfe_giveback > 0 and giveback >= mfe_giveback:
                     close_by_anti_cash(
                         "Anti_Cash_MFE_Giveback",
-                        f"💰 [ANTI CASH] MFE Giveback #{pos.ticket}: MFE ${mfe_usd:.2f}, PnL ${profit_usd:.2f}, trả lại ${giveback:.2f}.",
+                        f"💰 [ANTI CASH] MFE Giveback #{pos.ticket}: MFE {format_vnd_full(mfe_usd, signed=True)}, PnL {format_vnd_full(profit_usd, signed=True)}, trả lại {format_vnd_full(giveback)}.",
                     )
                     return
                 if profit_usd <= mfe_floor:
                     close_by_anti_cash(
                         "Anti_Cash_MFE_Floor",
-                        f"💰 [ANTI CASH] MFE Floor #{pos.ticket}: MFE ${mfe_usd:.2f}, PnL ${profit_usd:.2f} <= floor ${mfe_floor:.2f}.",
+                        f"💰 [ANTI CASH] MFE Floor #{pos.ticket}: MFE {format_vnd_full(mfe_usd, signed=True)}, PnL {format_vnd_full(profit_usd, signed=True)} <= floor {format_vnd_full(mfe_floor)}.",
                     )
                     return
 
@@ -2297,7 +2462,7 @@ class TradeManager:
             ):
                 close_by_anti_cash(
                     "Anti_Cash_MAE_Stop",
-                    f"🔥 [ANTI CASH] MAE Stop #{pos.ticket}: PnL ${profit_usd:.2f}, MAE ${mae_usd:.2f}, MFE ${mfe_usd:.2f} < ${low_mfe:.2f}.",
+                    f"🔥 [ANTI CASH] MAE Stop #{pos.ticket}: PnL {format_vnd_full(profit_usd, signed=True)}, MAE {format_vnd_full(mae_usd, signed=True)}, MFE {format_vnd_full(mfe_usd, signed=True)} < {format_vnd_full(low_mfe)}.",
                 )
                 return
 
@@ -2305,7 +2470,7 @@ class TradeManager:
             if hold_time > time_cut_s and profit_usd < 0:
                 close_by_anti_cash(
                     "Anti_Cash_Time_Cut",
-                    f"⏱ [ANTI CASH] Time Cut #{pos.ticket}: giữ {hold_time:.0f}s > {time_cut_s}s và PnL ${profit_usd:.2f}.",
+                    f"⏱ [ANTI CASH] Time Cut #{pos.ticket}: giữ {hold_time:.0f}s > {time_cut_s}s và PnL {format_vnd_full(profit_usd, signed=True)}.",
                 )
 
     def _check_recovery(self, pos, context):
@@ -2406,7 +2571,7 @@ class TradeManager:
             if hold_time >= min_hold and pnl_ok and confirm_ok:
                 reverse_label = "NONE" if current_signal == 0 else ("SELL" if is_buy else "BUY")
                 self.log(
-                    f"  [RECOVERY] Đảo chiều Signal ({reverse_label}) | Confirm {confirm_age:.0f}/{confirm_seconds:.0f}s, {confirm_count}/{confirm_scans} scan | PnL: ${profit_usd:.2f} | Hold {hold_time:.0f}/{min_hold:.0f}s | MaxLoss ${abs(max_loss):.2f}. Đóng lệnh #{pos.ticket}",
+                    f"  [RECOVERY] Đảo chiều Signal ({reverse_label}) | Confirm {confirm_age:.0f}/{confirm_seconds:.0f}s, {confirm_count}/{confirm_scans} scan | PnL: {format_vnd_full(profit_usd, signed=True)} | Hold {hold_time:.0f}/{min_hold:.0f}s | MaxLoss {format_vnd_full(abs(max_loss))}. Đóng lệnh #{pos.ticket}",
                     target="bot",
                 )
                 self.state["exit_reasons"][s_ticket] = (
@@ -2429,7 +2594,7 @@ class TradeManager:
                     else:
                         reason = "PnL_Filter"
                     self.log(
-                        f"⏳ [RECOVERY] Giữ #{pos.ticket}: Signal {reverse_label} | {reason} | Confirm {confirm_age:.0f}/{confirm_seconds:.0f}s, {confirm_count}/{confirm_scans} scan | PnL ${profit_usd:.2f} | Hold {hold_time:.0f}/{min_hold:.0f}s | MaxLoss ${abs(max_loss):.2f}",
+                        f"⏳ [RECOVERY] Giữ #{pos.ticket}: Signal {reverse_label} | {reason} | Confirm {confirm_age:.0f}/{confirm_seconds:.0f}s, {confirm_count}/{confirm_scans} scan | PnL {format_vnd_full(profit_usd, signed=True)} | Hold {hold_time:.0f}/{min_hold:.0f}s | MaxLoss {format_vnd_full(abs(max_loss))}",
                         target="bot",
                     )
                     self.state.setdefault("last_rev_log_time", {})[s_ticket] = time.time()
@@ -2486,7 +2651,7 @@ class TradeManager:
                 milestones.append(
                     (
                         profit_usd + hard_threshold,
-                        f"ANTI Hard đợi -${hard_threshold:.2f}",
+                        f"ANTI Hard đợi -{format_vnd_full(hard_threshold)}",
                     )
                 )
 
@@ -2516,7 +2681,7 @@ class TradeManager:
                         milestones.append(
                             (
                                 mfe_trigger - mfe_usd,
-                                f"ANTI MFE đợi +${mfe_trigger:.2f}",
+                                f"ANTI MFE đợi +{format_vnd_full(mfe_trigger)}",
                             )
                         )
                     else:
@@ -2529,14 +2694,14 @@ class TradeManager:
                             milestones.append(
                                 (
                                     profit_usd - cut_level,
-                                    f"ANTI MFE guard ${cut_level:.2f}",
+                                    f"ANTI MFE guard {format_vnd_full(cut_level, signed=True)}",
                                 )
                             )
                         else:
                             milestones.append(
                                 (
                                     0.0,
-                                    f"ANTI MFE ready <= ${cut_level:.2f}",
+                                    f"ANTI MFE ready <= {format_vnd_full(cut_level, signed=True)}",
                                 )
                             )
 
@@ -2607,7 +2772,7 @@ class TradeManager:
                     arms[s_ticket] = arm
                     save_state(self.state)
                     self.log(
-                        f"[BE_SL] Arm recovery guard #{pos.ticket}: PnL ${profit_usd:.2f} <= -${loss_trigger_usd:.2f}",
+                        f"[BE_SL] Arm recovery guard #{pos.ticket}: PnL {format_vnd_full(profit_usd, signed=True)} <= -{format_vnd_full(loss_trigger_usd)}",
                         target="bot",
                     )
 
@@ -2619,7 +2784,7 @@ class TradeManager:
                         arms.pop(s_ticket, None)
                         save_state(self.state)
                         self.log(
-                            f"[BE_SL] Clear #{pos.ticket}: PnL hồi về ${profit_usd:.2f} >= $0.00",
+                            f"[BE_SL] Clear #{pos.ticket}: PnL hồi về {format_vnd_full(profit_usd, signed=True)} >= 0",
                             target="bot",
                         )
                     else:
@@ -2635,14 +2800,14 @@ class TradeManager:
                                 arm["guard_pnl"] = guard_pnl
                                 save_state(self.state)
                                 self.log(
-                                    f"[BE_SL] Recovery #{pos.ticket}: best ${best_recovery:.2f}, guard ${guard_pnl:.2f}",
+                                    f"[BE_SL] Recovery #{pos.ticket}: best {format_vnd_full(best_recovery, signed=True)}, guard {format_vnd_full(guard_pnl, signed=True)}",
                                     target="bot",
                                 )
                             else:
                                 milestones.append(
                                     (
                                         abs(recovery_pnl - profit_usd),
-                                        f"BE_SL armed: chờ hồi ${recovery_pnl:.2f}",
+                                        f"BE_SL armed: chờ hồi {format_vnd_full(recovery_pnl, signed=True)}",
                                     )
                                 )
                         else:
@@ -2657,7 +2822,7 @@ class TradeManager:
 
                             if profit_usd <= guard_pnl:
                                 self.log(
-                                    f"[BE_SL] Recovery guard cut #{pos.ticket}: PnL ${profit_usd:.2f} <= guard ${guard_pnl:.2f}",
+                                    f"[BE_SL] Recovery guard cut #{pos.ticket}: PnL {format_vnd_full(profit_usd, signed=True)} <= guard {format_vnd_full(guard_pnl, signed=True)}",
                                     target="bot",
                                 )
                                 self.state["exit_reasons"][s_ticket] = "BE_SL_Recovery_Guard"
@@ -2666,19 +2831,19 @@ class TradeManager:
                                 threading.Thread(
                                     target=self._close_with_t2_log, args=(pos, "BE_SL_Recovery_Guard"), daemon=True
                                 ).start()
-                                return f"BE_SL Recovery Guard ${profit_usd:.2f}"
+                                return f"BE_SL Recovery Guard {format_vnd_full(profit_usd, signed=True)}"
 
                             milestones.append(
                                 (
                                     abs(profit_usd - guard_pnl),
-                                    f"BE_SL guard ${guard_pnl:.2f} / best ${best_recovery:.2f}",
+                                    f"BE_SL guard {format_vnd_full(guard_pnl, signed=True)} / best {format_vnd_full(best_recovery, signed=True)}",
                                 )
                             )
                 elif loss_usd < loss_trigger_usd:
                     milestones.append(
                         (
                             max(loss_trigger_usd - loss_usd, 0.0),
-                            f"BE_SL đợi loss -${loss_trigger_usd:.2f}",
+                            f"BE_SL đợi loss -{format_vnd_full(loss_trigger_usd)}",
                         )
                     )
 
@@ -2737,7 +2902,7 @@ class TradeManager:
                     if steps >= 1:
                         if cash_strat == "LOCK (Tight)":
                             locked_profit_usd = trigger_usd + (steps * step_usd)
-                            cash_lock_label = f"CASH Lock ${locked_profit_usd:.2f}"
+                            cash_lock_label = f"CASH Lock {format_vnd_full(locked_profit_usd)}"
                         elif cash_strat == "SOFT LOCK (Buffer)":
                             target_profit_usd = trigger_usd + (steps * step_usd)
                             buffer_type = tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD")
@@ -2776,15 +2941,15 @@ class TradeManager:
                                 else 0.0
                             )
                             cash_lock_label = (
-                                f"CASH SoftLock ${locked_profit_usd:.2f}"
-                                f" (Target ${target_profit_usd:.2f} - Buffer ${buffer_usd:.2f})"
+                                f"CASH SoftLock {format_vnd_full(locked_profit_usd)}"
+                                f" (Target {format_vnd_full(target_profit_usd)} - Buffer {format_vnd_full(buffer_usd)})"
                             )
                         else:
                             locked_profit_usd = trigger_usd + ((steps - 1) * step_usd)
-                            cash_lock_label = f"CASH Trail ${locked_profit_usd:.2f}"
+                            cash_lock_label = f"CASH Trail {format_vnd_full(locked_profit_usd)}"
                     elif cash_strat == "LOCK (Tight)":
                         locked_profit_usd = trigger_usd
-                        cash_lock_label = f"CASH Lock ${locked_profit_usd:.2f}"
+                        cash_lock_label = f"CASH Lock {format_vnd_full(locked_profit_usd)}"
                     elif cash_strat == "SOFT LOCK (Buffer)":
                         buffer_type = tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD")
                         buffer_val = float(tsl_cfg.get("BE_CASH_SOFT_BUFFER", 3.0))
@@ -2822,8 +2987,8 @@ class TradeManager:
                             else 0.0
                         )
                         cash_lock_label = (
-                            f"CASH SoftLock ${locked_profit_usd:.2f}"
-                            f" (Trig ${trigger_usd:.2f} - Buffer ${buffer_usd:.2f})"
+                            f"CASH SoftLock {format_vnd_full(locked_profit_usd)}"
+                            f" (Trig {format_vnd_full(trigger_usd)} - Buffer {format_vnd_full(buffer_usd)})"
                         )
 
                     # Quy đổi lợi nhuận USD muốn khóa ra khoảng cách giá (Price Distance)
@@ -2850,14 +3015,14 @@ class TradeManager:
                     milestones.append(
                         (
                             trigger_usd - profit_usd,
-                            f"CASH Đợi Trig (${trigger_usd:.2f})",
+                            f"CASH Đợi Trig ({format_vnd_full(trigger_usd)})",
                         )
                     )
                 else:
                     extra_profit = profit_usd - trigger_usd
                     steps = math.floor(extra_profit / step_usd) if step_usd > 0 else 0
                     next_target_usd = trigger_usd + (steps + 1) * step_usd
-                    milestone_label = f"CASH Đợi Step {steps + 1} (${next_target_usd:.2f})"
+                    milestone_label = f"CASH Đợi Step {steps + 1} ({format_vnd_full(next_target_usd)})"
                     if tsl_cfg.get("BE_CASH_STRAT", "TRAILING (Gap)") == "SOFT LOCK (Buffer)":
                         buffer_type = tsl_cfg.get("BE_CASH_SOFT_BUFFER_TYPE", "USD")
                         buffer_val = float(tsl_cfg.get("BE_CASH_SOFT_BUFFER", 3.0))
@@ -2892,8 +3057,8 @@ class TradeManager:
                         if target_usd - buffer_usd <= 0:
                             locked_usd = 0.0
                         milestone_label = (
-                            f"CASH SoftLock ${locked_usd:.2f}; "
-                            f"đợi Step {steps + 1} (${next_target_usd:.2f})"
+                            f"CASH SoftLock {format_vnd_full(locked_usd)}; "
+                            f"đợi Step {steps + 1} ({format_vnd_full(next_target_usd)})"
                         )
                     milestones.append(
                         (

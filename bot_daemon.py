@@ -74,13 +74,92 @@ class StandaloneBotDaemon:
         self.dca_pca_interval = 2
         self.last_dca_pca_scan = 0
         self.pending_signals = []
-        self.heartbeat_contexts = {}
+        self.heartbeat_contexts, restored_symbols = self._restore_heartbeat_snapshot()
         self.last_entry_signal_times = {}
         self._tick_thread = None
-        self._active_symbols = []
-        # Khôi phục file tín hiệu ngay khi daemon khởi động, kể cả ngoài phiên.
-        # File dở do lần tắt/crash trước vì vậy không tồn tại tới phiên kế tiếp.
-        self._atomic_write_signals([])
+        self._active_symbols = restored_symbols
+        # Chỉ dọn hàng đợi lệnh cũ. Context cuối dùng cho giá/Preview phải được giữ
+        # qua lần restart, đặc biệt khi app mở lại sau giờ giao dịch và không thể quét lại.
+        self._atomic_write_signals(self._active_symbols)
+
+    def _restore_heartbeat_snapshot(self):
+        """Khôi phục context hiển thị cuối; không khôi phục pending order signal."""
+        contexts = {}
+        active_symbols = []
+        try:
+            with open(SIGNAL_FILE, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            heartbeat = payload.get("brain_heartbeat", {}) if isinstance(payload, dict) else {}
+            saved_contexts = heartbeat.get("contexts", {}) if isinstance(heartbeat, dict) else {}
+            saved_symbols = heartbeat.get("active_symbols", []) if isinstance(heartbeat, dict) else []
+            if isinstance(saved_contexts, dict):
+                contexts.update(
+                    (str(symbol).upper(), dict(context))
+                    for symbol, context in saved_contexts.items()
+                    if isinstance(context, dict) and not str(symbol).startswith("__")
+                )
+            if isinstance(saved_symbols, list):
+                active_symbols = [str(symbol).upper() for symbol in saved_symbols if str(symbol).strip()]
+        except (OSError, ValueError, TypeError):
+            pass
+
+        # Nếu file heartbeat đã từng bị ghi rỗng, lấy bản tổng hợp cuối ngày làm
+        # phương án khôi phục tối thiểu cho giá, trend và market mode trên Preview.
+        if not contexts:
+            try:
+                account_root = os.path.dirname(os.path.abspath(SIGNAL_FILE))
+                # Đọc cache cũ trước để còn fallback CKPS, sau đó CKCS RAW DATA
+                # mới ghi đè bằng bản mới hơn. Cả hai đều nằm cùng workspace với
+                # live_signals nên đổi tài khoản không thể đọc nhầm thư mục.
+                cache_candidates = [
+                    os.path.join(account_root, "scan_snapshot_cache.json"),
+                    os.path.join(account_root, "ckcs_research", "scan_snapshot_cache.json"),
+                ]
+                for cache_path in cache_candidates:
+                    if not os.path.isfile(cache_path):
+                        continue
+                    try:
+                        with open(cache_path, "r", encoding="utf-8") as handle:
+                            cache = json.load(handle)
+                    except (OSError, ValueError, TypeError):
+                        continue
+                    symbols = cache.get("symbols", {}) if isinstance(cache, dict) else {}
+                    for symbol, symbol_data in symbols.items():
+                        days = symbol_data.get("days", {}) if isinstance(symbol_data, dict) else {}
+                        if not isinstance(days, dict) or not days:
+                            continue
+                        day = days[sorted(days)[-1]]
+                        if not isinstance(day, dict):
+                            continue
+                        price = day.get("price", {}) if isinstance(day.get("price"), dict) else {}
+                        bot = day.get("bot", {}) if isinstance(day.get("bot"), dict) else {}
+                        current = float(price.get("current", price.get("close", 0.0)) or 0.0)
+                        context = dict(bot)
+                        if current > 0:
+                            context.update(
+                                {
+                                    "current_price": current,
+                                    "bid": current,
+                                    "ask": current,
+                                    "spread": 0.0,
+                                    "synthetic_quote": True,
+                                }
+                            )
+                        if context:
+                            contexts[str(symbol).upper()] = context
+                if not active_symbols:
+                    active_symbols = list(contexts)
+            except (OSError, ValueError, TypeError):
+                pass
+
+        if not active_symbols:
+            configured = getattr(
+                config,
+                "BOT_ACTIVE_SYMBOLS",
+                getattr(config, "SYMBOLS", []),
+            )
+            active_symbols = [str(symbol).upper() for symbol in (configured or []) if str(symbol).strip()]
+        return contexts, active_symbols
 
     def _get_entry_signal_cooldown(self, symbol):
         try:
@@ -328,24 +407,36 @@ class StandaloneBotDaemon:
                     "BOT_ACTIVE",
                     live_cfg.get("AUTO_TRADE_ENABLED", getattr(config, "AUTO_TRADE_ENABLED", False)),
                 )
-                symbols = live_cfg.get(
+                trade_symbols = live_cfg.get(
                     "BOT_ACTIVE_SYMBOLS",
                     getattr(config, "BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", [])),
                 )
-                self._active_symbols = symbols
                 self._scan_snapshot_enabled = bool(
                     live_cfg.get(
                         "SCAN_SNAPSHOT_ENABLED",
                         getattr(config, "SCAN_SNAPSHOT_ENABLED", True),
                     )
                 )
+                raw_symbols = live_cfg.get(
+                    "SCAN_SNAPSHOT_SYMBOLS",
+                    getattr(
+                        config,
+                        "SCAN_SNAPSHOT_SYMBOLS",
+                        list(getattr(config, "CKPS_SYMBOLS", []) or [])
+                        + list(getattr(config, "CKCS_WATCHLIST", []) or []),
+                    ),
+                )
+                trade_symbols = [str(item).upper() for item in (trade_symbols or []) if str(item).strip()]
+                raw_symbols = [str(item).upper() for item in (raw_symbols or []) if str(item).strip()]
+                symbols = list(dict.fromkeys(trade_symbols + (raw_symbols if self._scan_snapshot_enabled else [])))
+                self._active_symbols = symbols
 
                 def finalize_scan_day():
-                    if not self._scan_snapshot_enabled:
+                    if not self._scan_snapshot_enabled or not raw_symbols:
                         return
                     try:
                         from ai_advisor.scan_cache import recorder as _scan_recorder
-                        if _scan_recorder.finalize_closed_day(symbols):
+                        if _scan_recorder.finalize_closed_day(raw_symbols):
                             _scan_recorder.flush()
                     except Exception as exc:
                         logger.debug("scan_cache finalize lỗi: %s", exc)
@@ -412,6 +503,13 @@ class StandaloneBotDaemon:
                         )
                     except Exception:
                         pass
+                if "SCAN_SNAPSHOT_RETENTION_DAYS" in live_cfg:
+                    try:
+                        config.SCAN_SNAPSHOT_RETENTION_DAYS = max(
+                            1, int(live_cfg.get("SCAN_SNAPSHOT_RETENTION_DAYS"))
+                        )
+                    except Exception:
+                        pass
                 for _ttl_key in (
                     "DNSE_TICK_CACHE_TTL_SECONDS",
                     "DNSE_OHLC_CACHE_TTL_SECONDS",
@@ -428,7 +526,12 @@ class StandaloneBotDaemon:
 
                 # 1. QUÉT TÍN HIỆU ENTRY (Chu kỳ động)
                 if symbols and (now - last_signal_scan >= daemon_delay):
-                    self._scan_signals(symbols, bot_active)
+                    self._scan_signals(
+                        symbols,
+                        bot_active,
+                        trade_symbols=trade_symbols,
+                        raw_symbols=raw_symbols,
+                    )
                     last_signal_scan = now
                     self._atomic_write_signals(symbols)
 
@@ -448,8 +551,10 @@ class StandaloneBotDaemon:
                 logger.exception("Lỗi Loop trong Daemon")
                 time.sleep(2)
 
-    def _scan_signals(self, symbols, bot_active):
+    def _scan_signals(self, symbols, bot_active, trade_symbols=None, raw_symbols=None):
         signal_debug_state = {}
+        trade_symbols = {str(item).upper() for item in (trade_symbols if trade_symbols is not None else symbols)}
+        raw_symbols = {str(item).upper() for item in (raw_symbols if raw_symbols is not None else symbols)}
 
         for sym in symbols:
             if not self.running:
@@ -478,13 +583,19 @@ class StandaloneBotDaemon:
                 self.heartbeat_contexts[sym] = context.copy()
                 self.heartbeat_contexts[sym].update({"timestamp": time.time()})
 
-            # [SCAN SNAPSHOT] Lưu kết quả quét vào kho cho AI Advisor (opt-in, lỗi lưu trữ không được gãy scan)
-            if getattr(self, "_scan_snapshot_enabled", False):
+            # CKCS RAW DATA độc lập với BOT Advisor; lỗi lưu trữ không được làm gãy vòng quét.
+            if getattr(self, "_scan_snapshot_enabled", False) and sym in raw_symbols:
                 try:
                     from ai_advisor.scan_cache import recorder as _scan_recorder
                     _scan_recorder.maybe_record(sym, dfs, context, signal)
                 except Exception as e:
                     logger.debug(f"scan_cache maybe_record lỗi ({sym}): {e}")
+
+            # Mã chỉ được chọn cho RAW DATA dừng tại đây: có dữ liệu và context,
+            # nhưng không phát signal sang hàng chờ, không tạo gợi ý/lệnh BOT.
+            if sym not in trade_symbols:
+                signal_debug_state[sym] = "[RAW DATA] Đã cập nhật, không có quyền đặt lệnh"
+                continue
 
             if not is_open:
                 signal_debug_state[sym] = f"[PAUSE/PREVIEW] {closed_reason}"

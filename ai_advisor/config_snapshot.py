@@ -232,8 +232,6 @@ def _advisor_guide():
             "advisor_export.xlsx": "Filtered trade/config/event view for the selected export window.",
             "user_context.md": "Human notes, goals, constraints, and questions from the operator.",
             "expert_context.md": "Expert research/notes supplied by the operator for comparison.",
-            "scan_summary.md": "Compact dynamic CHECK report; CHECK never controls orders.",
-            "scan_report.md": "Full N-day dynamic CHECK report with configuration segments.",
         },
         "timeframe_groups": {
             "G0": "Macro/base timeframe, usually highest timeframe.",

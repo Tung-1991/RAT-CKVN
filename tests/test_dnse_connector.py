@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import config
-from core.dnse_connector import DNSEConnector, BrokerOrderResult, BrokerTick
+from core.dnse_connector import DNSEConnector, BrokerFeeProfile, BrokerOrderResult, BrokerTick
 from core import settlement_ledger
 
 
@@ -453,6 +453,59 @@ def test_fee_profile_maps_dnse_loan_package(monkeypatch):
     expected_fixed = 2000 + config.DNSE_EXCHANGE_FEE_PER_CONTRACT + config.DNSE_CLEARING_FEE_PER_CONTRACT
     assert profile.estimate_fee(1800, 1, side="BUY") == pytest.approx(expected_fixed + expected_tax)
     assert profile.source == "dnse_loan_package"
+
+
+def test_derivative_margin_capacity_uses_dnse_ppse_even_when_ui_is_paper(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    session = FakeSession([
+        FakeResponse(200, {
+            "loanPackages": [{
+                "id": 2279,
+                "initialRate": 0.1848,
+                "tradingFee": {"fixedTradingFee": 2000},
+            }]
+        }),
+        FakeResponse(200, {
+            "stock": {"totalCash": 100_000_000, "availableCash": 100_000_000},
+            "derivative": {"remainSecure": 40_000_000, "usedSecure": 5_000_000},
+        }),
+        FakeResponse(200, {"qmaxBuy": 1, "qmaxSell": 2, "price": 1896.9}),
+    ])
+    conn = _connector(session)
+    conn._symbol_map = {"VN30F1M": "41I1G6000"}
+    conn._symbol_map_ts = 9999999999
+
+    result = conn.get_derivative_margin_capacity(
+        "VN30F1M", 1896.9, paper_mode=False, force_refresh=True
+    )
+
+    assert result["source"] == "DNSE_PPSE"
+    assert result["margin_per_contract"] == pytest.approx(35_054_712)
+    assert result["remaining_secure"] == 40_000_000
+    assert result["used_secure"] == 5_000_000
+    assert result["qmax_buy"] == 1
+    assert result["qmax_sell"] == 2
+    assert session.calls[-1]["url"].endswith("/accounts/ACC1/ppse")
+    assert session.calls[-1]["params"]["symbol"] == "41I1G6000"
+
+
+def test_derivative_margin_capacity_paper_is_separate_from_real_api(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "PAPER_INITIAL_BALANCE", 100_000_000.0)
+    conn = _connector(FakeSession([]))
+    conn._fee_profile_cache["VN30F1M"] = BrokerFeeProfile(
+        initial_margin_rate=0.20,
+        point_value=100_000.0,
+    )
+    conn._fee_profile_cache_ts["VN30F1M"] = time.time()
+
+    result = conn.get_derivative_margin_capacity("VN30F1M", 2000.0, paper_mode=True)
+
+    assert result["source"] == "PAPER_ESTIMATE"
+    assert result["margin_per_contract"] == 40_000_000
+    assert result["remaining_secure"] == 100_000_000
+    assert result["qmax_buy"] == 2
+    assert result["qmax_sell"] == 2
 
 
 def test_real_403_returns_account_pending_and_mutes(monkeypatch, caplog):

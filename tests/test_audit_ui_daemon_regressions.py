@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import bot_daemon
+import config
 import main
 from core import market_hours
 
@@ -267,8 +268,116 @@ def test_daemon_startup_replaces_stale_invalid_signal_file(monkeypatch, tmp_path
 
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert payload["brain_heartbeat"]["status"] == "HEALTHY"
-    assert payload["brain_heartbeat"]["active_symbols"] == []
+    assert payload["brain_heartbeat"]["active_symbols"] == daemon._active_symbols
     assert payload["pending_signals"] == []
+
+
+def test_daemon_startup_preserves_last_preview_context_but_clears_old_signals(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    target.write_text(
+        json.dumps(
+            {
+                "brain_heartbeat": {
+                    "status": "HEALTHY",
+                    "active_symbols": ["AAA"],
+                    "contexts": {"AAA": {"current_price": 7.15, "atr_G2": 0.08}},
+                },
+                "pending_signals": [{"signal_id": "stale-order"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(target) + ".tmp")
+
+    class Connector:
+        def connect(self):
+            return True
+
+        def get_account_info(self):
+            return None
+
+    monkeypatch.setattr(bot_daemon, "DNSEConnector", Connector)
+    daemon = bot_daemon.StandaloneBotDaemon()
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert daemon.heartbeat_contexts["AAA"]["current_price"] == 7.15
+    assert payload["brain_heartbeat"]["contexts"]["AAA"]["atr_G2"] == 0.08
+    assert payload["pending_signals"] == []
+
+
+def test_daemon_restores_preview_price_from_scan_cache_when_heartbeat_is_empty(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    target.write_text(
+        json.dumps({"brain_heartbeat": {"active_symbols": [], "contexts": {}}, "pending_signals": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "scan_snapshot_cache.json").write_text(
+        json.dumps(
+            {
+                "symbols": {
+                    "AAA": {
+                        "days": {
+                            "2026-07-20": {
+                                "price": {"current": 7.15},
+                                "bot": {"trend_G0": "DOWN", "market_mode": "TREND"},
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(target) + ".tmp")
+
+    class Connector:
+        def connect(self):
+            return True
+
+        def get_account_info(self):
+            return None
+
+    monkeypatch.setattr(bot_daemon, "DNSEConnector", Connector)
+    daemon = bot_daemon.StandaloneBotDaemon()
+
+    assert daemon.heartbeat_contexts["AAA"]["current_price"] == 7.15
+    assert daemon.heartbeat_contexts["AAA"]["synthetic_quote"] is True
+    assert daemon.heartbeat_contexts["AAA"]["market_mode"] == "TREND"
+
+
+def test_raw_only_symbol_is_scanned_but_cannot_emit_bot_signal(monkeypatch):
+    from ai_advisor.scan_cache import recorder
+
+    daemon = bot_daemon.StandaloneBotDaemon.__new__(bot_daemon.StandaloneBotDaemon)
+    daemon.running = True
+    daemon.heartbeat_contexts = {}
+    daemon._scan_snapshot_enabled = True
+    emitted = []
+    recorded = []
+    daemon._add_signal = lambda *args, **kwargs: emitted.append((args, kwargs))
+    daemon._write_signal_debugger = lambda state: None
+    monkeypatch.setattr(bot_daemon, "is_symbol_trade_window_open", lambda symbol: (True, "OPEN"))
+    monkeypatch.setattr(
+        bot_daemon.data_engine,
+        "fetch_data_v4",
+        lambda symbol: ({"G0": object()}, {"current_price": 10.0}),
+    )
+    monkeypatch.setattr(bot_daemon.signal_generator, "generate_signal_v4", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(recorder, "maybe_record", lambda symbol, *args, **kwargs: recorded.append(symbol))
+    monkeypatch.setattr(recorder, "flush", lambda: None)
+
+    daemon._scan_signals(
+        ["HPG"],
+        bot_active=True,
+        trade_symbols=[],
+        raw_symbols=["HPG"],
+    )
+
+    assert recorded == ["HPG"]
+    assert emitted == []
+    assert daemon.heartbeat_contexts["HPG"]["current_price"] == 10.0
 
 
 def test_atomic_signal_writes_are_serialized_and_use_unique_temp_files(monkeypatch, tmp_path):
@@ -438,3 +547,43 @@ def test_round_trip_fee_uses_open_and_close_sides():
         ("VN30F1M", 1800.0, 2, "BUY"),
         ("VN30F1M", 1790.0, 2, "SELL"),
     ]
+
+
+def test_stock_price_ui_follows_zero_trim_but_internal_stays_dnse_scale(monkeypatch):
+    app = main.BotUI.__new__(main.BotUI)
+    app.cbo_symbol = _Var("AAA")
+
+    monkeypatch.setattr(config, "MONEY_DISPLAY_ZERO_TRIM", "000", raising=False)
+    assert main.BotUI._fmt_price(app, 7.21, "AAA") == "7.21"
+    assert main.BotUI._price_input_to_internal(app, "7.21", "AAA") == 7.21
+    assert main.BotUI._price_internal_to_input(app, 7.21, "AAA") == "7.21"
+
+    monkeypatch.setattr(config, "MONEY_DISPLAY_ZERO_TRIM", "NONE", raising=False)
+    assert main.BotUI._fmt_price(app, 7.21, "AAA") == "7,210"
+    assert main.BotUI._price_input_to_internal(app, "7210", "AAA") == 7.21
+    assert main.BotUI._price_internal_to_input(app, 7.21, "AAA") == "7210"
+
+    assert main.BotUI._fmt_price(app, 1800.5, "VN30F1M") == "1800.50"
+    assert main.BotUI._price_input_to_internal(app, "1800.5", "VN30F1M") == 1800.5
+
+
+def test_money_font_auto_shrinks_but_never_below_minimum():
+    size = main.BotUI._responsive_money_font_size
+
+    assert size("99,337", 32, 18, 8) == 32
+    assert size("99,337,000", 32, 18, 8) < 32
+    assert size("PNL: -999,999,999,999,999", 17, 11, 14) == 11
+
+
+def test_header_pnl_includes_realized_and_open_positions():
+    positions = [
+        SimpleNamespace(profit=-181862.0, swap=0.0),
+        SimpleNamespace(profit=-235252.0, swap=-10.0),
+        SimpleNamespace(profit=-243813.0, swap=0.0),
+    ]
+
+    total, realized, floating = main.BotUI._combined_display_pnl(50000.0, positions)
+
+    assert realized == 50000.0
+    assert floating == -660937.0
+    assert total == -610937.0

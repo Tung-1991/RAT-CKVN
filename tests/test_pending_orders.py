@@ -2,6 +2,7 @@
 import json
 import os
 
+import config
 from core import pending_orders, storage_manager
 
 
@@ -87,3 +88,58 @@ def test_expired_pending_order_is_not_claimed(monkeypatch, tmp_path):
     assert due == []
     stored = pending_orders.list_all()[0]
     assert stored["status"] == pending_orders.EXPIRED
+
+
+def test_pending_orders_never_cross_paper_real(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    paper = pending_orders.add_order(
+        symbol="VN30F1M", side="BUY", preset="SCALPING", target="OPEN", entry_price=1200
+    )
+    assert paper["execution_mode"] == "PAPER"
+
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    assert pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=paper["created_at"] + 1) == []
+    real = pending_orders.add_order(
+        symbol="VN30F1M", side="BUY", preset="SCALPING", target="OPEN", entry_price=1200
+    )
+    assert real["execution_mode"] == "REAL"
+    due = pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=real["created_at"] + 1)
+    assert [item["id"] for item in due] == [real["id"]]
+
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    due = pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=paper["created_at"] + 2)
+    assert [item["id"] for item in due] == [paper["id"]]
+
+
+def test_limit_opportunity_waits_for_price_and_uses_nearest_allowed_tick(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    item = pending_orders.add_order(
+        symbol="AAA",
+        side="BUY",
+        preset="SCALPING",
+        target="OPEN",
+        entry_price=7.20,
+        entry_mode="LIMIT",
+        wait_for_trigger=True,
+        trigger_price=7.20,
+        slippage_ticks=2,
+    )
+
+    assert pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 1,
+        quote_fn=lambda _symbol, _side: 7.25,
+        point_fn=lambda _symbol: 0.01,
+    ) == []
+
+    due = pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 2,
+        quote_fn=lambda _symbol, _side: 7.215,
+        point_fn=lambda _symbol: 0.01,
+    )
+    assert len(due) == 1
+    assert due[0]["entry_price"] == 7.22
+    assert due[0]["wait_for_trigger"] is False

@@ -99,6 +99,21 @@ def test_volume_block_closed_market(dfs):
     assert snap["volume"]["projected_ratio"] is None
 
 
+def test_intraday_builds_today_ohlcv_when_daily_bar_is_not_finished():
+    dfs = {
+        "G0": make_daily_df(last_is_today=False),
+        "G2": make_intraday_df(bars=8),
+    }
+    snap = scan_cache.compute_snapshot(dfs, make_context(price=30.07), 0, now=NOW)
+    intraday = dfs["G2"]
+    today = intraday[intraday["time"].dt.date == NOW.date()]
+    assert snap["price"]["open"] == today.iloc[0]["open"]
+    assert snap["price"]["high"] == today["high"].max()
+    assert snap["price"]["low"] == today["low"].min()
+    assert snap["price"]["close"] == 30.07
+    assert snap["volume"]["today"] == today["volume"].sum()
+
+
 def test_check_indicator_extraction_is_dynamic(dfs):
     dfs["G0"]["MACD_12_26_9"] = 0.15
     dfs["G0"]["MACDh_12_26_9"] = 0.03
@@ -172,6 +187,50 @@ def test_save_load_round_trip(tmp_account, dfs):
     assert loaded["symbols"]["HPG"]["days"][NOW.strftime("%Y-%m-%d")]["samples"] == 1
 
 
+def test_scan_settings_survive_brain_settings_reload(monkeypatch, tmp_path):
+    import core.storage_manager as storage_manager
+    from ai_advisor import history
+
+    monkeypatch.setattr(storage_manager, "BRAIN_FILE", str(tmp_path / "brain_settings.json"))
+    monkeypatch.setattr(history, "ensure_config_snapshot", lambda reason="": "test")
+    monkeypatch.setattr(history, "record_event", lambda *args, **kwargs: None)
+    storage_manager.invalidate_settings_cache()
+    brain = storage_manager.load_brain_settings()
+    brain["SCAN_SNAPSHOT_ENABLED"] = False
+    brain["SCAN_SNAPSHOT_INTERVAL_MINUTES"] = 12.5
+    brain["SCAN_SNAPSHOT_RETENTION_DAYS"] = 250
+    brain["SCAN_SNAPSHOT_SYMBOLS"] = ["VN30F1M", "HPG"]
+    assert storage_manager.save_brain_settings(brain) is True
+    storage_manager.invalidate_settings_cache()
+    loaded = storage_manager.load_brain_settings()
+    assert loaded["SCAN_SNAPSHOT_ENABLED"] is False
+    assert loaded["SCAN_SNAPSHOT_INTERVAL_MINUTES"] == 12.5
+    assert loaded["SCAN_SNAPSHOT_RETENTION_DAYS"] == 250
+    assert loaded["SCAN_SNAPSHOT_SYMBOLS"] == ["VN30F1M", "HPG"]
+
+
+def test_legacy_cache_migration_keeps_all_selected_market_symbols(tmp_account, dfs):
+    cache = scan_cache.empty_cache()
+    snap = scan_cache.compute_snapshot(dfs, make_context(), 1, now=NOW)
+    scan_cache.merge_sample(cache, "HPG", snap, now=NOW)
+    scan_cache.merge_sample(cache, "VN30F1M", snap, now=NOW)
+    legacy = paths.legacy_scan_cache_path()
+    assert scan_cache.save_cache(cache, legacy) is True
+
+    migrated = scan_cache.load_cache()
+    assert set(migrated["symbols"]) == {"HPG", "VN30F1M"}
+    assert paths.scan_cache_path() != legacy
+    assert __import__("os").path.isfile(legacy)
+    assert __import__("os").path.isfile(paths.scan_cache_path())
+
+
+def test_recorder_accepts_derivative_when_selected_for_raw_data(tmp_account, dfs):
+    rec = scan_cache.ScanSnapshotRecorder()
+    assert rec.maybe_record("VN30F1M", dfs, make_context(), 1, now=NOW) is True
+    rec.flush()
+    assert "VN30F1M" in scan_cache.load_cache()["symbols"]
+
+
 def test_load_corrupt_file_recovers(tmp_account, tmp_path):
     (tmp_path / "scan_snapshot_cache.json").write_text("{hỏng json", encoding="utf-8")
     loaded = scan_cache.load_cache()
@@ -200,6 +259,7 @@ def test_recorder_eod_final(tmp_account, monkeypatch, dfs):
     monkeypatch.setattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15, raising=False)
     rec = scan_cache.ScanSnapshotRecorder()
     now_closed = NOW.replace(hour=15, minute=5)
+    rec.maybe_record("HPG", dfs, make_context(market_open=True), 0, now=NOW)
     ctx = make_context(market_open=False)
     rec.maybe_record("HPG", dfs, ctx, 0, now=now_closed)
     rec.flush()
@@ -211,6 +271,19 @@ def test_recorder_eod_final(tmp_account, monkeypatch, dfs):
     rec.maybe_record("HPG", dfs, ctx, 0, now=now_closed + timedelta(minutes=30))
     rec.flush()
     assert scan_cache.load_cache()["symbols"]["HPG"]["days"][day]["samples"] == entry["samples"]
+
+
+def test_after_1445_does_not_create_new_daily_snapshot(tmp_account, dfs):
+    rec = scan_cache.ScanSnapshotRecorder()
+    rec.maybe_record(
+        "HPG",
+        dfs,
+        make_context(market_open=False),
+        0,
+        now=NOW.replace(hour=15, minute=0),
+    )
+    rec.flush()
+    assert scan_cache.load_cache()["symbols"] == {}
 
 
 def test_finalize_closed_day_does_not_create_extra_sample(tmp_account, dfs):
@@ -258,32 +331,78 @@ def test_full_report_render(dfs):
     assert "BOT signal" in text
 
 
-def test_export_scan_files_and_api_section(tmp_account, dfs):
+def test_export_ckcs_report_is_separate_from_advisor_api(tmp_account, dfs, monkeypatch):
     from ai_advisor import api_client, scan_report
+    monkeypatch.setattr(scan_cache, "selected_research_symbols", lambda: ["HPG"])
 
-    # Kho trống -> không sinh file, section không được thêm
-    assert scan_report.export_scan_files() is None
+    # Kho trống -> không sinh file; Advisor API không có dữ liệu quét CKCS.
+    assert scan_report.export_ckcs_report() is None
     sections = dict(api_client.build_api_sections())
     assert "scan_summary.md" not in sections
+    assert "scan_report.md" not in sections
 
     cache = _build_populated_cache(dfs)
+    snap = scan_cache.compute_snapshot(dfs, make_context(), 1, now=NOW)
+    scan_cache.merge_sample(cache, "VN30F1M", snap, now=NOW)
     scan_cache.save_cache(cache)
-    result = scan_report.export_scan_files()
+    result = scan_report.export_ckcs_report(report_days=15)
     assert result is not None and result["symbols"] == 1
     import os
-    assert os.path.exists(paths.scan_summary_path())
     assert os.path.exists(paths.scan_report_path())
+    assert not os.path.exists(os.path.join(paths.advisor_root(), "scan_summary.md"))
+    report_text = open(paths.scan_report_path(), encoding="utf-8").read()
+    assert "## HPG" in report_text
+    assert "## VN30F1M" not in report_text
+
+    monkeypatch.setattr(scan_cache, "selected_research_symbols", lambda: ["HPG", "VN30F1M"])
+    result = scan_report.export_ckcs_report(report_days=15)
+    assert result["symbols"] == 2
+    assert "## VN30F1M" in open(paths.scan_report_path(), encoding="utf-8").read()
 
     sections = dict(api_client.build_api_sections())
-    assert "scan_summary.md" in sections
-    assert "## HPG" in sections["scan_summary.md"]
+    assert "scan_summary.md" not in sections
+    assert "scan_report.md" not in sections
 
+
+def test_copy_for_llm_combines_private_context_and_raw_report(tmp_account):
+    import main
+
+    paths.ensure_ckcs_research_dir()
+    with open(paths.scan_report_path(), "w", encoding="utf-8") as handle:
+        handle.write("RAW MARKET DATA")
+    with open(paths.research_private_context_path(), "w", encoding="utf-8") as handle:
+        handle.write("PRIVATE OPINION")
+
+    class FakeApp:
+        clipboard = ""
+        status = ""
+
+        def clipboard_clear(self):
+            self.clipboard = ""
+
+        def clipboard_append(self, text):
+            self.clipboard += text
+
+        def update(self):
+            return None
+
+        def _set_ckcs_raw_status(self, text, error=""):
+            self.status = text
+
+    app = FakeApp()
+    main.BotUI.copy_ckcs_report_ui(app)
+    assert "PRIVATE OPINION" in app.clipboard
+    assert "RAW MARKET DATA" in app.clipboard
+    assert app.clipboard.index("PRIVATE OPINION") < app.clipboard.index("RAW MARKET DATA")
+    assert "private context" in app.status
 
 def test_recorder_skips_non_trading_day(tmp_account, monkeypatch):
     """Cuối tuần: nến ngày cuối KHÔNG phải hôm nay -> không tạo entry rác."""
     monkeypatch.setattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15, raising=False)
-    dfs_stale = {"G0": make_daily_df(last_is_today=False), "G1": make_intraday_df(),
-                 "G2": make_intraday_df(), "G3": make_intraday_df()}
+    intraday_stale = make_intraday_df()
+    intraday_stale["time"] = intraday_stale["time"] - timedelta(days=1)
+    dfs_stale = {"G0": make_daily_df(last_is_today=False), "G1": intraday_stale,
+                 "G2": intraday_stale, "G3": intraday_stale}
     rec = scan_cache.ScanSnapshotRecorder()
     rec.maybe_record("HPG", dfs_stale, make_context(market_open=False), 0, now=NOW)
     rec.flush()

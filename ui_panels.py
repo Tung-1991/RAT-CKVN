@@ -704,6 +704,15 @@ def setup_right_panel(app, parent):
         f_head, text="DANH SÁCH LỆNH ĐANG CHẠY", font=("Roboto", 16, "bold")
     ).pack(side="left")
 
+    try:
+        from core import signal_opportunities
+
+        app.var_show_bot_opportunities.set(
+            bool(signal_opportunities.load_settings().get("show_in_running_table", True))
+        )
+    except Exception:
+        app.var_show_bot_opportunities.set(True)
+
     ctk.CTkButton(
         f_head,
         text="Lịch sử",
@@ -714,7 +723,26 @@ def setup_right_panel(app, parent):
     ).pack(side="right")
     ctk.CTkButton(
         f_head,
-        text="📊 Danh mục CP",
+        text="? Màu",
+        width=62,
+        height=24,
+        command=app.show_running_color_legend,
+        fg_color="#5D4037",
+        hover_color="#795548",
+    ).pack(side="right", padx=(5, 0))
+    ctk.CTkCheckBox(
+        f_head,
+        text="Hiện gợi ý",
+        variable=app.var_show_bot_opportunities,
+        command=app.on_show_bot_opportunities_change,
+        width=95,
+        checkbox_width=20,
+        checkbox_height=20,
+        font=("Roboto", 11),
+    ).pack(side="right", padx=5)
+    ctk.CTkButton(
+        f_head,
+        text="📊 Danh mục",
         width=130,
         height=24,
         command=app.open_portfolio_popup,
@@ -740,9 +768,11 @@ def setup_right_panel(app, parent):
         command=app.close_selected_trades,
     ).pack(side="right", padx=5)
 
-    # 2. TREEVIEW CONTAINER
-    f_tree_container = ctk.CTkFrame(parent, fg_color="#2b2b2b")
-    f_tree_container.pack(fill="both", expand=True)
+    # 2. BỐN BẢNG TÁCH CKPS/CKCS × REAL/PAPER để không lẫn lệnh và PnL.
+    running_tabs = ctk.CTkTabview(parent, fg_color="#2b2b2b")
+    running_tabs.pack(fill="both", expand=True)
+    running_scope_names = ["CKPS REAL", "CKCS REAL", "CKPS PAPER", "CKCS PAPER"]
+    running_frames = {name: running_tabs.add(name) for name in running_scope_names}
 
     style = ttk.Style()
     style.theme_use("clam")
@@ -774,25 +804,6 @@ def setup_right_panel(app, parent):
         "Status",
         "X",
     )
-    app.tree = ttk.Treeview(
-        f_tree_container,
-        columns=cols,
-        show="headings",
-        style="Treeview",
-        selectmode="extended",
-    )
-
-    app.tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
-    app.tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
-    # CKCS: chưa khớp = VÀNG, đã khớp = CAM (T+2 chi tiết ghi ở cột STT).
-    app.tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
-    app.tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
-    app.tree.tag_configure("local_pending", background="#5c5417", foreground="#FFF3B0")
-    app.tree.tag_configure("local_sending", background="#0b4f5c", foreground="#B2EBF2")
-    app.tree.tag_configure("dnse_order", background="#123f6b", foreground="#D7ECFF")
-    app.tree.tag_configure("dnse_partial", background="#6a3f08", foreground="#FFE0B2")
-    app.tree.tag_configure("order_failed", background="#5c1a1b", foreground="#FFCDD2")
-    app.tree.tag_configure("order_cancelled", background="#303030", foreground="#B0BEC5")
     headers = [
         "Ticket",
         "Thời gian",
@@ -817,24 +828,49 @@ def setup_right_panel(app, parent):
         "center",
     ]
 
-    for c, h, w, a in zip(cols, headers, widths, anchors):
-        if c == "PnL_MAE_MFE":
-            h = "PnL / MAE / MFE"
-        app.tree.heading(c, text=h)
-        app.tree.column(c, width=w, anchor=a, minwidth=w, stretch=False)
+    def make_running_tree(frame):
+        container = ctk.CTkFrame(frame, fg_color="#2b2b2b")
+        container.pack(fill="both", expand=True)
+        tree = ttk.Treeview(
+            container, columns=cols, show="headings", style="Treeview", selectmode="extended"
+        )
+        tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
+        tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
+        tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
+        tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
+        tree.tag_configure("local_pending", background="#5c5417", foreground="#FFF3B0")
+        tree.tag_configure("local_sending", background="#0b4f5c", foreground="#B2EBF2")
+        tree.tag_configure("dnse_order", background="#123f6b", foreground="#D7ECFF")
+        tree.tag_configure("dnse_partial", background="#6a3f08", foreground="#FFE0B2")
+        tree.tag_configure("order_failed", background="#5c1a1b", foreground="#FFCDD2")
+        tree.tag_configure("order_cancelled", background="#303030", foreground="#B0BEC5")
+        tree.tag_configure("bot_opportunity", background="#40205c", foreground="#F3E5F5")
+        for c, h, w, a in zip(cols, headers, widths, anchors):
+            tree.heading(c, text="PnL / MAE / MFE" if c == "PnL_MAE_MFE" else h)
+            tree.column(c, width=w, anchor=a, minwidth=w, stretch=False)
+        sb = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
+        sb_x = ttk.Scrollbar(container, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=sb.set, xscrollcommand=sb_x.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        sb_x.grid(row=1, column=0, sticky="ew")
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        tree.bind("<ButtonRelease-1>", app.on_tree_click)
+        tree.bind("<Button-3>", app.on_tree_right_click)
+        return tree
 
-    sb = ttk.Scrollbar(f_tree_container, orient="vertical", command=app.tree.yview)
-    sb_x = ttk.Scrollbar(f_tree_container, orient="horizontal", command=app.tree.xview)
-    app.tree.configure(yscrollcommand=sb.set, xscrollcommand=sb_x.set)
+    app.running_tabs = running_tabs
+    app.running_trees = {name: make_running_tree(running_frames[name]) for name in running_scope_names}
+    initial_scope = "CKPS PAPER" if getattr(config, "PAPER_TRADING", True) else "CKPS REAL"
+    running_tabs.set(initial_scope)
+    app.tree = app.running_trees[initial_scope]  # tương thích các đường gọi cũ
 
-    app.tree.grid(row=0, column=0, sticky="nsew")
-    sb.grid(row=0, column=1, sticky="ns")
-    sb_x.grid(row=1, column=0, sticky="ew")
-    f_tree_container.grid_rowconfigure(0, weight=1)
-    f_tree_container.grid_columnconfigure(0, weight=1)
+    def on_running_tab_change():
+        selected = running_tabs.get()
+        app.tree = app.running_trees.get(selected, app.tree)
 
-    app.tree.bind("<ButtonRelease-1>", app.on_tree_click)
-    app.tree.bind("<Button-3>", app.on_tree_right_click)
+    running_tabs.configure(command=on_running_tab_change)
 
     # 3. LOGGING CONSOLE (2 TAB: MANUAL & BOT)
     f_log = ctk.CTkFrame(parent, height=370, fg_color="#1e1e1e")

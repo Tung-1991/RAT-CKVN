@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 
+from core.money import format_vnd_full
+
 DEFAULT_MANUAL_MARGIN = {
     "ENABLE_MANUAL_MARGIN": False,
     "MARGIN_RISK_BASE": "EQUITY_NAV",
@@ -105,17 +107,17 @@ def manual_margin_check(
     equity = snap["equity"]
     max_order_value = equity * (settings["MAX_MARGIN_ORDER_VALUE_PCT"] / 100.0) if equity > 0 else 0.0
     if max_order_value > 0 and float(order_value or 0.0) > max_order_value:
-        checks.append({"name": "Margin Size", "status": "FAIL", "msg": f"value {order_value:,.0f} > cap {max_order_value:,.0f}"})
+        checks.append({"name": "Margin Size", "status": "FAIL", "msg": f"value {format_vnd_full(order_value)} > cap {format_vnd_full(max_order_value)}"})
         passed = False
     else:
-        checks.append({"name": "Margin Size", "status": "OK", "msg": f"value {float(order_value or 0.0):,.0f}"})
+        checks.append({"name": "Margin Size", "status": "OK", "msg": f"value {format_vnd_full(order_value)}"})
 
     max_loss = equity * (settings["MAX_MANUAL_MARGIN_LOSS_PCT"] / 100.0) if equity > 0 else 0.0
     if max_loss > 0 and float(risk_usd or 0.0) > max_loss:
-        checks.append({"name": "Margin Loss", "status": "FAIL", "msg": f"risk {risk_usd:,.0f} > cap {max_loss:,.0f}"})
+        checks.append({"name": "Margin Loss", "status": "FAIL", "msg": f"risk {format_vnd_full(risk_usd)} > cap {format_vnd_full(max_loss)}"})
         passed = False
     else:
-        checks.append({"name": "Margin Loss", "status": "OK", "msg": f"risk {float(risk_usd or 0.0):,.0f}"})
+        checks.append({"name": "Margin Loss", "status": "OK", "msg": f"risk {format_vnd_full(risk_usd)}"})
 
     return {"passed": passed, "checks": checks, "snapshot": snap, "settings": settings}
 
@@ -126,7 +128,7 @@ def bot_margin_block_reason(account_info: Dict[str, Any] | None, settings: Dict[
         return ""
     snap = account_snapshot(account_info, settings)
     if snap["margin_debt"] > 0:
-        return f"BOT_MARGIN_DISABLED|margin debt {snap['margin_debt']:,.0f}"
+        return f"BOT_MARGIN_DISABLED|margin debt {format_vnd_full(snap['margin_debt'])}"
     if snap["rtt"] is not None and snap["rtt"] < settings["MIN_RTT_TO_OPEN"]:
         return f"BOT_MARGIN_RTT_LOW|RTT {snap['rtt']:.1f}% < {settings['MIN_RTT_TO_OPEN']:.1f}%"
     return ""

@@ -156,6 +156,20 @@ def test_special_day_gate_only_blocks_vn30f_entry(monkeypatch):
     ) is None
 
 
+def test_ckcs_open_delay_only_blocks_bot_entry():
+    settings = _settings(avoid_ckcs_open_entry=True, ckcs_entry_delay_minutes=15)
+    blocked = market_calendar.bot_entry_block_reason(
+        "AAA", "ENTRY", settings, datetime(2026, 7, 20, 9, 29, 59)
+    )
+    assert blocked[0] == "CKCS_OPEN_ENTRY_DELAY"
+    assert market_calendar.bot_entry_block_reason(
+        "AAA", "ENTRY", settings, datetime(2026, 7, 20, 9, 30, 0)
+    ) is None
+    assert market_calendar.bot_entry_block_reason(
+        "AAA", "DCA", settings, datetime(2026, 7, 20, 9, 20, 0)
+    ) is None
+
+
 def test_market_hours_and_data_engine_do_not_fetch_ohlc_on_cached_holiday(monkeypatch, tmp_path):
     target = tmp_path / "calendar.json"
     monkeypatch.setattr(config, "MARKET_CALENDAR_CACHE_FILE", str(target), raising=False)

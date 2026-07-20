@@ -25,6 +25,10 @@ def advisor_root():
     return os.path.join(account_dir(), "advisor")
 
 
+def ckcs_research_root():
+    return os.path.join(account_dir(), "ckcs_research")
+
+
 def external_package_root():
     return os.path.join(advisor_root(), "external_package")
 
@@ -102,15 +106,19 @@ def user_context_history_path():
 
 
 def scan_cache_path():
+    return os.path.join(ckcs_research_root(), "scan_snapshot_cache.json")
+
+
+def legacy_scan_cache_path():
     return os.path.join(account_dir(), "scan_snapshot_cache.json")
 
 
-def scan_summary_path():
-    return os.path.join(advisor_root(), "scan_summary.md")
-
-
 def scan_report_path():
-    return os.path.join(advisor_root(), "scan_report.md")
+    return os.path.join(ckcs_research_root(), "scan_report.md")
+
+
+def research_private_context_path():
+    return os.path.join(ckcs_research_root(), "private_context.md")
 
 
 def ensure_advisor_dirs():
@@ -118,6 +126,11 @@ def ensure_advisor_dirs():
     os.makedirs(external_package_root(), exist_ok=True)
     os.makedirs(history_root(), exist_ok=True)
     return advisor_root()
+
+
+def ensure_ckcs_research_dir():
+    os.makedirs(ckcs_research_root(), exist_ok=True)
+    return ckcs_research_root()
 
 
 def timestamp_name():

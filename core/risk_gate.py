@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional
 
 import config
 from core import settlement, stock_rules
+from core.money import format_vnd_full
 
 DEFAULT_RISK_GATE = {
     "RISK_GATE_MAX_PCT_PS": 10.0,
@@ -117,7 +118,7 @@ def evaluate(
         return result
 
     msg = (
-        f"{symbol}: risk {risk_pct:.1f}% NAV ({est_loss:,.0f}) "
+        f"{symbol}: risk {risk_pct:.1f}% NAV ({format_vnd_full(est_loss)}) "
         f"> trần {group_label} {threshold:g}%"
     )
     result["passed"] = False

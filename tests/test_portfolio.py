@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import config
+import pytest
 from core import portfolio as p
 
 
@@ -38,6 +39,16 @@ def test_build_holding_computes_value_and_pnl(monkeypatch):
     assert row.pnl == 100 * (130000 - 120000)
     assert round(row.pnl_pct, 4) == round((130000 - 120000) / 120000 * 100, 4)
     assert row.is_odd_lot is False
+
+
+def test_board_price_in_thousand_vnd_is_scaled_for_portfolio_value(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    [row] = p.build_holdings([_pos("AAA", 500, trade_qty=500, cost=7.20, market=7.21)])
+    assert row.avg_cost == 7.20
+    assert row.market_price == 7.21
+    assert row.market_value == 500 * 7.21 * 1000
+    assert row.cost_value == 500 * 7.20 * 1000
+    assert row.pnl == pytest.approx(5_000)
 
 
 def test_pending_is_quantity_minus_sellable(monkeypatch):
@@ -203,3 +214,42 @@ def test_portfolio_summary_end_to_end(monkeypatch):
     assert summary["assets"]["stock_value"] == 13_000_000
     assert summary["assets"]["cash"] == 50_000_000
     assert summary["assets"]["total"] == 63_000_000
+
+
+def test_paper_portfolio_summary_does_not_add_stock_value_twice(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    positions = [
+        _pos("AAA", 500, trade_qty=500, cost=7.20, market=7.00),
+        _pos("POW", 200, trade_qty=200, cost=14.70, market=14.00),
+    ]
+    account_info = {
+        "status": "PAPER",
+        "balance": 100_000_000,
+        "equity": 99_800_000,
+        "cash_available": 99_800_000,
+    }
+
+    summary = p.paper_portfolio_summary(positions, account_info)
+    assets = summary["assets"]
+
+    assert assets["stock_value"] == 500 * 7_000 + 200 * 14_000
+    assert assets["total"] == 99_800_000
+    assert assets["cash"] == 99_800_000 - assets["stock_value"]
+    assert assets["cash"] + assets["stock_value"] == assets["total"]
+
+
+def test_paper_portfolio_summary_accepts_raw_paper_state_rows(monkeypatch):
+    monkeypatch.setattr(config, "CKPS_SYMBOLS", ["VN30F1M"])
+    positions = [{
+        "symbol": "AAA",
+        "volume": 500,
+        "price_open": 7.49,
+        "price_current": 7.16,
+    }]
+    summary = p.paper_portfolio_summary(
+        positions,
+        {"status": "PAPER", "balance": 100_000_000, "equity": 99_800_000},
+    )
+
+    assert summary["assets"]["stock_value"] == 500 * 7.16 * 1000
+    assert summary["assets"]["total"] == 99_800_000

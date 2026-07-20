@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import threading
+import uuid
 
 from ai_advisor import paths, scan_cache
 
@@ -105,7 +107,12 @@ def _bot_line(entry):
 
 def _daily_header(day, entry):
     price, volume = entry.get("price") or {}, entry.get("volume") or {}
-    freshness = "EOD" if entry.get("eod_final") else f"intraday {entry.get('last_scan', '—')}"
+    status = str(entry.get("day_status") or ("EOD" if entry.get("eod_final") else "INTRADAY")).upper()
+    freshness = "EOD" if status == "EOD" else (
+        f"incomplete, lần cuối {entry.get('last_scan', '—')}"
+        if status == "INCOMPLETE"
+        else f"intraday {entry.get('last_scan', '—')}"
+    )
     return [
         f"### {day} ({freshness}; cập nhật {entry.get('samples', 0)} lần)",
         (f"- Giá O/H/L/C: {_fmt(price.get('open'), 2)}/{_fmt(price.get('high'), 2)}/"
@@ -183,17 +190,40 @@ def render_full_report(cache=None, report_days=None):
     return "\n".join(parts).strip() + "\n"
 
 
-def export_scan_files(report_days=None):
+def export_ckcs_report(report_days=None):
+    """Tạo đúng một file MD đầy đủ để người dùng tự gửi LLM."""
     cache = scan_cache.load_cache()
+    selected = set(scan_cache.selected_research_symbols())
+    cache = dict(cache)
+    cache["symbols"] = {
+        symbol: node
+        for symbol, node in (cache.get("symbols", {}) or {}).items()
+        if str(symbol).upper() in selected
+    }
     if not cache.get("symbols"):
         return None
-    paths.ensure_advisor_dirs()
-    summary_text = build_compact_summary(cache, report_days=report_days)
+    paths.ensure_ckcs_research_dir()
     report_text = render_full_report(cache, report_days=report_days)
-    summary_path, report_path = paths.scan_summary_path(), paths.scan_report_path()
-    with open(summary_path, "w", encoding="utf-8") as handle:
-        handle.write(summary_text)
-    with open(report_path, "w", encoding="utf-8") as handle:
-        handle.write(report_text)
-    return {"summary": os.path.abspath(summary_path), "report": os.path.abspath(report_path),
-            "symbols": len(cache["symbols"]), "days": report_days}
+    report_path = paths.scan_report_path()
+    tmp_path = f"{report_path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(report_text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, report_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    requested_days = max(1, int(report_days or 1))
+    included_days = {
+        day
+        for node in cache["symbols"].values()
+        for day, _entry in _slice_days(node, requested_days)
+    }
+    return {
+        "report": os.path.abspath(report_path),
+        "symbols": len(cache["symbols"]),
+        "days": len(included_days),
+        "requested_days": requested_days,
+    }

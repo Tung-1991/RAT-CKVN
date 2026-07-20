@@ -41,6 +41,7 @@ class HoldingRow:
     pnl_pct: float           # pnl / cost_value * 100
     is_odd_lot: bool         # status == ODD_LOT hoặc KL không chia hết lô
     odd_quantity: float = 0.0  # phần KL lẻ "kẹt" (= KL % lô) — bán qua app DNSE
+    price_value_scale: float = 1.0  # DNSE có thể trả giá bảng điện theo nghìn VND
     note: str = ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -115,7 +116,9 @@ def build_holding(position: Any) -> Optional[HoldingRow]:
         return None
 
     raw = _raw_of(position)
-    quantity = _to_float(_get(position, "volume", "openQuantity", "quantity", "netQuantity"))
+    quantity = _to_float(
+        _get(position, "volume", "volume", "openQuantity", "quantity", "netQuantity")
+    )
     if quantity <= 0:
         return None
 
@@ -125,11 +128,27 @@ def build_holding(position: Any) -> Optional[HoldingRow]:
     sellable = max(0.0, min(sellable, quantity))
     pending = max(0.0, quantity - sellable)
 
-    avg_cost = _to_float(_get(position, "price_open", "costPrice", "avgPrice", "averagePrice"))
-    market_price = _to_float(_get(position, "price_current", "marketPrice", "currentPrice", "lastPrice"), avg_cost)
+    avg_cost = _to_float(
+        _get(position, "price_open", "price_open", "costPrice", "avgPrice", "averagePrice")
+    )
+    market_price = _to_float(
+        _get(
+            position,
+            "price_current",
+            "price_current",
+            "marketPrice",
+            "currentPrice",
+            "lastPrice",
+        ),
+        avg_cost,
+    )
 
-    market_value = quantity * market_price
-    cost_value = quantity * avg_cost
+    # Market data/bảng điện CKCS dùng đơn vị nghìn VND (AAA=7.21),
+    # trong khi một số response position trả VND đầy đủ (FPT=120000).
+    # Chuẩn hoá GIÁ TRỊ sang VND nhưng giữ GIÁ HIỂN THỊ theo bảng điện.
+    price_value_scale = 1000.0 if max(abs(avg_cost), abs(market_price)) < 1000.0 else 1.0
+    market_value = quantity * market_price * price_value_scale
+    cost_value = quantity * avg_cost * price_value_scale
     pnl = market_value - cost_value
     pnl_pct = (pnl / cost_value * 100.0) if cost_value else 0.0
 
@@ -148,6 +167,7 @@ def build_holding(position: Any) -> Optional[HoldingRow]:
         pnl_pct=pnl_pct,
         is_odd_lot=odd,
         odd_quantity=odd_qty,
+        price_value_scale=price_value_scale,
         note=_odd_note(odd_qty) if odd else "",
         raw=raw,
     )
@@ -161,8 +181,9 @@ def _merge_rows(rows: List[HoldingRow]) -> HoldingRow:
     pending = sum(r.pending for r in rows)
     cost_value = sum(r.cost_value for r in rows)
     market_value = sum(r.market_value for r in rows)
-    avg_cost = (cost_value / quantity) if quantity else 0.0
-    market_price = (market_value / quantity) if quantity else 0.0
+    avg_cost = (sum(r.avg_cost * r.quantity for r in rows) / quantity) if quantity else 0.0
+    market_price = (sum(r.market_price * r.quantity for r in rows) / quantity) if quantity else 0.0
+    price_value_scale = rows[0].price_value_scale if rows else 1.0
     pnl = market_value - cost_value
     pnl_pct = (pnl / cost_value * 100.0) if cost_value else 0.0
     # Lô lẻ nếu bất kỳ lô nào là ODD_LOT, hoặc TỔNG KL không chia hết lô.
@@ -181,6 +202,7 @@ def _merge_rows(rows: List[HoldingRow]) -> HoldingRow:
         pnl_pct=pnl_pct,
         is_odd_lot=odd,
         odd_quantity=odd_qty,
+        price_value_scale=price_value_scale,
         note=_odd_note(odd_qty) if odd else "",
         raw={"lots": [r.raw for r in rows]},
     )
@@ -208,7 +230,12 @@ def total_stock_value(holdings: Iterable[HoldingRow]) -> float:
 
 def odd_lot_value(holdings: Iterable[HoldingRow]) -> float:
     """Tổng GIÁ TRỊ phần KL lô lẻ 'kẹt' (= odd_quantity * giá TT) — cần ra app DNSE bán."""
-    return sum((h.odd_quantity or 0.0) * (h.market_price or 0.0) for h in holdings or [])
+    return sum(
+        (h.odd_quantity or 0.0)
+        * (h.market_price or 0.0)
+        * float(getattr(h, "price_value_scale", 1.0) or 1.0)
+        for h in holdings or []
+    )
 
 
 def odd_lot_count(holdings: Iterable[HoldingRow]) -> int:
@@ -286,3 +313,30 @@ def portfolio_summary(positions: Iterable[Any], account_info: Any) -> Dict[str, 
         "odd_lot_count": odd_lot_count(holdings),
     }
     return {"holdings": holdings, "assets": assets}
+
+
+def paper_portfolio_summary(positions: Iterable[Any], account_info: Any) -> Dict[str, Any]:
+    """Gói danh mục PAPER mà không cộng trùng giá trị cổ phiếu vào NAV.
+
+    PaperBroker trả ``equity`` là toàn bộ tài sản PAPER sau lãi/lỗ thả nổi.
+    Vì vậy equity đã bao gồm giá trị kinh tế của các vị thế đang giữ; không được
+    lấy equity rồi cộng thêm market value của cổ phiếu như tài khoản DNSE thật.
+    """
+    summary = portfolio_summary(positions, account_info)
+    assets = summary["assets"]
+    account = account_info if isinstance(account_info, dict) else {}
+    if account.get("equity") is not None:
+        nav = _to_float(account.get("equity"), 0.0)
+    else:
+        nav = _to_float(account.get("balance"), assets["total"])
+    stock_value = _to_float(assets.get("stock_value"), 0.0)
+    derived_cash = max(0.0, nav - stock_value)
+    assets.update(
+        {
+            "cash": derived_cash,
+            "available_cash": derived_cash,
+            "debt": 0.0,
+            "total": nav,
+        }
+    )
+    return summary
