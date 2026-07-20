@@ -4,6 +4,7 @@
 
 import pandas as pd
 import numpy as np
+import copy
 import json
 import os
 import logging
@@ -196,7 +197,67 @@ class DataEngine:
             
         return df
 
-    def _fetch_bars(self, symbol, timeframe_val, num_bars, inds_config, tsl_config=None):
+    @staticmethod
+    def _indicator_signature(name, cfg):
+        return (
+            str(name),
+            json.dumps((cfg or {}).get("params", {}), sort_keys=True, default=str),
+        )
+
+    @staticmethod
+    def _effective_group_indicators(indicators, group, include_trend=False):
+        """Resolve params cho đúng group nhưng không thay đổi config gốc."""
+        resolved = {}
+        for name, raw_cfg in (indicators or {}).items():
+            if not isinstance(raw_cfg, dict) or not (
+                raw_cfg.get("active", False) or (include_trend and raw_cfg.get("is_trend", False))
+            ):
+                continue
+            groups = raw_cfg.get("groups", [raw_cfg.get("group", "G2")])
+            if isinstance(groups, str):
+                groups = [groups]
+            if group not in groups:
+                continue
+            cfg = copy.deepcopy(raw_cfg)
+            params = copy.deepcopy(cfg.get("params", {}))
+            group_params = cfg.get("group_params", {})
+            if isinstance(group_params, dict) and isinstance(group_params.get(group), dict):
+                params.update(group_params[group])
+            cfg["params"] = params
+            cfg["groups"] = [group]
+            resolved[name] = cfg
+        return resolved
+
+    def _apply_trade_and_check_ta(self, df, trade_config, check_config, tsl_config=None):
+        """Tính hai bộ trên cùng DataFrame; cấu hình trùng nhau chỉ tính một lần."""
+        if df is None or df.empty:
+            return df
+        calculated = {}
+        check_columns = {}
+        base_columns = set(df.columns)
+
+        for source, indicators in (("trade", trade_config), ("check", check_config)):
+            for name, cfg in (indicators or {}).items():
+                if not isinstance(cfg, dict) or not (cfg.get("active") or cfg.get("is_trend")):
+                    continue
+                signature = self._indicator_signature(name, cfg)
+                if signature not in calculated:
+                    before = set(df.columns)
+                    self._apply_ta(df, {name: cfg}, None)
+                    calculated[signature] = sorted(set(df.columns) - before)
+                if source == "check":
+                    check_columns[name] = list(calculated[signature])
+
+        # TSL có thể cần PSAR dù cả TRADE lẫn CHECK đều không bật module PSAR.
+        if tsl_config and "PSAR_STEP" in tsl_config:
+            self._apply_ta(df, {}, tsl_config)
+
+        # attrs đi cùng DataFrame.copy() trong cache và không tham gia logic trade.
+        df.attrs["check_indicator_columns"] = check_columns
+        df.attrs["market_columns"] = sorted(base_columns)
+        return df
+
+    def _fetch_bars(self, symbol, timeframe_val, num_bars, inds_config, tsl_config=None, check_config=None):
         res = self.tf_map.get(str(timeframe_val).lower(), "15")
         
         # Tính toán thời gian (from, to)
@@ -237,6 +298,15 @@ class DataEngine:
             for k, v in (inds_config or {}).items()
             if isinstance(v, dict)
         ))
+        check_key = tuple(sorted(
+            (
+                str(k),
+                bool((v or {}).get("active")),
+                json.dumps((v or {}).get("params", {}), sort_keys=True, default=str),
+            )
+            for k, v in (check_config or {}).items()
+            if isinstance(v, dict)
+        ))
         # Ngoài giờ: bucket đóng băng NHƯNG xoay theo khối 6h. Bucket -1 cố định cũ có bug:
         # app chạy 24/7 cache nến 1d TRƯỚC PHIÊN (data chốt hôm qua) -> SAU PHIÊN vẫn trúng
         # key đó -> lượt quét EOD nhận nến cũ, không bao giờ thấy nến chốt hôm nay.
@@ -246,7 +316,7 @@ class DataEngine:
             market_type = dnse_api.market_type_for_symbol(symbol)
         except Exception:
             market_type = "DERIVATIVE"
-        cache_key = (str(symbol).upper(), market_type, res, int(num_bars), cache_bucket, inds_key)
+        cache_key = (str(symbol).upper(), market_type, res, int(num_bars), cache_bucket, inds_key, check_key)
         if effective_cache_ttl > 0:
             cached = self._bars_cache.get(cache_key)
             if cached and (time.time() - cached["ts"]) < effective_cache_ttl:
@@ -310,8 +380,8 @@ class DataEngine:
                 symbol, timeframe_val, res, len(df), num_bars,
             )
 
-        # Chỉ tính những Indicator đang bật
-        df = self._apply_ta(df, inds_config, tsl_config)
+        # TRADE và CHECK dùng chung nến/API; CHECK không được đưa vào signal generator.
+        df = self._apply_trade_and_check_ta(df, inds_config, check_config or {}, tsl_config)
         if effective_cache_ttl > 0:
             self._bars_cache[cache_key] = {"ts": time.time(), "df": df.copy()}
             # [Audit F1 follow-up] Cap cũ 128 chỉ đủ ~42 mã × 3 khung — watchlist lớn sẽ thrash
@@ -360,6 +430,7 @@ class DataEngine:
         """Kéo độc lập 4 chuỗi dữ liệu cho G0, G1, G2, G3 và tính Cản/ATR cho tất cả"""
         settings = self._get_brain_settings(symbol)
         inds_config = settings.get("indicators", {})
+        check_config = settings.get("check_indicators", {})
         tsl_config = settings.get("TSL_CONFIG", getattr(config, "TSL_CONFIG", {}))
         
         tfs = {
@@ -371,8 +442,19 @@ class DataEngine:
         
         num_bars = settings.get("NUM_H1_BARS", 100)
         
-        # Truyền cấu hình Indicator và TSL vào để lọc
-        dfs = {grp: self._fetch_bars(symbol, tf, num_bars, inds_config, tsl_config) for grp, tf in tfs.items()}
+        # Mỗi group resolve tham số riêng; vẫn chỉ có đúng một lần gọi OHLC/group.
+        dfs = {}
+        for grp, tf in tfs.items():
+            trade_group = self._effective_group_indicators(inds_config, grp, include_trend=True)
+            check_group = self._effective_group_indicators(check_config, grp)
+            dfs[grp] = self._fetch_bars(
+                symbol,
+                tf,
+                num_bars,
+                trade_group,
+                tsl_config,
+                check_config=check_group,
+            )
         
         if any(df.empty for df in dfs.values()):
             return None, None
@@ -381,7 +463,11 @@ class DataEngine:
         
         context = {
             "symbol": symbol,
-            "current_price": current_price
+            "current_price": current_price,
+            "check_indicator_columns": {
+                grp: copy.deepcopy(df.attrs.get("check_indicator_columns", {}))
+                for grp, df in dfs.items()
+            },
         }
 
         # [NEW V4.4 FINAL] Lấy giá trị PSAR hiện tại cho TSL PSAR_TRAIL

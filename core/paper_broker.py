@@ -134,13 +134,27 @@ class PaperBroker:
             "source": "fallback",
         }
 
-    def _calc_fee(self, symbol: str, price: float, qty: float) -> float:
+    def _calc_fee(self, symbol: str, price: float, qty: float, side: Any = None) -> float:
         qty = max(0.0, float(qty or 0.0))
+        profile = self._real_fee_profile(symbol)
+        if profile is not None and hasattr(profile, "estimate_fee"):
+            return float(profile.estimate_fee(price, qty, side=side))
         point_value = self._point_value(symbol)
         fixed = self._fee_per_contract(symbol) * qty
         notional = max(0.0, float(price or 0.0)) * qty * point_value
         rate_fee = notional * self._broker_fee_rate(symbol)
-        tax = notional * self._tax_rate(symbol)
+        if settlement.is_cash_stock(symbol):
+            side_key = str(side or "").upper()
+            tax = notional * self._tax_rate(symbol) if (
+                not side_key or side_key in {"1", "SELL", "SHORT", "NS", "S"}
+            ) else 0.0
+        else:
+            initial_margin_rate = float(
+                getattr(profile, "initial_margin_rate", 0.0)
+                if profile is not None
+                else getattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20)
+            )
+            tax = notional * initial_margin_rate / 2.0 * self._tax_rate(symbol)
         return fixed + rate_fee + tax
 
     def _spread_points(self) -> float:
@@ -215,7 +229,8 @@ class PaperBroker:
         entry = float(pos.get("price_open", 0.0) or 0.0)
         open_fee = float(pos.get("open_fee", pos.get("commission", 0.0)) or 0.0)
         symbol = str(pos.get("symbol", "")).upper()
-        exit_fee = self._calc_fee(symbol, current_price, qty)
+        exit_side = ORDER_TYPE_SELL if int(pos.get("type", ORDER_TYPE_BUY)) == ORDER_TYPE_BUY else ORDER_TYPE_BUY
+        exit_fee = self._calc_fee(symbol, current_price, qty, side=exit_side)
         fee = open_fee + exit_fee
         return ((current_price - entry) * direction * qty * self._point_value(symbol)) - fee
 
@@ -236,7 +251,10 @@ class PaperBroker:
         profit = self._calc_pnl(pos, current)
         qty = float(pos.get("volume", 0.0) or 0.0)
         open_fee = float(pos.get("open_fee", pos.get("commission", 0.0)) or 0.0)
-        estimated_close_fee = self._calc_fee(str(pos.get("symbol", "")).upper(), current, qty)
+        exit_side = ORDER_TYPE_SELL if int(pos.get("type", ORDER_TYPE_BUY)) == ORDER_TYPE_BUY else ORDER_TYPE_BUY
+        estimated_close_fee = self._calc_fee(
+            str(pos.get("symbol", "")).upper(), current, qty, side=exit_side
+        )
         total_fee = open_fee + estimated_close_fee
         pos["price_current"] = current
         pos["profit"] = profit
@@ -349,7 +367,7 @@ class PaperBroker:
         fill = self._fill_price(symbol, side, price)
         ticket = f"PAPER-{int(self.state.get('next_ticket', 1))}"
         self.state["next_ticket"] = int(self.state.get("next_ticket", 1)) + 1
-        open_fee = self._calc_fee(symbol_key, fill, qty)
+        open_fee = self._calc_fee(symbol_key, fill, qty, side=side)
         # Cổ phiếu mua hôm nay → ghi ngày về T+2 (phái sinh để trống = bán bất kỳ lúc nào).
         settle = ""
         if side == ORDER_TYPE_BUY and is_stock:
@@ -365,7 +383,12 @@ class PaperBroker:
             "price_current": fill,
             "profit": -open_fee,
             "open_fee": open_fee,
-            "estimated_close_fee": self._calc_fee(symbol_key, fill, qty),
+            "estimated_close_fee": self._calc_fee(
+                symbol_key,
+                fill,
+                qty,
+                side=ORDER_TYPE_SELL if side == ORDER_TYPE_BUY else ORDER_TYPE_BUY,
+            ),
             "commission": open_fee,
             "settle_date": settle,
             "sl": float(sl or 0.0),

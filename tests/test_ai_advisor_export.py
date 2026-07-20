@@ -353,6 +353,8 @@ def test_generate_package_creates_advisor_response_template(monkeypatch, tmp_pat
     with open(paths.advisor_response_path(), "r", encoding="utf-8") as f:
         text = f.read()
     assert "No API response has been saved yet." in text
+    assert paths.expert_context_path().replace("\\", "/").endswith("advisor/expert_context.md")
+    assert "Expert Context" in open(paths.expert_context_path(), "r", encoding="utf-8").read()
     assert "AI Advisor cho RAT-CKVN" in api_client.load_advisor_prompt()
     assert api_client.load_api_settings()["technical_settings_limit"] == 1000000
 
@@ -362,7 +364,7 @@ def test_generate_package_clones_editable_files_from_global_templates(monkeypatc
     template_root = tmp_path / "templates"
     template_root.mkdir(parents=True)
     monkeypatch.setattr(paths, "template_root", lambda: str(template_root))
-    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "advisor_response.md"):
+    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "expert_context.md", "advisor_response.md"):
         with open(template_root / name, "w", encoding="utf-8") as f:
             f.write(f"template::{name}")
 
@@ -373,6 +375,7 @@ def test_generate_package_clones_editable_files_from_global_templates(monkeypatc
         (paths.advisor_prompt_path, "advisor_prompt.md"),
         (paths.advisor_flow_path, "advisor_flow.md"),
         (paths.user_context_path, "user_context.md"),
+        (paths.expert_context_path, "expert_context.md"),
         (paths.advisor_response_path, "advisor_response.md"),
     ):
         with open(path_func(), "r", encoding="utf-8") as f:
@@ -384,7 +387,7 @@ def test_generate_package_does_not_overwrite_existing_editable_files(monkeypatch
     template_root = tmp_path / "templates"
     template_root.mkdir(parents=True)
     monkeypatch.setattr(paths, "template_root", lambda: str(template_root))
-    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "advisor_response.md"):
+    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "expert_context.md", "advisor_response.md"):
         with open(template_root / name, "w", encoding="utf-8") as f:
             f.write(f"template::{name}")
     paths.ensure_advisor_dirs()
@@ -527,7 +530,7 @@ def test_api_client_local_tpm_guard_blocks_second_large_request(monkeypatch, tmp
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(api_client.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(api_client, "MODEL_TPM_LIMITS", {"gpt-5.6-terra": 15000})
+    monkeypatch.setattr(api_client, "MODEL_TPM_LIMITS", {"gpt-5.6": 15000})
     monkeypatch.setattr(api_client, "LOCAL_REQUEST_OVERHEAD_TOKENS", 0)
 
     first = api_client.send_package_to_api()
@@ -674,7 +677,7 @@ def test_api_client_estimates_payload(monkeypatch, tmp_path):
 
     assert estimate["tokens"] > 0
     assert estimate["input_cost_usd"] > 0
-    assert estimate["model"] == "gpt-5.6-terra"
+    assert estimate["model"] == "gpt-5.6"
     assert estimate["web_search_enabled"] is True
     names = [item["name"] for item in estimate["breakdown"]]
     assert "advisor_prompt.md" in names
@@ -719,7 +722,7 @@ def test_api_client_reads_prompt_and_limits_from_advisor_files(monkeypatch, tmp_
     assert api_client.load_advisor_prompt() == "custom opening prompt"
     estimate = api_client.estimate_api_payload(include_previous_response=True)
     assert "advisor_response.md" in [item["name"] for item in estimate["breakdown"]]
-    assert estimate["model"] == "gpt-5.6-terra"
+    assert estimate["model"] == "gpt-5.6"
 
 
 def test_api_client_applies_prompt_flow_and_context_limits(monkeypatch, tmp_path):

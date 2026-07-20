@@ -403,13 +403,13 @@ def test_openai_citations_are_extracted_and_rendered():
     assert "[A](https://example.test/a)" in api_client._append_citations("answer", citations)
 
 
-def test_old_default_model_migrates_to_56_terra(monkeypatch, tmp_path):
+def test_old_default_model_migrates_to_plain_56(monkeypatch, tmp_path):
     _patch_advisor_account(monkeypatch, tmp_path)
     with open(paths.advisor_api_settings_path(), "w", encoding="utf-8") as f:
         json.dump({"provider": "openai", "model": "gpt-5.4-mini"}, f)
     settings = api_client.load_api_settings()
     assert settings["settings_version"] == 2
-    assert settings["model"] == "gpt-5.6-terra"
+    assert settings["model"] == "gpt-5.6"
     assert settings["reasoning_effort"] == "medium"
 
 
@@ -444,7 +444,7 @@ def test_external_package_contains_only_sanitized_copies(monkeypatch, tmp_path):
     manifest = json.loads((tmp_path / "account" / "advisor" / "external_package" / "package_manifest.json").read_text(encoding="utf-8"))
     assert "package-secret" not in external_context
     assert "C:\\Users" not in external_context
-    assert manifest["model"] == "gpt-5.6-terra"
+    assert manifest["model"] == "gpt-5.6"
     assert result["files"]
 
 

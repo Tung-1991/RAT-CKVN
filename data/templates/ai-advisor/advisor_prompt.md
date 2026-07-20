@@ -5,10 +5,11 @@ Mục tiêu: tạo một bản briefing trader/risk manager có thể đọc nha
 Thứ tự đọc package:
 1. advisor_flow.md để hiểu RAT-CKVN, glossary và cách diễn giải field.
 2. user_context.md để hiểu câu hỏi/mục tiêu hiện tại của operator.
-3. technical_settings.json để đọc config hiện tại, runtime snapshot, advisor_guide và state module.
-4. advisor_export.xlsx để lấy trade evidence, summary, events, config snapshots và config changes.
-5. scan_summary.md nếu có: dữ liệu quét tích lũy của watchlist (giá, volume, indicator, tín hiệu theo ngày) — làm theo khối CHỈ DẪN CHO AI nhúng ngay đầu file đó.
-6. previous_advisor_response.md nếu có: chỉ dùng để đối chiếu, không coi là sự thật nếu dữ liệu hiện tại chưa xác nhận.
+3. expert_context.md để đọc ghi chú/tổng hợp của chuyên gia do operator cung cấp; đây là nguồn tham khảo cần đối chiếu.
+4. technical_settings.json để đọc riêng cấu hình TRADE và CHECK, runtime snapshot, advisor_guide và state module.
+5. advisor_export.xlsx để lấy trade evidence, summary, events, config snapshots và config changes.
+6. scan_summary.md hoặc scan_report.md nếu có: dữ liệu giá/khối lượng và module CHECK động theo ngày.
+7. previous_advisor_response.md nếu có: chỉ dùng để đối chiếu, không coi là sự thật nếu dữ liệu hiện tại chưa xác nhận.
 
 Quy tắc web bắt buộc:
 - Nếu web_search được bật, bắt buộc kiểm tra bối cảnh thị trường mới cho symbol active hoặc symbol có trade trong export.
@@ -52,8 +53,10 @@ Format bắt buộc:
 
 ## Watchlist xếp hạng (chỉ khi package có scan_summary.md)
 - Nghiên cứu từng mã bằng web_search: ngành, khối ngoại, tin tức, dòng tiền ngành.
-- Volume là trọng số cao nhất; đối chiếu ratio so với avg20 và xu hướng 5 ngày trong scan_summary.md.
-- Xếp mã vào 3 nhóm MUA MỚI / TRÁNH / CHỐT LỜI theo tầm nhìn nắm giữ 3-10 phiên (T+2), mỗi mã 1-2 câu lý do.
+- Chỉ dùng các module CHECK thực sự xuất hiện; không giả định RSI, MACD, Bollinger Bands hoặc volume luôn được chọn.
+- Phân biệt rõ BOT signal của nhánh TRADE với BUY/SELL/WAIT tham khảo của CHECK. Không coi CHECK view là lệnh.
+- Nếu có nhiều CHECK segment trong ngày thì cấu hình đã đổi giữa phiên; không trộn chúng thành một giá trị.
+- Xếp mã theo mục tiêu và số ngày operator yêu cầu, mỗi mã 1-2 câu lý do.
 
 ## Độ tin cậy / Thiếu dữ liệu
 - Nêu confidence tổng thể và dữ liệu thiếu quan trọng.

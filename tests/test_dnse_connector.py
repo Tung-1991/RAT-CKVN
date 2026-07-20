@@ -176,6 +176,7 @@ def test_positions_are_mapped_to_broker_position(monkeypatch):
 def test_stock_symbol_uses_stock_profile_account_and_fee_rate(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0)
+    monkeypatch.setattr(config, "DNSE_STOCK_TAX_RATE", 0.001)
     session = FakeSession(
         [
             FakeResponse(
@@ -205,7 +206,9 @@ def test_stock_symbol_uses_stock_profile_account_and_fee_rate(monkeypatch):
     assert profile.exchange_fee_per_contract == 0
     assert profile.clearing_fee_per_contract == 0
     assert profile.broker_fee_rate == 0.00045
-    assert profile.estimate_fee(73.3, 10) == 73.3 * 10 * 1000 * 0.00045
+    brokerage = 73.3 * 10 * 1000 * 0.00045
+    assert profile.estimate_fee(73.3, 10, side="BUY") == brokerage
+    assert profile.estimate_fee(73.3, 10, side="SELL") == brokerage + 73.3 * 10 * 1000 * 0.001
 
 
 def test_stock_symbol_info_and_profit_do_not_use_derivative_multiplier(monkeypatch):
@@ -429,6 +432,7 @@ def test_fee_profile_maps_dnse_loan_package(monkeypatch):
                     "loanPackages": [
                         {
                             "id": 2279,
+                            "initialRate": 0.1848,
                             "tradingFee": {
                                 "fixedTradingFee": 2000,
                             },
@@ -444,6 +448,10 @@ def test_fee_profile_maps_dnse_loan_package(monkeypatch):
 
     assert profile.broker_fee_per_contract == 2000
     assert profile.exchange_fee_per_contract == config.DNSE_EXCHANGE_FEE_PER_CONTRACT
+    assert profile.initial_margin_rate == 0.1848
+    expected_tax = 1800 * 100000 * 0.1848 / 2 * config.DNSE_TAX_RATE
+    expected_fixed = 2000 + config.DNSE_EXCHANGE_FEE_PER_CONTRACT + config.DNSE_CLEARING_FEE_PER_CONTRACT
+    assert profile.estimate_fee(1800, 1, side="BUY") == pytest.approx(expected_fixed + expected_tax)
     assert profile.source == "dnse_loan_package"
 
 

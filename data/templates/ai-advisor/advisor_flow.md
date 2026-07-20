@@ -11,17 +11,20 @@ Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa
 Khi gửi thủ công cho AI bên ngoài, chỉ dùng các file trong thư mục `external_package` đã được làm sạch và có manifest. Không gửi `.env`, trading-token hoặc file workspace tài khoản.
 1. advisor_flow.md: hiểu luồng nghiệp vụ, glossary và cách diễn giải field.
 2. user_context.md: hiểu câu hỏi/mục tiêu hiện tại của operator.
-3. technical_settings.json: đọc config hiện tại, runtime snapshot, advisor_guide và state module.
-4. advisor_export.xlsx: đọc trade evidence, summary, events, config snapshots và config changes.
-5. previous_advisor_response.md nếu có: chỉ là lời khuyên cũ để đối chiếu, không phải fact.
+3. expert_context.md: đọc tài liệu/tổng hợp chuyên gia do operator cung cấp và đối chiếu, không mặc định là fact tuyệt đối.
+4. technical_settings.json: đọc riêng cấu hình TRADE và CHECK, runtime snapshot, advisor_guide và state module.
+5. advisor_export.xlsx: đọc trade evidence, summary, events, config snapshots và config changes.
+6. scan_summary.md hoặc scan_report.md: đọc dữ liệu giá/khối lượng và các module CHECK thực sự được bật.
+7. previous_advisor_response.md nếu có: chỉ là lời khuyên cũ để đối chiếu, không phải fact.
 
 ## File trong package
 - advisor_prompt.md: instruction chính gửi vào API hoặc paste vào web UI.
 - advisor_flow.md: bản đồ nghiệp vụ và quy tắc đọc hiểu.
 - user_context.md: ghi chú thủ công của operator.
+- expert_context.md: tài liệu/tổng hợp chuyên gia do operator chủ động nhập.
 - technical_settings.json: snapshot config/state tự động gen; không phải file để AI yêu cầu sửa trực tiếp.
 - advisor_export.xlsx: workbook evidence tự động gen theo số ngày export.
-- scan_summary.md / scan_report.md: dữ liệu quét watchlist tích lũy theo ngày (giá, volume vs avg20, indicator thô, tín hiệu daemon bắn ra) — nguồn để xếp hạng mã nên mua/tránh/chốt.
+- scan_summary.md / scan_report.md: dữ liệu ngày và kết quả module CHECK động; CHECK độc lập, không tác động BOT TRADE.
 - advisor_response.md: câu trả lời mới nhất của AI sau khi gọi API.
 
 ## Quy tắc dùng web
@@ -67,11 +70,12 @@ Conflict rule: review symbol thì ưu tiên active_by_symbol; review global risk
 ## Luồng bot cấp cao
 1. bot_daemon quét symbol active và gọi data_engine.fetch_data_v4.
 2. data_engine tạo OHLC, indicator, ATR/swing và market context.
-3. signal_generator đánh giá G0/G1/G2/G3, market mode, trend, vote và sinh BUY/SELL/NONE.
-4. signal_listener chuyển pending signal sang trade_manager.
-5. trade_manager chạy market-hours, safeguard, T+2/long-only, Entry/Exit, lot, SL/TP và gửi order DNSE.
-6. Runtime managers chạy TSL, BE, BE_CASH, REV_C, DCA/PCA, watermark, basket drawdown và ATC-exit nếu bật.
-7. Closed trades và events được export vào advisor_export.xlsx.
+3. nhánh TRADE đưa riêng `indicators` vào signal_generator để đánh giá G0/G1/G2/G3, market mode, vote và sinh BUY/SELL/NONE.
+4. nhánh CHECK đưa riêng `check_indicators` vào kho tổng hợp ngày và báo cáo; không có vote, market mode hoặc quyền đặt lệnh.
+5. signal_listener chuyển pending signal sang trade_manager.
+6. trade_manager chạy market-hours, safeguard, T+2/long-only, Entry/Exit, lot, SL/TP và gửi order DNSE.
+7. Runtime managers chạy TSL, BE, BE_CASH, REV_C, DCA/PCA, watermark, basket drawdown và ATC-exit nếu bật.
+8. Closed trades và events được export vào advisor_export.xlsx.
 
 ## T+2 settlement
 - CKCS BUY ghi buy_date và settle_date.

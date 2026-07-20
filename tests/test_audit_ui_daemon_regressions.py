@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 import ast
+import concurrent.futures
 import io
 import json
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,6 +94,36 @@ def test_save_brain_live_config_preserves_unmanaged_sections(monkeypatch):
     assert saved[0]["indicators"] == source["indicators"]
     assert saved[0]["custom"] == "keep"
     assert saved[0]["AUTO_TRADE_ENABLED"] is True
+
+
+def test_startup_disarms_ui_config_and_persisted_daemon_flag(monkeypatch):
+    saved = []
+    monkeypatch.setattr(main.config, "AUTO_TRADE_ENABLED", True)
+
+    class Var:
+        def __init__(self, value=True):
+            self.value = value
+
+        def set(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    app = SimpleNamespace(
+        var_auto_trade=Var(),
+        var_bot_ckps=Var(),
+        var_bot_ckcs=Var(),
+        _save_brain_live_config=lambda: saved.append(main.config.AUTO_TRADE_ENABLED),
+    )
+
+    main.BotUI._disarm_auto_trade_on_startup(app)
+
+    assert app.var_auto_trade.get() is False
+    assert app.var_bot_ckps.get() is False
+    assert app.var_bot_ckcs.get() is False
+    assert main.config.AUTO_TRADE_ENABLED is False
+    assert saved == [False]
 
 
 def test_market_now_keeps_naive_offset_contract_without_utcnow_warning(monkeypatch):
@@ -195,6 +228,116 @@ def test_atomic_signal_write_retries_file_contention(monkeypatch, tmp_path):
     assert payload["pending_signals"] == [{"signal_id": "one"}]
 
 
+def test_signal_writer_falls_back_when_windows_blocks_replace(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    target.write_text('{"old": true}', encoding="utf-8")
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(target) + ".tmp")
+    monkeypatch.setattr(
+        bot_daemon.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("sharing violation")),
+    )
+    monkeypatch.setattr(bot_daemon.time, "sleep", lambda _seconds: None)
+
+    daemon = _daemon_stub()
+    assert daemon._atomic_write_signals(["FPT"]) is True
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["brain_heartbeat"]["active_symbols"] == ["FPT"]
+    assert payload["pending_signals"] == [{"signal_id": "one"}]
+    assert daemon.signal_write_fault is None
+
+
+def test_daemon_startup_replaces_stale_invalid_signal_file(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    target.write_text('{"broken":', encoding="utf-8")
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(target) + ".tmp")
+
+    class Connector:
+        def connect(self):
+            return True
+
+        def get_account_info(self):
+            return None
+
+    monkeypatch.setattr(bot_daemon, "DNSEConnector", Connector)
+    daemon = bot_daemon.StandaloneBotDaemon()
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["brain_heartbeat"]["status"] == "HEALTHY"
+    assert payload["brain_heartbeat"]["active_symbols"] == []
+    assert payload["pending_signals"] == []
+
+
+def test_atomic_signal_writes_are_serialized_and_use_unique_temp_files(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    temp = tmp_path / "live_signals.json.tmp"
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(temp))
+    real_replace = bot_daemon.os.replace
+    state_lock = threading.Lock()
+    active_writers = 0
+    max_active_writers = 0
+    temp_paths = []
+
+    def observed_replace(src, dst):
+        nonlocal active_writers, max_active_writers
+        with state_lock:
+            active_writers += 1
+            max_active_writers = max(max_active_writers, active_writers)
+            temp_paths.append(src)
+        time.sleep(0.002)
+        try:
+            real_replace(src, dst)
+        finally:
+            with state_lock:
+                active_writers -= 1
+
+    monkeypatch.setattr(bot_daemon.os, "replace", observed_replace)
+    daemon = _daemon_stub()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _index: daemon._atomic_write_signals(["FPT"]), range(40)))
+
+    assert all(results)
+    assert max_active_writers == 1
+    assert len(temp_paths) == 40
+    assert len(set(temp_paths)) == 40
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["brain_heartbeat"]["active_symbols"] == ["FPT"]
+    assert payload["pending_signals"] == [{"signal_id": "one"}]
+
+
+def test_concurrent_signal_adds_leave_latest_queue_fully_written(monkeypatch, tmp_path):
+    target = tmp_path / "live_signals.json"
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE", str(target))
+    monkeypatch.setattr(bot_daemon, "SIGNAL_FILE_TMP", str(target) + ".tmp")
+    daemon = _daemon_stub()
+    daemon.pending_signals = []
+    daemon.last_entry_signal_times = {}
+    daemon._entry_signal_on_cooldown = lambda *_args: False
+    daemon._read_live_config = lambda: {"BOT_ACTIVE_SYMBOLS": ["FPT"]}
+
+    def add(index):
+        return daemon._add_signal(
+            "BUY" if index % 2 == 0 else "SELL",
+            "FPT",
+            {"market_mode": "TEST", "index": index},
+            "DCA",
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(add, range(40)))
+
+    assert all(results)
+    assert len(daemon.pending_signals) == 40
+    assert len({item["signal_id"] for item in daemon.pending_signals}) == 40
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["pending_signals"] == daemon.pending_signals[-10:]
+
+
 def test_tick_loop_does_not_call_market_data_when_closed(monkeypatch):
     daemon = _daemon_stub()
     daemon._tick_symbols = lambda: ["VN30F1M"]
@@ -277,3 +420,21 @@ def test_daemon_dca_pca_emits_only_eligible_scale_signal(
     daemon._scan_dca_pca()
 
     assert emitted == [("BUY", "FPT", expected_class)]
+
+def test_round_trip_fee_uses_open_and_close_sides():
+    app = main.BotUI.__new__(main.BotUI)
+    calls = []
+
+    def fee(symbol, price, contracts, side=None):
+        calls.append((symbol, price, contracts, side))
+        return 10.0 if side == "BUY" else 20.0
+
+    app.calculate_trade_fee = fee
+
+    assert main.BotUI.calculate_round_trip_trade_fee(
+        app, "VN30F1M", 1800.0, 1790.0, 2, "BUY"
+    ) == 30.0
+    assert calls == [
+        ("VN30F1M", 1800.0, 2, "BUY"),
+        ("VN30F1M", 1790.0, 2, "SELL"),
+    ]

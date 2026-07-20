@@ -3,6 +3,7 @@
 # V4.3: UNIFIED BOT STRATEGY UI - DYNAMIC MACRO, SCALPING & STRICT RISK (KAISER EDITION)
 
 import customtkinter as ctk
+import copy
 import json
 import logging
 import os
@@ -177,6 +178,7 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         self.brain_data = self._load_brain_data()
         self.ind_widgets = {}
+        self.check_widgets = {}
         self.vote_widgets = {}
         self.risk_widgets = {}
         self.tf_vars = {}
@@ -225,6 +227,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                 ),  # [NEW]: Trừ phí
             },
             "indicators": getattr(config, "SANDBOX_CONFIG", {}).get("indicators", {}),
+            "check_indicators": copy.deepcopy(getattr(config, "CHECK_INDICATORS", {})),
             "dca_config": getattr(config, "DCA_CONFIG", {}),
             "pca_config": getattr(config, "PCA_CONFIG", {}),
             "entry_exit": _default_entry_exit_config(),
@@ -248,6 +251,12 @@ class BotStrategyUI(ctk.CTkToplevel):
                     if k not in base_data["indicators"]: base_data["indicators"][k] = {}
                     base_data["indicators"][k].update(v)
                     if "group" in v and "groups" not in v: base_data["indicators"][k]["groups"] = [v["group"]]
+            if "check_indicators" in saved_data and isinstance(saved_data["check_indicators"], dict):
+                for name, check_cfg in saved_data["check_indicators"].items():
+                    if name not in base_data["check_indicators"]:
+                        base_data["check_indicators"][name] = {}
+                    if isinstance(check_cfg, dict):
+                        base_data["check_indicators"][name].update(copy.deepcopy(check_cfg))
             if "dca_config" in saved_data: base_data["dca_config"].update(saved_data["dca_config"])
             if "pca_config" in saved_data: base_data["pca_config"].update(saved_data["pca_config"])
             return base_data
@@ -293,6 +302,13 @@ class BotStrategyUI(ctk.CTkToplevel):
                             if "group" in v and "groups" not in v:
                                 base_data["indicators"][k]["groups"] = [v["group"]]
 
+                    if "check_indicators" in saved_data and isinstance(saved_data["check_indicators"], dict):
+                        for name, check_cfg in saved_data["check_indicators"].items():
+                            if name not in base_data["check_indicators"]:
+                                base_data["check_indicators"][name] = {}
+                            if isinstance(check_cfg, dict):
+                                base_data["check_indicators"][name].update(copy.deepcopy(check_cfg))
+
                     if "dca_config" in saved_data:
                         base_data["dca_config"].update(saved_data["dca_config"])
                     if "pca_config" in saved_data:
@@ -325,6 +341,7 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         self.tab_preview_root = self.tabview.add("Preview")
         self.tab_inds = self.tabview.add("Signals")
+        self.tab_check = self.tabview.add("CHECK")
         self.tab_rules = self.tabview.add("Vote Rules")
         self.tab_risk_root = self.tabview.add("Risk & TSL")
         self.tab_dca_pca_root = self.tabview.add("DCA/PCA")
@@ -347,6 +364,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         self._build_preview_tab()
 
         self._build_indicators_tab()
+        self._build_check_tab()
         self._build_voting_tab()
         self._build_risk_tab()
         self._build_dca_pca_tab()
@@ -1127,6 +1145,93 @@ class BotStrategyUI(ctk.CTkToplevel):
             }
             self._refresh_indicator_config_button(ind_name)
             row += 1
+
+    def _build_check_tab(self):
+        self._add_hint_box(
+            self.tab_check,
+            "CHECK chỉ phục vụ báo cáo, không ảnh hưởng BOT TRADE.\n"
+            "Module bật ở đây dùng chung dữ liệu nến đã tải nhưng không tham gia vote, market mode hoặc đặt lệnh.",
+        )
+        scroll_frame = ctk.CTkScrollableFrame(self.tab_check)
+        scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        for col, title in enumerate(("Chỉ báo", "ON", "Nhóm báo cáo", "Thông số")):
+            ctk.CTkLabel(scroll_frame, text=title, font=("Roboto", 12, "bold")).grid(
+                row=0, column=col, padx=8, pady=6, sticky="w"
+            )
+
+        for row, (ind_name, cfg) in enumerate(
+            (self.brain_data.get("check_indicators", {}) or {}).items(), start=1
+        ):
+            active_var = ctk.BooleanVar(value=bool(cfg.get("active", False)))
+            ctk.CTkLabel(
+                scroll_frame,
+                text=ind_name.upper(),
+                font=("Roboto", 12, "bold"),
+                text_color="#80DEEA",
+                width=150,
+                anchor="w",
+            ).grid(row=row, column=0, padx=8, pady=5, sticky="w")
+            ctk.CTkCheckBox(scroll_frame, text="", variable=active_var, width=30).grid(
+                row=row, column=1, padx=8, pady=5, sticky="w"
+            )
+            groups_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+            groups_frame.grid(row=row, column=2, padx=8, pady=5, sticky="w")
+            saved_groups = cfg.get("groups", ["G2"])
+            group_vars = {}
+            for group in ("G0", "G1", "G2", "G3"):
+                group_var = ctk.BooleanVar(value=group in saved_groups)
+                checkbox = ctk.CTkCheckBox(
+                    groups_frame,
+                    text=self._group_label(group),
+                    variable=group_var,
+                    width=64,
+                    font=("Roboto", 11),
+                )
+                checkbox.pack(side="left", padx=2)
+                self.group_label_widgets.append((checkbox, "{label}", group))
+                group_vars[group] = group_var
+
+            button = ctk.CTkButton(
+                scroll_frame,
+                text="⚙ Cài đặt",
+                width=90,
+                fg_color="#424242",
+                hover_color="#616161",
+                command=lambda name=ind_name: self.open_check_setting(name),
+            )
+            button.grid(row=row, column=3, padx=8, pady=5, sticky="w")
+            self.check_widgets[ind_name] = {
+                "active_var": active_var,
+                "grp_vars": group_vars,
+                "params": copy.deepcopy(cfg.get("params", {})),
+                "group_params": copy.deepcopy(cfg.get("group_params", {})),
+                "config_btn": button,
+            }
+
+    def open_check_setting(self, ind_name):
+        widgets = self.check_widgets[ind_name]
+        current_params = copy.deepcopy(widgets.get("params", {}))
+
+        def on_save_params(new_params, group_params=None, _group_trigger_modes=None):
+            widgets["params"] = copy.deepcopy(new_params or {})
+            if group_params is not None:
+                widgets["group_params"] = copy.deepcopy(group_params)
+            has_override = bool(widgets.get("group_params"))
+            widgets["config_btn"].configure(
+                text="⚙* Cài đặt" if has_override else "⚙ Cài đặt",
+                fg_color="#1565C0" if has_override else "#424242",
+            )
+
+        open_indicator_config_popup(
+            self,
+            ind_name,
+            current_params,
+            on_save_params,
+            group_params=widgets.get("group_params", {}),
+            global_trigger_mode="REALTIME_TICK",
+            group_trigger_modes={},
+            group_labels={g: self._group_label(g) for g in ("G0", "G1", "G2", "G3")},
+        )
 
     def open_ind_setting(self, ind_name):
         current_params = dict(self.ind_widgets[ind_name]["params"])
@@ -2017,6 +2122,20 @@ class BotStrategyUI(ctk.CTkToplevel):
                 "group_trigger_modes": dict(widgets.get("group_trigger_modes", {})),
             }
 
+        new_check_inds = {}
+        for ind_name, widgets in self.check_widgets.items():
+            params = copy.deepcopy(widgets.get("params", {}))
+            if ind_name == "simple_breakout":
+                if "atr_buffer" not in params and "buffer_points" in params:
+                    params["atr_buffer"] = params["buffer_points"]
+                params.pop("buffer_points", None)
+            new_check_inds[ind_name] = {
+                "active": bool(widgets["active_var"].get()),
+                "groups": [g for g, var in widgets["grp_vars"].items() if var.get()],
+                "params": params,
+                "group_params": copy.deepcopy(widgets.get("group_params", {})),
+            }
+
         new_voting = {}
         for grp in ["G0", "G1", "G2", "G3"]:
             new_voting[grp] = {
@@ -2080,6 +2199,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             "voting_rules": new_voting,
             "risk_tsl": new_risk_tsl,
             "indicators": new_inds,
+            "check_indicators": new_check_inds,
             "entry_exit": new_entry_exit,
             "dca_config": new_dca,
             "pca_config": new_pca,
@@ -2159,11 +2279,8 @@ class BotStrategyUI(ctk.CTkToplevel):
             existing_data["bot_safeguard"]["BOT_TP_RR_RATIO"] = float(default_exit.get("tp_rr_ratio", 1.5))
             existing_data["bot_safeguard"]["BOT_USE_SWING_TP"] = bool(default_exit.get("use_swing_tp", False))
 
-            with open(brain_path, "w", encoding="utf-8") as f:
-                json.dump(existing_data, f, indent=4)
-            
-            from core.storage_manager import invalidate_settings_cache
-            invalidate_settings_cache()
+            from core.storage_manager import save_brain_settings
+            save_brain_settings(existing_data)
 
             # [HOT-FIX]: ồng bộ ngay vào config Runtime của UI Main
             if hasattr(self.master, "reload_config_from_json"):
@@ -2198,6 +2315,7 @@ class BotStrategyUI(ctk.CTkToplevel):
 
                 # [FIX]: Reset tracking dictionaries trước khi build lại UI
                 self.ind_widgets = {}
+                self.check_widgets = {}
                 self.vote_widgets = {}
                 self.risk_widgets = {}
                 self.tf_vars = {}

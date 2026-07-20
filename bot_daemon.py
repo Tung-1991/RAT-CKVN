@@ -31,6 +31,10 @@ SIGNAL_FILE_TMP = SIGNAL_FILE + ".tmp"
 BRAIN_SETTINGS_FILE = "data/brain_settings.json"
 DEBUG_STATE_FILE = "data/current_signal_state.json"
 
+# Serialize every live-signal write inside this daemon process. RLock is used
+# because _add_signal writes while already holding the same guard.
+_SIGNAL_WRITE_LOCK = threading.RLock()
+
 
 def _is_telegram_auto_scale_position(pos, magics, trade_tactics):
     if not is_manual_position(pos, magics):
@@ -43,12 +47,13 @@ def _is_telegram_auto_scale_position(pos, magics, trade_tactics):
 
 def update_daemon_paths(account_id: str):
     global SIGNAL_FILE, SIGNAL_FILE_TMP, BRAIN_SETTINGS_FILE, DEBUG_STATE_FILE
-    base_dir = os.path.join("data", str(account_id))
-    os.makedirs(base_dir, exist_ok=True)
-    SIGNAL_FILE = os.path.join(base_dir, "live_signals.json")
-    SIGNAL_FILE_TMP = SIGNAL_FILE + ".tmp"
-    BRAIN_SETTINGS_FILE = os.path.join(base_dir, "brain_settings.json")
-    DEBUG_STATE_FILE = os.path.join(base_dir, "current_signal_state.json")
+    with _SIGNAL_WRITE_LOCK:
+        base_dir = os.path.join("data", str(account_id))
+        os.makedirs(base_dir, exist_ok=True)
+        SIGNAL_FILE = os.path.join(base_dir, "live_signals.json")
+        SIGNAL_FILE_TMP = SIGNAL_FILE + ".tmp"
+        BRAIN_SETTINGS_FILE = os.path.join(base_dir, "brain_settings.json")
+        DEBUG_STATE_FILE = os.path.join(base_dir, "current_signal_state.json")
 
 
 class StandaloneBotDaemon:
@@ -73,6 +78,9 @@ class StandaloneBotDaemon:
         self.last_entry_signal_times = {}
         self._tick_thread = None
         self._active_symbols = []
+        # Khôi phục file tín hiệu ngay khi daemon khởi động, kể cả ngoài phiên.
+        # File dở do lần tắt/crash trước vì vậy không tồn tại tới phiên kế tiếp.
+        self._atomic_write_signals([])
 
     def _get_entry_signal_cooldown(self, symbol):
         try:
@@ -100,31 +108,75 @@ class StandaloneBotDaemon:
         return False
 
     def _atomic_write_signals(self, active_symbols):
-        payload = {
-            "brain_heartbeat": {
-                "status": "HEALTHY",
-                "wakeup_time": time.time(),
-                "active_symbols": active_symbols,
-                "contexts": self.heartbeat_contexts,
-            },
-            "pending_signals": self.pending_signals[-10:],
-        }
-        os.makedirs(os.path.dirname(SIGNAL_FILE), exist_ok=True)
+        with _SIGNAL_WRITE_LOCK:
+            payload = {
+                "brain_heartbeat": {
+                    "status": "HEALTHY",
+                    "wakeup_time": time.time(),
+                    "active_symbols": list(active_symbols or []),
+                    "contexts": self.heartbeat_contexts,
+                },
+                "pending_signals": self.pending_signals[-10:],
+            }
+            os.makedirs(os.path.dirname(SIGNAL_FILE), exist_ok=True)
 
-        # [FIX] WinError 5 Access is denied — UI đọc file này liên tục nên os.replace bị
-        # chặn khi UI đang giữ file. Thử nhiều lần + jitter để lệch nhịp với reader; hầu
-        # hết trường hợp thành công ở vài lần đầu, chỉ cực hiếm mới rơi vào nhánh lỗi cuối.
-        max_tries = 20
-        for attempt in range(max_tries):
-            try:
-                with open(SIGNAL_FILE_TMP, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=4)
-                os.replace(SIGNAL_FILE_TMP, SIGNAL_FILE)
-                break
-            except (PermissionError, OSError) as e:
-                time.sleep(0.05 + random.uniform(0.0, 0.05))
-                if attempt == max_tries - 1:
-                    logger.error(f"Lỗi ghi tín hiệu sau {max_tries} lần thử: {e}")
+            # A unique temp path prevents daemon threads from competing for the
+            # same live_signals.json.tmp file. Bounded retries handle the short
+            # Windows interval where the UI may still have the destination open.
+            max_tries = 20
+            last_error = None
+            for attempt in range(max_tries):
+                temp_path = (
+                    f"{SIGNAL_FILE_TMP}.{os.getpid()}."
+                    f"{threading.get_ident()}.{uuid.uuid4().hex}"
+                )
+                try:
+                    with open(temp_path, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, indent=4)
+                    os.replace(temp_path, SIGNAL_FILE)
+                    previous_fault = getattr(self, "signal_write_fault", None)
+                    self.signal_write_fault = None
+                    if previous_fault:
+                        logger.info("Ghi tín hiệu đã hoạt động lại bình thường.")
+                    return True
+                except (PermissionError, OSError) as exc:
+                    last_error = exc
+                    try:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                    except OSError:
+                        pass
+                    if attempt < max_tries - 1:
+                        time.sleep(0.05 + random.uniform(0.0, 0.05))
+
+            # Windows có thể cho tiến trình đọc giữ file nhưng không cho đổi tên/
+            # thay thế đích (sharing violation). Khi đó ghi đè trực tiếp dưới
+            # cùng RLock. UI đã bỏ qua JSON đang ghi dở và đọc lại ở nhịp sau,
+            # nên tín hiệu không bị mất và daemon không mắc kẹt ngoài phiên.
+            for attempt in range(max_tries):
+                try:
+                    with open(SIGNAL_FILE, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, indent=4)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    previous_fault = getattr(self, "signal_write_fault", None)
+                    self.signal_write_fault = None
+                    if previous_fault:
+                        logger.info("Ghi tín hiệu đã hoạt động lại bình thường.")
+                    logger.warning(
+                        "Windows đang giữ file tín hiệu; daemon đã ghi đè trực tiếp thành công."
+                    )
+                    return True
+                except (PermissionError, OSError) as exc:
+                    last_error = exc
+                    if attempt < max_tries - 1:
+                        time.sleep(0.05 + random.uniform(0.0, 0.05))
+
+            self.signal_write_fault = str(last_error or "unknown write error")
+            logger.error(
+                f"Lỗi ghi tín hiệu sau {max_tries} lần thử: {self.signal_write_fault}"
+            )
+            return False
 
     def _write_signal_debugger(self, debug_state):
         try:
@@ -143,28 +195,28 @@ class StandaloneBotDaemon:
             pass
 
     def _add_signal(self, action, symbol, context, signal_class="ENTRY"):
-        if signal_class == "ENTRY" and self._entry_signal_on_cooldown(action, symbol):
-            logger.debug(f"Cooldown signal ENTRY {action} {symbol}: skip duplicate")
-            return False
+        with _SIGNAL_WRITE_LOCK:
+            if signal_class == "ENTRY" and self._entry_signal_on_cooldown(action, symbol):
+                logger.debug(f"Cooldown signal ENTRY {action} {symbol}: skip duplicate")
+                return False
 
-        sig_id = str(uuid.uuid4())
-        self.pending_signals.append(
-            {
-                "signal_id": sig_id,
-                "timestamp": time.time(),
-                "valid_for": 300 if signal_class == "ENTRY" else 60,
-                "action": action,
-                "symbol": symbol,
-                "signal_class": signal_class,
-                "context": context,
-                "market_mode": context.get("market_mode", "ANY"),
-            }
-        )
-        logger.debug(f"Đã phát tín hiệu {action} cho {symbol} ({signal_class})")
-        live_cfg = self._read_live_config()
-        syms = live_cfg.get("BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", []))
-        self._atomic_write_signals(syms)
-        return True
+            sig_id = str(uuid.uuid4())
+            self.pending_signals.append(
+                {
+                    "signal_id": sig_id,
+                    "timestamp": time.time(),
+                    "valid_for": 300 if signal_class == "ENTRY" else 60,
+                    "action": action,
+                    "symbol": symbol,
+                    "signal_class": signal_class,
+                    "context": context,
+                    "market_mode": context.get("market_mode", "ANY"),
+                }
+            )
+            logger.debug(f"Đã phát tín hiệu {action} cho {symbol} ({signal_class})")
+            live_cfg = self._read_live_config()
+            syms = live_cfg.get("BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", []))
+            return self._atomic_write_signals(syms)
 
     def _read_live_config(self):
         try:
@@ -233,21 +285,22 @@ class StandaloneBotDaemon:
                     tick = data_engine.fetch_realtime_tick(sym)
                     if tick:
                         # Ghi tick vào heartbeat context để UI nhận
-                        ctx = self.heartbeat_contexts.get(sym, {})
-                        if "last" in tick:
-                            ctx["current_price"] = tick["last"]
-                        if "bid" in tick:
-                            ctx["bid"] = tick["bid"]
-                        if "ask" in tick:
-                            ctx["ask"] = tick["ask"]
-                        if "spread" in tick:
-                            ctx["spread"] = tick["spread"]
-                        if "high" in tick:
-                            ctx["day_high"] = tick["high"]
-                        if "low" in tick:
-                            ctx["day_low"] = tick["low"]
-                        ctx["tick_timestamp"] = tick.get("timestamp", time.time())
-                        self.heartbeat_contexts[sym] = ctx
+                        with _SIGNAL_WRITE_LOCK:
+                            ctx = self.heartbeat_contexts.get(sym, {})
+                            if "last" in tick:
+                                ctx["current_price"] = tick["last"]
+                            if "bid" in tick:
+                                ctx["bid"] = tick["bid"]
+                            if "ask" in tick:
+                                ctx["ask"] = tick["ask"]
+                            if "spread" in tick:
+                                ctx["spread"] = tick["spread"]
+                            if "high" in tick:
+                                ctx["day_high"] = tick["high"]
+                            if "low" in tick:
+                                ctx["day_low"] = tick["low"]
+                            ctx["tick_timestamp"] = tick.get("timestamp", time.time())
+                            self.heartbeat_contexts[sym] = ctx
                         updated = True
                 # [FIX I/O] Ghi file signals 1 lần/vòng thay vì sau TỪNG mã (file ~245KB)
                 if updated:
@@ -280,6 +333,31 @@ class StandaloneBotDaemon:
                     getattr(config, "BOT_ACTIVE_SYMBOLS", getattr(config, "SYMBOLS", [])),
                 )
                 self._active_symbols = symbols
+                self._scan_snapshot_enabled = bool(
+                    live_cfg.get(
+                        "SCAN_SNAPSHOT_ENABLED",
+                        getattr(config, "SCAN_SNAPSHOT_ENABLED", True),
+                    )
+                )
+
+                def finalize_scan_day():
+                    if not self._scan_snapshot_enabled:
+                        return
+                    try:
+                        from ai_advisor.scan_cache import recorder as _scan_recorder
+                        if _scan_recorder.finalize_closed_day(symbols):
+                            _scan_recorder.flush()
+                    except Exception as exc:
+                        logger.debug("scan_cache finalize lỗi: %s", exc)
+
+                # Lịch DNSE được thử tối đa 1 lần/ngày và lưu ra đĩa. Hàm giờ thị
+                # trường chỉ đọc cache, vì vậy ngày lễ không phát sinh market-data call.
+                try:
+                    from core.market_calendar import refresh_from_dnse
+
+                    refresh_from_dnse(self.connector.get_working_dates)
+                except Exception as exc:
+                    logger.debug("market calendar refresh lỗi: %s", exc)
 
                 market_data_window = is_any_network_window_open(symbols or None, include_preopen=True)
                 try:
@@ -305,9 +383,11 @@ class StandaloneBotDaemon:
                 # Ngoài phiên chỉ market-data ngủ. Account REST + trading WS phía trên
                 # vẫn hoạt động để balances/positions/orders luôn đồng bộ.
                 if not market_data_window:
+                    finalize_scan_day()
                     time.sleep(5.0)
                     continue
                 if not any(is_symbol_trade_window_open(symbol)[0] for symbol in (symbols or [])):
+                    finalize_scan_day()
                     time.sleep(5.0)  # warm-up: market WS + account APIs, chưa quét giá
                     continue
                         
@@ -325,12 +405,6 @@ class StandaloneBotDaemon:
                     "DCA_PCA_SCAN_INTERVAL", 2
                 )
                 # [SCAN SNAPSHOT] Toggle + interval live từ brain_settings (UI ghi), fallback env/config
-                self._scan_snapshot_enabled = bool(
-                    live_cfg.get(
-                        "SCAN_SNAPSHOT_ENABLED",
-                        getattr(config, "SCAN_SNAPSHOT_ENABLED", False),
-                    )
-                )
                 if "SCAN_SNAPSHOT_INTERVAL_MINUTES" in live_cfg:
                     try:
                         config.SCAN_SNAPSHOT_INTERVAL_MINUTES = float(
@@ -400,8 +474,9 @@ class StandaloneBotDaemon:
                 context["block_reason"] = f"MARKET_CLOSED: {closed_reason}"
 
             # --- [V4.2.1] Gói toàn bộ context vào Heartbeat ---
-            self.heartbeat_contexts[sym] = context.copy()
-            self.heartbeat_contexts[sym].update({"timestamp": time.time()})
+            with _SIGNAL_WRITE_LOCK:
+                self.heartbeat_contexts[sym] = context.copy()
+                self.heartbeat_contexts[sym].update({"timestamp": time.time()})
 
             # [SCAN SNAPSHOT] Lưu kết quả quét vào kho cho AI Advisor (opt-in, lỗi lưu trữ không được gãy scan)
             if getattr(self, "_scan_snapshot_enabled", False):
@@ -571,7 +646,8 @@ class StandaloneBotDaemon:
                         log_cooldown = float(brain.get("bot_safeguard", {}).get("LOG_COOLDOWN_MINUTES", 60.0)) * 60.0
                         if time.time() - last_mb_log > log_cooldown:
                             logger.info(f"🚫 [MINI-BRAIN] Tạm chặn DCA {symbol} (Chưa đồng thuận xu hướng).")
-                            self.heartbeat_contexts[mb_log_key] = time.time()
+                            with _SIGNAL_WRITE_LOCK:
+                                self.heartbeat_contexts[mb_log_key] = time.time()
 
             # PCA LOGIC
             if (
@@ -618,7 +694,8 @@ class StandaloneBotDaemon:
                         log_cooldown = float(brain.get("bot_safeguard", {}).get("LOG_COOLDOWN_MINUTES", 60.0)) * 60.0
                         if time.time() - last_mb_log > log_cooldown:
                             logger.info(f"🚫 [MINI-BRAIN] Tạm chặn PCA {symbol} (Chưa đồng thuận xu hướng).")
-                            self.heartbeat_contexts[mb_log_key] = time.time()
+                            with _SIGNAL_WRITE_LOCK:
+                                self.heartbeat_contexts[mb_log_key] = time.time()
 
 
 if __name__ == "__main__":

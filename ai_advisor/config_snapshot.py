@@ -231,6 +231,9 @@ def _advisor_guide():
             "technical_settings.json": "Current config snapshot plus raw source JSON files.",
             "advisor_export.xlsx": "Filtered trade/config/event view for the selected export window.",
             "user_context.md": "Human notes, goals, constraints, and questions from the operator.",
+            "expert_context.md": "Expert research/notes supplied by the operator for comparison.",
+            "scan_summary.md": "Compact dynamic CHECK report; CHECK never controls orders.",
+            "scan_report.md": "Full N-day dynamic CHECK report with configuration segments.",
         },
         "timeframe_groups": {
             "G0": "Macro/base timeframe, usually highest timeframe.",
@@ -246,6 +249,7 @@ def _advisor_guide():
             "REV_C": "Recovery/reversal close logic.",
             "A.CUT": "Anti-cash hard stop/giveback guard.",
             "SANDBOX": "Strategy sandbox/rules preview and bot strategy configuration.",
+            "CHECK": "Independent report-only indicators; no vote, market-mode or order permission.",
         },
         "trade_metrics": {
             "MAE": "Maximum adverse excursion in USD for a trade/session.",
@@ -285,6 +289,20 @@ def build_snapshot(reason="manual"):
         "config_py": _public_config_values(),
         "active_global": _json_safe(global_cfg),
         "active_by_symbol": _json_safe(active_by_symbol),
+        "indicator_sets": {
+            "global": {
+                "TRADE": _json_safe(global_cfg.get("indicators", {})),
+                "CHECK": _json_safe(global_cfg.get("check_indicators", {})),
+            },
+            "by_symbol": {
+                symbol: {
+                    "TRADE": _json_safe(settings.get("indicators", {})),
+                    "CHECK": _json_safe(settings.get("check_indicators", {})),
+                }
+                for symbol, settings in active_by_symbol.items()
+                if isinstance(settings, dict)
+            },
+        },
         "relevant_symbols": relevant_symbols,
         "omitted_symbols": omitted_symbols,
         "raw_sources": _json_safe(raw_sources),

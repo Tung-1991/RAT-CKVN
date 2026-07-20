@@ -49,10 +49,15 @@ def _is_derivative(symbol: str) -> bool:
 
 
 def is_market_holiday(value: Optional[datetime] = None) -> bool:
-    """Return True for a locally configured exchange holiday (no network I/O)."""
+    """Đọc lịch DNSE đã cache + ngày nghỉ thủ công; không tự gọi network."""
     value = value or _market_now()
-    holidays = {str(day).strip() for day in (getattr(config, "MARKET_HOLIDAYS", set()) or set())}
-    return value.strftime("%Y-%m-%d") in holidays
+    try:
+        from core.market_calendar import date_status
+
+        return date_status(value).get("status") == "HOLIDAY"
+    except Exception:
+        holidays = {str(day).strip() for day in (getattr(config, "MARKET_HOLIDAYS", set()) or set())}
+        return value.strftime("%Y-%m-%d") in holidays
 
 
 def configured_market_symbols() -> list[str]:

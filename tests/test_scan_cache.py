@@ -99,20 +99,28 @@ def test_volume_block_closed_market(dfs):
     assert snap["volume"]["projected_ratio"] is None
 
 
-def test_indicator_extraction(dfs):
-    dfs["G0"]["RSI_14"] = 61.2
+def test_check_indicator_extraction_is_dynamic(dfs):
     dfs["G0"]["MACD_12_26_9"] = 0.15
     dfs["G0"]["MACDh_12_26_9"] = 0.03
-    dfs["G0"]["EMA_50"] = 29.5
     dfs["G0"]["BBL_20_2.0"] = 29.0
     dfs["G0"]["BBU_20_2.0"] = 33.0
-    snap = scan_cache.compute_snapshot(dfs, make_context(), 1, now=NOW)
-    g0 = snap["indicators"]["G0"]
-    assert g0["rsi"] == 61.2
-    assert g0["macd"] == 0.15
-    assert g0["ema"]["EMA_50"] == 29.5
-    assert 0 <= g0["bb_pos_pct"] <= 100
-    assert g0["close_vs_ema20_pct"] is not None
+    context = make_context()
+    context["check_indicator_columns"] = {"G0": {
+        "macd": ["MACD_12_26_9", "MACDh_12_26_9"],
+        "bollinger_bands": ["BBL_20_2.0", "BBU_20_2.0"],
+    }}
+    settings = {
+        "indicators": {"rsi": {"active": True, "groups": ["G0"], "params": {"period": 14}}},
+        "check_indicators": {
+            "macd": {"active": True, "groups": ["G0"], "params": {"fast": 12, "slow": 26, "signal": 9}},
+            "bollinger_bands": {"active": True, "groups": ["G0"], "params": {"period": 20, "std_dev": 2.0}},
+        },
+    }
+    snap = scan_cache.compute_snapshot(dfs, context, 1, now=NOW, settings=settings)
+    g0 = snap["check"]["groups"]["G0"]
+    assert set(g0) == {"macd", "bollinger_bands"}
+    assert g0["macd"]["metrics"]["MACD_12_26_9"] == 0.15
+    assert "rsi" not in g0
     assert snap["bot"]["latest_signal"] == 1
     assert snap["bot"]["market_mode"] == "TRENDING"
 
@@ -205,6 +213,18 @@ def test_recorder_eod_final(tmp_account, monkeypatch, dfs):
     assert scan_cache.load_cache()["symbols"]["HPG"]["days"][day]["samples"] == entry["samples"]
 
 
+def test_finalize_closed_day_does_not_create_extra_sample(tmp_account, dfs):
+    rec = scan_cache.ScanSnapshotRecorder()
+    rec.maybe_record("HPG", dfs, make_context(market_open=True), 0, now=NOW)
+    before = rec.status()
+    assert rec.finalize_closed_day(["HPG"], now=NOW.replace(hour=15, minute=0)) is True
+    rec.flush()
+    entry = scan_cache.load_cache()["symbols"]["HPG"]["days"][NOW.strftime("%Y-%m-%d")]
+    assert entry["eod_final"] is True
+    assert entry["samples"] == 1
+    assert before["symbols"] == 1
+
+
 # ---------------------------------------------------------------- renderer + API section
 def _build_populated_cache(dfs):
     cache = scan_cache.empty_cache()
@@ -220,9 +240,9 @@ def test_compact_summary_render(dfs):
 
     cache = _build_populated_cache(dfs)
     text = scan_report.build_compact_summary(cache)
-    assert "CHỈ DẪN CHO AI" in text
-    assert "MUA MỚI / TRÁNH / CHỐT LỜI" in text
-    assert "### HPG" in text
+    assert "CÁCH ĐỌC DỮ LIỆU" in text
+    assert "CHECK" in text
+    assert "## HPG" in text
     assert "BUY 10:30" in text
     # Kho trống -> chuỗi rỗng (để build_api_sections bỏ qua)
     assert scan_report.build_compact_summary(scan_cache.empty_cache()) == ""
@@ -233,9 +253,9 @@ def test_full_report_render(dfs):
 
     cache = _build_populated_cache(dfs)
     text = scan_report.render_full_report(cache)
-    assert "## Bảng tổng hợp" in text
-    assert "## HPG — lịch sử 2 ngày" in text
-    assert "Tín hiệu đã bắn:" in text
+    assert "### Biến động toàn khoảng" in text
+    assert "## HPG — 2 ngày giao dịch" in text
+    assert "BOT signal" in text
 
 
 def test_export_scan_files_and_api_section(tmp_account, dfs):
@@ -256,7 +276,7 @@ def test_export_scan_files_and_api_section(tmp_account, dfs):
 
     sections = dict(api_client.build_api_sections())
     assert "scan_summary.md" in sections
-    assert "### HPG" in sections["scan_summary.md"]
+    assert "## HPG" in sections["scan_summary.md"]
 
 
 def test_recorder_skips_non_trading_day(tmp_account, monkeypatch):

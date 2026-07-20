@@ -109,6 +109,39 @@ class TradeManager:
             spread=0.0,
         )
 
+    def _estimate_round_trip_cost_per_unit(
+        self, symbol, entry_price, stop_price, entry_side, sym_info=None
+    ):
+        """Ước tính phí, thuế hai chiều và spread cho 1 HĐ/CP nếu chạm SL."""
+        fee_total = 0.0
+        calculate_fee = getattr(self.connector, "calculate_trade_fee", None)
+        if callable(calculate_fee):
+            open_side = str(entry_side or "BUY").upper()
+            close_side = "SELL" if open_side in {"BUY", "LONG", "NB", "0"} else "BUY"
+            try:
+                fee_total += float(
+                    calculate_fee(symbol, entry_price, 1.0, side=open_side) or 0.0
+                )
+                fee_total += float(
+                    calculate_fee(symbol, stop_price, 1.0, side=close_side) or 0.0
+                )
+            except TypeError:
+                # Tương thích connector/plugin cũ chưa có tham số side.
+                fee_total = float(calculate_fee(symbol, entry_price, 1.0) or 0.0)
+                fee_total += float(calculate_fee(symbol, stop_price, 1.0) or 0.0)
+            except Exception as exc:
+                self.log(f"[FEE] Không lấy được phí {symbol}: {exc}", target="bot-log")
+                fee_total = 0.0
+
+        # DNSE trả spread theo khoảng giá ask-bid, không nhân thêm point.
+        spread_cost = (
+            float(getattr(sym_info, "spread", 0.0) or 0.0)
+            * float(getattr(sym_info, "trade_contract_size", 0.0) or 0.0)
+            if sym_info
+            else 0.0
+        )
+        return max(0.0, fee_total + spread_cost)
+
     def _order_ok(self, result):
         return bool(result and getattr(result, "ok", False))
 
@@ -568,8 +601,23 @@ class TradeManager:
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
             return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
-        acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
+        if str(signal_class or "ENTRY").upper() == "ENTRY":
+            try:
+                from core.market_calendar import bot_entry_block_reason
+
+                calendar_block = bot_entry_block_reason(
+                    symbol,
+                    signal_class,
+                    settings=brain.get("market_calendar", {}),
+                )
+            except Exception:
+                calendar_block = None
+            if calendar_block:
+                reason_code, reason_message = calendar_block
+                return f"SAFEGUARD_FAIL|{reason_code}|{reason_message}"
+
+        acc_info = self.connector.get_account_info()
         safeguard_cfg = brain.get("bot_safeguard", {})
         if settlement.is_cash_stock(symbol):
             margin_block = margin_rules.bot_margin_block_reason(acc_info, brain.get("manual_margin", {}))
@@ -719,23 +767,13 @@ class TradeManager:
 
         strict_fee_per_lot = 0.0
         if risk_tsl.get("strict_risk", False):
-            acc_type = getattr(config, "DEFAULT_ACCOUNT_TYPE", "STANDARD")
-            if acc_type in ["PRO", "STANDARD"]:
-                comm_rate = 0.0
-            else:
-                comm_rate = getattr(config, "COMMISSION_RATES", {}).get(
-                    symbol,
-                    getattr(config, "ACCOUNT_TYPES_CONFIG", {})
-                    .get(acc_type, {})
-                    .get("COMMISSION_PER_LOT", 7.0),
-                )
-            # sym_info.spread từ DNSE đã là khoảng giá (ask-bid), KHÔNG nhân thêm point.
-            spread_cost = (
-                sym_info.spread * sym_info.trade_contract_size
-                if sym_info
-                else 0.0
+            strict_fee_per_lot = self._estimate_round_trip_cost_per_unit(
+                symbol,
+                current_price,
+                sl_price,
+                direction,
+                sym_info,
             )
-            strict_fee_per_lot = comm_rate + spread_cost
 
         # [NEW V4.4] TÍNH VOLUME - TÍCH HỢP FIXED LOT & STRICT MIN LOT
         sym_cfgs = brain.get("symbol_configs", {}).get(symbol, {})
@@ -1186,23 +1224,13 @@ class TradeManager:
         else:
             strict_fee_per_lot = 0.0
             if params.get("STRICT_RISK", False):
-                acc_type = getattr(config, "DEFAULT_ACCOUNT_TYPE", "STANDARD")
-                if acc_type in ["PRO", "STANDARD"]:
-                    comm_rate = 0.0
-                else:
-                    comm_rate = getattr(config, "COMMISSION_RATES", {}).get(
-                        symbol,
-                        getattr(config, "ACCOUNT_TYPES_CONFIG", {})
-                        .get(acc_type, {})
-                        .get("COMMISSION_PER_LOT", 7.0),
-                    )
-
-                spread_cost = (
-                    sym_info.spread * sym_info.point * sym_info.trade_contract_size
-                    if sym_info
-                    else 0.0
+                strict_fee_per_lot = self._estimate_round_trip_cost_per_unit(
+                    symbol,
+                    price,
+                    sl_price,
+                    direction,
+                    sym_info,
                 )
-                strict_fee_per_lot = comm_rate + spread_cost
 
             risk_usd = risk_base_amount * (risk_pct / 100.0)
 
@@ -1605,18 +1633,12 @@ class TradeManager:
 
         strict_fee_per_lot = 0.0
         if risk_tsl.get("strict_risk", False):
-            acc_type = getattr(config, "DEFAULT_ACCOUNT_TYPE", "STANDARD")
-            comm_rate = 0.0 if acc_type in ["PRO", "STANDARD"] else getattr(
-                config,
-                "COMMISSION_RATES",
-                {},
-            ).get(
+            strict_fee_per_lot = self._estimate_round_trip_cost_per_unit(
                 symbol,
-                getattr(config, "ACCOUNT_TYPES_CONFIG", {}).get(acc_type, {}).get("COMMISSION_PER_LOT", 7.0),
-            )
-            # sym_info.spread từ DNSE đã là khoảng giá (ask-bid), KHÔNG nhân thêm point.
-            strict_fee_per_lot = comm_rate + (
-                sym_info.spread * sym_info.trade_contract_size if sym_info else 0.0
+                price,
+                sl_price,
+                side,
+                sym_info,
             )
 
         sym_cfgs = brain.get("symbol_configs", {}).get(symbol, {}) or {}

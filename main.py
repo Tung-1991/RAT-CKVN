@@ -255,6 +255,10 @@ class BotUI(ctk.CTk):
         threading.Thread(target=self._tail_daemon_logs, daemon=True).start()
 
         self.load_settings()
+        # Khởi động/restart luôn ở trạng thái chưa cấp quyền mở lệnh tự động.
+        # Đồng bộ cả UI, config trong RAM và brain_settings trước khi bật daemon,
+        # tránh trường hợp file cũ ghi BOT=ON nhưng đèn UI lại đang OFF.
+        self._disarm_auto_trade_on_startup()
         setattr(config, "UI_ACTIVE_SYMBOL", config.DEFAULT_SYMBOL)
 
         self.checklist_mgr = ChecklistManager(self.connector)
@@ -397,6 +401,14 @@ class BotUI(ctk.CTk):
         try:
             existing_data = load_brain_settings()
             existing_data["AUTO_TRADE_ENABLED"] = bool(getattr(config, "AUTO_TRADE_ENABLED", False))
+            # Thuế là cấu hình pháp lý/env, không cho brain_settings cũ (từng
+            # lưu 0 trước 01/07/2026) ghi đè ngược lên mức hiện hành.
+            for legal_key in (
+                "DNSE_TAX_RATE",
+                "DNSE_STOCK_TAX_RATE",
+                "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE",
+            ):
+                existing_data.pop(legal_key, None)
             for key in (
                 "MONEY_DISPLAY_UNIT",
                 "PAPER_INITIAL_BALANCE",
@@ -404,7 +416,6 @@ class BotUI(ctk.CTk):
                 "DNSE_BROKER_FEE_PER_CONTRACT",
                 "DNSE_EXCHANGE_FEE_PER_CONTRACT",
                 "DNSE_CLEARING_FEE_PER_CONTRACT",
-                "DNSE_TAX_RATE",
                 "DNSE_CUSTODY_CODE",
                 "DNSE_STOCK_ACCOUNT_NO",
                 "DNSE_DERIVATIVE_ACCOUNT_NO",
@@ -433,6 +444,12 @@ class BotUI(ctk.CTk):
                 with open(BRAIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
                     bs = json.load(f)
                     for k, v in bs.items():
+                        if k in {
+                            "DNSE_TAX_RATE",
+                            "DNSE_STOCK_TAX_RATE",
+                            "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE",
+                        }:
+                            continue
                         if hasattr(config, k) and k != "COIN_LIST":
                             current_val = getattr(config, k)
                             if isinstance(current_val, dict) and isinstance(v, dict):
@@ -471,6 +488,14 @@ class BotUI(ctk.CTk):
                 return bool(self.var_bot_ckcs.get())
             return bool(self.var_bot_ckps.get())
         return bool(self.var_auto_trade.get())
+
+    def _disarm_auto_trade_on_startup(self):
+        """Đồng bộ trạng thái BOT=OFF sau mỗi lần app khởi động/restart."""
+        self.var_auto_trade.set(False)
+        self.var_bot_ckps.set(False)
+        self.var_bot_ckcs.set(False)
+        config.AUTO_TRADE_ENABLED = False
+        self._save_brain_live_config()
 
     def _ensure_trading_otp(self):
         """Hỏi & xác thực OTP DNSE (token 8h). True nếu OK / đã có token.
@@ -1647,7 +1672,9 @@ class BotUI(ctk.CTk):
         strict_fee = 0.0
         spread_cost_per_lot = float(tick.ask - tick.bid) * c_size
         if params.get("STRICT_RISK", False):
-            strict_fee = self.calculate_trade_fee(symbol, price, 1) + spread_cost_per_lot
+            strict_fee = self.calculate_round_trip_trade_fee(
+                symbol, price, sl_price, 1, direction
+            ) + spread_cost_per_lot
 
         if manual_lot > 0:
             lot_size = self._normalize_contracts(manual_lot, vol_min, vol_max)
@@ -1706,7 +1733,7 @@ class BotUI(ctk.CTk):
                 lot_size = _round
                 lot_source = "FORCE_MIN_LOT"
 
-        commission = self.calculate_trade_fee(symbol, price, lot_size)
+        commission = self.calculate_trade_fee(symbol, price, lot_size, side=direction)
         spread_cost = spread_cost_per_lot * lot_size
         risk_usd = sl_distance * lot_size * c_size if lot_size > 0 else 0.0
         reward_usd = abs(tp_price - price) * lot_size * c_size if lot_size > 0 and tp_price > 0 else 0.0
@@ -2463,6 +2490,12 @@ class BotUI(ctk.CTk):
                 with open(BRAIN_SETTINGS_FILE, "r") as f:
                     bs = json.load(f)
                     for k, v in bs.items():
+                        if k in {
+                            "DNSE_TAX_RATE",
+                            "DNSE_STOCK_TAX_RATE",
+                            "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE",
+                        }:
+                            continue
                         if hasattr(config, k) and k != "COIN_LIST":
                             current_val = getattr(config, k)
                             if isinstance(current_val, dict) and isinstance(v, dict):
@@ -2520,22 +2553,43 @@ class BotUI(ctk.CTk):
                     return dict(profile)
             except Exception:
                 pass
+        if settlement.is_cash_stock(symbol or ""):
+            return {
+                "broker_fee_per_contract": 0.0,
+                "exchange_fee_per_contract": 0.0,
+                "clearing_fee_per_contract": 0.0,
+                "broker_fee_rate": float(
+                    getattr(config, "DNSE_STOCK_BROKER_FEE_RATE", 0.0) or 0.0
+                ),
+                "tax_rate": float(getattr(config, "DNSE_STOCK_TAX_RATE", 0.001) or 0.001),
+                "initial_margin_rate": 0.0,
+                "point_value": float(
+                    getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0
+                ),
+                "market_type": "STOCK",
+                "quantity_unit": "CP",
+                "fee_available": False,
+            }
         return {
             "broker_fee_per_contract": self.get_fee_config(symbol or getattr(config, "DEFAULT_SYMBOL", "VN30F1M")),
             "exchange_fee_per_contract": float(getattr(config, "DNSE_EXCHANGE_FEE_PER_CONTRACT", 2700.0) or 0.0),
             "clearing_fee_per_contract": float(getattr(config, "DNSE_CLEARING_FEE_PER_CONTRACT", 2550.0) or 0.0),
             "tax_rate": float(getattr(config, "DNSE_TAX_RATE", 0.0) or 0.0),
+            "broker_fee_rate": 0.0,
+            "initial_margin_rate": float(
+                getattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20) or 0.20
+            ),
             "point_value": float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0),
             "market_type": "DERIVATIVE",
             "quantity_unit": "HĐ",
             "fee_available": True,
         }
 
-    def calculate_trade_fee(self, symbol, price, contracts):
+    def calculate_trade_fee(self, symbol, price, contracts, side=None):
         connector = getattr(self, "connector", None)
         if connector and hasattr(connector, "calculate_trade_fee"):
             try:
-                return float(connector.calculate_trade_fee(symbol, price, contracts))
+                return float(connector.calculate_trade_fee(symbol, price, contracts, side=side))
             except Exception:
                 pass
         qty = max(0.0, float(contracts or 0.0))
@@ -2545,8 +2599,30 @@ class BotUI(ctk.CTk):
             + profile["exchange_fee_per_contract"]
             + profile["clearing_fee_per_contract"]
         )
-        tax = max(0.0, float(price or 0.0)) * qty * profile["point_value"] * profile["tax_rate"]
-        return fixed + tax
+        notional = max(0.0, float(price or 0.0)) * qty * profile["point_value"]
+        rate_fee = notional * float(profile.get("broker_fee_rate", 0.0) or 0.0)
+        if str(profile.get("market_type", "DERIVATIVE")).upper() == "DERIVATIVE":
+            tax_base = notional * float(profile.get("initial_margin_rate", 0.0) or 0.0) / 2.0
+            tax = tax_base * float(profile.get("tax_rate", 0.0) or 0.0)
+        else:
+            side_key = str(side or "").upper()
+            tax = (
+                notional * float(profile.get("tax_rate", 0.0) or 0.0)
+                if not side_key or side_key in {"1", "SELL", "SHORT", "NS", "S"}
+                else 0.0
+            )
+        return fixed + rate_fee + tax
+
+    def calculate_round_trip_trade_fee(
+        self, symbol, entry_price, exit_price, contracts, entry_side
+    ):
+        open_side = str(entry_side or "BUY").upper()
+        close_side = "SELL" if open_side in {"BUY", "LONG", "NB", "0"} else "BUY"
+        return self.calculate_trade_fee(
+            symbol, entry_price, contracts, side=open_side
+        ) + self.calculate_trade_fee(
+            symbol, exit_price, contracts, side=close_side
+        )
 
     def _fmt_money(self, value, signed=False, suffix=False):
         return format_vnd(value, signed=signed, suffix=suffix)
@@ -2712,7 +2788,10 @@ class BotUI(ctk.CTk):
                     spread = a - b
 
             try:
-                comm = self.calculate_trade_fee(p.symbol, p.price_current or p.price_open, p.volume)
+                close_side = "SELL" if int(getattr(p, "type", 0)) == 0 else "BUY"
+                comm = self.calculate_trade_fee(
+                    p.symbol, p.price_current or p.price_open, p.volume, side=close_side
+                )
             except Exception:
                 comm = 0.0
 
@@ -3564,7 +3643,9 @@ class BotUI(ctk.CTk):
                 risk_usd = acc["equity"] * (current_risk_pct / 100)
                 strict_fee = 0.0
                 if params.get("STRICT_RISK", False):
-                    comm_rate = self.calculate_trade_fee(sym, entry_calc_price, 1)
+                    comm_rate = self.calculate_round_trip_trade_fee(
+                        sym, entry_calc_price, sl_price, 1, d
+                    )
                     spread_cost_per_lot = (tick.ask - tick.bid) * c_size
                     strict_fee = comm_rate + spread_cost_per_lot
 
@@ -3611,7 +3692,7 @@ class BotUI(ctk.CTk):
 
             # Hiển thị spread (theo đơn vị giá bảng điện) + phí giao dịch (nghìn VND).
             from core.money import format_money_k
-            comm_total = self.calculate_trade_fee(sym, entry_calc_price, f_lot)
+            comm_total = self.calculate_trade_fee(sym, entry_calc_price, f_lot, side=d)
 
             # Spread chỉ hợp lệ khi có bid/ask THẬT (không phải fallback từ giá khớp),
             # dương và không bị cross (thị trường đang mở).
@@ -4230,7 +4311,7 @@ class BotUI(ctk.CTk):
             from ai_advisor.exporter import generate_advisor_package
 
             try:
-                days = int(self.var_advisor_export_days.get() or 7)
+                days = max(1, int(self.var_advisor_export_days.get() or 7))
             except Exception:
                 days = 7
             self._advisor_stdout_log(f"worker started reason={reason} send_api={send_api} export_days={days}")
@@ -4521,7 +4602,7 @@ class BotUI(ctk.CTk):
             cost = estimate.get("input_cost_usd", 0.0)
             out_2k = estimate.get("estimated_output_2k_usd", 0.0)
             out_4k = estimate.get("estimated_output_4k_usd", 0.0)
-            model = estimate.get("model", "gpt-5.6-terra")
+            model = estimate.get("model", "gpt-5.6")
             context_tokens = estimate.get("context_tokens", 0)
             max_output_tokens = estimate.get("max_output_tokens", 0)
             remaining_tokens = estimate.get("context_remaining_tokens", 0)

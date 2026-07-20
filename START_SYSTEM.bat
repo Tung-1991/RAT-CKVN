@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 title RAT6 CKVN - TOTAL RECOVERY
 color 0B
 echo ======================================================

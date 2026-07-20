@@ -40,7 +40,7 @@ _FALLBACK_PROVIDERS = {
         "endpoint": "https://api.openai.com/v1/responses",
         "env_key": "OPENAI_API_KEY",
         "models": ["gpt-5.6-terra", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
-        "default_model": "gpt-5.6-terra",
+        "default_model": "gpt-5.6",
         "context_tokens": {
             "gpt-5.6-terra": 1050000,
             "gpt-5.6": 1050000,
@@ -104,7 +104,7 @@ def provider_labels():
 
 
 DEFAULT_PROVIDER = default_provider()
-DEFAULT_MODEL = provider_config(DEFAULT_PROVIDER).get("default_model", "gpt-5.6-terra")
+DEFAULT_MODEL = provider_config(DEFAULT_PROVIDER).get("default_model", "gpt-5.6")
 # Backward-compat: model của provider mặc định.
 SUPPORTED_MODELS = models_for(DEFAULT_PROVIDER)
 LOCAL_TPM_WINDOW_SECONDS = 60
@@ -163,7 +163,7 @@ def normalize_model(value, provider=None):
 
 def normalize_reasoning_effort(value):
     effort = str(value or "medium").strip().lower()
-    return effort if effort in {"low", "medium", "high", "xhigh"} else "medium"
+    return effort if effort in {"none", "low", "medium", "high", "xhigh", "max"} else "medium"
 
 
 def _build_request(
@@ -497,7 +497,7 @@ def load_api_settings():
         and settings["provider"] == "openai"
         and str(settings.get("model") or "") == "gpt-5.4-mini"
     ):
-        settings["model"] = "gpt-5.6-terra"
+        settings["model"] = "gpt-5.6"
     settings["model"] = normalize_model(settings.get("model"), settings["provider"])
     settings["reasoning_effort"] = normalize_reasoning_effort(settings.get("reasoning_effort"))
     settings["settings_version"] = 2
@@ -654,6 +654,9 @@ def build_api_sections(include_previous_response=False):
         ("advisor_export.xlsx", _workbook_text(limit_rows=settings["workbook_limit_rows"])),
         ("user_context.md", _read_text(paths.user_context_path(), limit=settings["user_context_limit"])),
     ]
+    expert_text = _read_text(paths.expert_context_path(), limit=settings["user_context_limit"])
+    if expert_text.strip():
+        sections.append(("expert_context.md", expert_text))
     # [SCAN SNAPSHOT] Dữ liệu quét watchlist tích lũy (chỉ khi kho có dữ liệu)
     scan_text = _read_text(paths.scan_summary_path(), limit=settings.get("scan_summary_limit", SCAN_SUMMARY_LIMIT))
     if scan_text.strip():

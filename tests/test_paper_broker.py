@@ -67,6 +67,7 @@ def test_paper_fee_profile_includes_dnse_fixed_and_tax(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DNSE_EXCHANGE_FEE_PER_CONTRACT", 2700.0)
     monkeypatch.setattr(config, "DNSE_CLEARING_FEE_PER_CONTRACT", 2550.0)
     monkeypatch.setattr(config, "DNSE_TAX_RATE", 0.0005)
+    monkeypatch.setattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20)
 
     ticks = {"price": 1000.0}
 
@@ -82,8 +83,8 @@ def test_paper_fee_profile_includes_dnse_fixed_and_tax(monkeypatch, tmp_path):
     pos = broker.get_positions()[0]
 
     fixed_each_side = 2 * (1000.0 + 2700.0 + 2550.0)
-    open_tax = 1000.0 * 2 * 100000.0 * 0.0005
-    close_tax = 1002.0 * 2 * 100000.0 * 0.0005
+    open_tax = 1000.0 * 2 * 100000.0 * 0.20 / 2 * 0.0005
+    close_tax = 1002.0 * 2 * 100000.0 * 0.20 / 2 * 0.0005
     expected = (1002.0 - 1000.0) * 2 * 100000.0 - fixed_each_side * 2 - open_tax - close_tax
 
     assert pos.commission == fixed_each_side * 2 + open_tax + close_tax

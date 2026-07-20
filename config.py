@@ -2,6 +2,7 @@
 # FILE: config.py
 # V4.2: UNIFIED CONFIG - LEGO MASTER & MULTI-GROUP (KAISER EDITION)
 
+import copy
 import os
 from dotenv import load_dotenv
 
@@ -40,6 +41,16 @@ MARKET_HOLIDAYS = {
     day.strip()
     for day in os.getenv("MARKET_HOLIDAYS", "").split(",")
     if day.strip()
+}
+MARKET_CALENDAR_CACHE_FILE = os.getenv(
+    "MARKET_CALENDAR_CACHE_FILE", "data/market_calendar_cache.json"
+)
+MARKET_CALENDAR_DEFAULT = {
+    "use_dnse_working_dates": True,
+    "manual_closed_dates": [],
+    "avoid_vn30_expiry_entry": False,
+    "avoid_vn30_rebalance_entry": False,
+    "vn30_rebalance_dates": [],
 }
 WEEKEND_CLOSE_WEEKDAY = 4 # Thứ 6
 WEEKEND_CLOSE_HOUR = 15 # Đóng cửa 15:00
@@ -144,9 +155,14 @@ MONEY_DISPLAY_UNIT = "K_VND"
 DNSE_BROKER_FEE_PER_CONTRACT = 0.0
 DNSE_EXCHANGE_FEE_PER_CONTRACT = 2700.0
 DNSE_CLEARING_FEE_PER_CONTRACT = 2550.0
-DNSE_TAX_RATE = 0.0
+DNSE_TAX_RATE = float(os.getenv("DNSE_DERIVATIVE_TAX_RATE", "0.001"))
 DNSE_STOCK_BROKER_FEE_RATE = 0.0
-DNSE_STOCK_TAX_RATE = 0.0
+DNSE_STOCK_TAX_RATE = float(os.getenv("DNSE_STOCK_TAX_RATE", "0.001"))
+# Fallback chỉ dùng khi endpoint loan-packages không trả initialRate. Bình thường
+# app luôn lấy tỷ lệ ký quỹ thật từ DNSE cho công thức thuế VN30F.
+DNSE_DERIVATIVE_INITIAL_MARGIN_RATE = float(
+    os.getenv("DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", "0.20")
+)
 PAPER_TRADING = os.getenv("PAPER_TRADING", "True").strip().lower() in ("1", "true", "yes", "on")
 # ⚠️ BẢO MẬT: lưu trading-token xuống đĩa để restart không phải OTP lại. Token = quyền đặt lệnh thật,
 # ai có file cũng giao dịch được tài khoản. Mặc định TẮT. Chỉ bật nếu máy của riêng mày + chấp nhận rủi ro.
@@ -554,6 +570,18 @@ SANDBOX_CONFIG = {
     },
 }
 
+# CHECK/REPORT dùng cùng catalog LEGO với TRADE nhưng là một cấu hình độc lập.
+# Chỉ clone thông số mặc định để UI có đủ danh sách module; không kế thừa trạng
+# thái ON/OFF, vote, market-mode hay quyền đặt lệnh của bộ TRADE.
+CHECK_INDICATORS = {}
+for _check_name, _trade_default in SANDBOX_CONFIG["indicators"].items():
+    CHECK_INDICATORS[_check_name] = {
+        "active": False,
+        "groups": copy.deepcopy(_trade_default.get("groups", ["G2"])),
+        "params": copy.deepcopy(_trade_default.get("params", {})),
+        "group_params": {},
+    }
+
 # ==============================================================================
 # 8. TÍNH NĂNG NHỒI LỆNH (AUTO DCA/PCA & MINI-BRAIN)
 # ==============================================================================
@@ -598,7 +626,7 @@ AI_ADVISOR_PROVIDERS = {
         "endpoint": "https://api.openai.com/v1/responses",
         "env_key": "OPENAI_API_KEY",
         "models": ["gpt-5.6-terra", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
-        "default_model": "gpt-5.6-terra",
+        "default_model": "gpt-5.6",
         "context_tokens": {
             "gpt-5.6-terra": 1050000,
             "gpt-5.6": 1050000,
@@ -635,6 +663,6 @@ AI_ADVISOR_PROVIDERS = {
 
 # --- Scan Snapshot (kho lưu kết quả quét của daemon cho AI Advisor) ---
 # Daemon quét mỗi vòng nhưng chỉ LƯU mẫu định kỳ; tín hiệu BUY/SELL thì ghi ngay.
-SCAN_SNAPSHOT_ENABLED = os.getenv("SCAN_SNAPSHOT_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+SCAN_SNAPSHOT_ENABLED = os.getenv("SCAN_SNAPSHOT_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 SCAN_SNAPSHOT_INTERVAL_MINUTES = float(os.getenv("SCAN_SNAPSHOT_INTERVAL_MINUTES", "15"))
-SCAN_SNAPSHOT_RETENTION_DAYS = int(os.getenv("SCAN_SNAPSHOT_RETENTION_DAYS", "10"))
+SCAN_SNAPSHOT_RETENTION_DAYS = int(os.getenv("SCAN_SNAPSHOT_RETENTION_DAYS", "250"))

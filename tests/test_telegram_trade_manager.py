@@ -16,6 +16,7 @@ class FakeConnector:
 
     def __init__(self):
         self.orders = []
+        self.fee_calls = []
 
     def get_account_info(self):
         return {"balance": 1000.0, "equity": 1000.0}
@@ -28,6 +29,10 @@ class FakeConnector:
 
     def calculate_lot_size(self, symbol, risk_usd, sl_price, order_type, strict_fee_per_lot=0.0):
         return 1.0, sl_price
+
+    def calculate_trade_fee(self, symbol, price, volume, side=None):
+        self.fee_calls.append((symbol, price, volume, side))
+        return 10.0 if side == "BUY" else 20.0
 
     def place_order(self, symbol, order_type, lot, sl, tp, magic, comment):
         self.orders.append((symbol, order_type, lot, sl, tp, magic, comment))
@@ -138,3 +143,18 @@ def test_build_telegram_signal_order_uses_sandbox_defaults(monkeypatch):
     assert result["lot"] == 1.0
     assert result["sl"] == 1978.0
     assert result["tp"] > 2000.0
+
+
+def test_strict_risk_cost_includes_both_sides_and_spread(monkeypatch):
+    mgr = _manager(monkeypatch)
+    info = SimpleNamespace(spread=0.5, trade_contract_size=100000.0)
+
+    cost = mgr._estimate_round_trip_cost_per_unit(
+        "VN30F1M", 2000.0, 1980.0, "BUY", info
+    )
+
+    assert cost == 50030.0
+    assert mgr.connector.fee_calls == [
+        ("VN30F1M", 2000.0, 1.0, "BUY"),
+        ("VN30F1M", 1980.0, 1.0, "SELL"),
+    ]

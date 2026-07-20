@@ -28,6 +28,19 @@ RAT-CKVN is a DNSE OpenAPI trading bot/workstation for CKPS (VN30F) and CKCS cas
 ## Test notes
 Examples: testing REV_C, BE_CASH, TSL, DCA/PCA, Entry/Exit, T+2 settlement.
 """
+EXPERT_CONTEXT_TEMPLATE = """# Expert Context
+
+Đặt ghi chú/tổng hợp tài liệu chuyên gia tại đây. AI phải xem đây là nguồn tham khảo
+do operator cung cấp, đối chiếu với dữ liệu CHECK và thông tin thị trường mới nhất.
+
+## Phạm vi và ngày cập nhật
+
+## Mã liên quan
+
+## Nội dung chuyên gia
+
+## Giả định hoặc rủi ro cần đối chiếu
+"""
 ADVISOR_FLOW_TEMPLATE = """# RAT-CKVN AI Advisor Flow
 
 This document is the business-flow map for RAT-CKVN. It describes the DNSE OpenAPI bot without requiring the full source code.
@@ -163,6 +176,14 @@ def ensure_user_context():
     )
 
 
+def ensure_expert_context():
+    return _ensure_editable_file(
+        "expert_context.md",
+        paths.expert_context_path(),
+        EXPERT_CONTEXT_TEMPLATE,
+    )
+
+
 def ensure_advisor_flow():
     return _sync_versioned_template(
         "advisor_flow.md",
@@ -207,7 +228,9 @@ def write_external_package():
         ("advisor_flow.md", paths.advisor_flow_path()),
         ("technical_settings.json", paths.technical_settings_path()),
         ("user_context.md", paths.user_context_path()),
+        ("expert_context.md", paths.expert_context_path()),
         ("scan_summary.md", paths.scan_summary_path()),
+        ("scan_report.md", paths.scan_report_path()),
     ]
     files = []
     for name, source in text_sources:
@@ -247,6 +270,7 @@ def generate_advisor_package(
     market_contexts=None,
     reason="manual_export",
 ):
+    export_days = max(1, int(export_days or 1))
     result = {
         "ok": False,
         "root": paths.advisor_root(),
@@ -255,12 +279,14 @@ def generate_advisor_package(
         "advisor_export": paths.export_path(),
         "advisor_flow": paths.advisor_flow_path(),
         "user_context": paths.user_context_path(),
+        "expert_context": paths.expert_context_path(),
         "archive": None,
         "warnings": [],
     }
     try:
         paths.ensure_advisor_dirs()
         ensure_user_context()
+        ensure_expert_context()
         ensure_advisor_flow()
         ensure_advisor_response_template()
         ensure_advisor_api_files()
@@ -268,7 +294,7 @@ def generate_advisor_package(
         # [SCAN SNAPSHOT] Render kho quét watchlist thành summary/report (nếu có dữ liệu)
         try:
             from ai_advisor import scan_report
-            scan_files = scan_report.export_scan_files()
+            scan_files = scan_report.export_scan_files(report_days=export_days)
             if scan_files:
                 result["scan_summary"] = scan_files["summary"]
                 result["scan_report"] = scan_files["report"]

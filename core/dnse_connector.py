@@ -113,6 +113,7 @@ class BrokerFeeProfile:
     clearing_fee_per_contract: float = 2550.0
     broker_fee_rate: float = 0.0
     tax_rate: float = 0.0
+    initial_margin_rate: float = 0.0
     point_value: float = DNSE_POINT_VALUE
     market_type: str = "DERIVATIVE"
     quantity_unit: str = "HĐ"
@@ -127,12 +128,23 @@ class BrokerFeeProfile:
             + float(self.clearing_fee_per_contract or 0.0)
         )
 
-    def estimate_fee(self, price: float, contracts: float) -> float:
+    def estimate_fee(self, price: float, contracts: float, side: Any = None) -> float:
         qty = max(0.0, float(contracts or 0.0))
         fixed = self.fixed_per_contract() * qty
         notional = max(0.0, float(price or 0.0)) * qty * float(self.point_value or DNSE_POINT_VALUE)
         rate_fee = notional * float(self.broker_fee_rate or 0.0)
-        tax = notional * float(self.tax_rate or 0.0)
+        market_type = str(self.market_type or "DERIVATIVE").upper()
+        side_key = str(side or "").upper()
+        if market_type == "DERIVATIVE":
+            # TT 87/2026/TT-BTC: giá tính thuế HĐTL = giá thanh toán × hệ số
+            # hợp đồng × số HĐ × tỷ lệ ký quỹ ban đầu / 2.
+            tax_base = notional * float(self.initial_margin_rate or 0.0) / 2.0
+            tax = tax_base * float(self.tax_rate or 0.0)
+        else:
+            # CKCS chỉ phát sinh thuế chuyển nhượng ở phía bán. side=None giữ
+            # hành vi ước tính thận trọng cho caller cũ.
+            is_sell = not side_key or side_key in {"1", "SELL", "SHORT", "NS", "S"}
+            tax = notional * float(self.tax_rate or 0.0) if is_sell else 0.0
         return fixed + rate_fee + tax
 
     def as_dict(self) -> Dict[str, Any]:
@@ -142,6 +154,7 @@ class BrokerFeeProfile:
             "clearing_fee_per_contract": float(self.clearing_fee_per_contract or 0.0),
             "broker_fee_rate": float(self.broker_fee_rate or 0.0),
             "tax_rate": float(self.tax_rate or 0.0),
+            "initial_margin_rate": float(self.initial_margin_rate or 0.0),
             "point_value": float(self.point_value or DNSE_POINT_VALUE),
             "market_type": self.market_type,
             "quantity_unit": self.quantity_unit,
@@ -841,6 +854,7 @@ class DNSEConnector:
                 clearing_fee_per_contract=0.0,
                 broker_fee_rate=float(getattr(config, "DNSE_STOCK_BROKER_FEE_RATE", 0.0) or 0.0),
                 tax_rate=float(getattr(config, "DNSE_STOCK_TAX_RATE", 0.0) or 0.0),
+                initial_margin_rate=0.0,
                 point_value=float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0),
                 market_type="STOCK",
                 quantity_unit="CP",
@@ -852,6 +866,9 @@ class DNSEConnector:
             exchange_fee_per_contract=float(getattr(config, "DNSE_EXCHANGE_FEE_PER_CONTRACT", 2700.0) or 0.0),
             clearing_fee_per_contract=float(getattr(config, "DNSE_CLEARING_FEE_PER_CONTRACT", 2550.0) or 0.0),
             tax_rate=float(getattr(config, "DNSE_TAX_RATE", 0.0) or 0.0),
+            initial_margin_rate=float(
+                getattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20) or 0.20
+            ),
             point_value=float(getattr(config, "DNSE_POINT_VALUE", DNSE_POINT_VALUE) or DNSE_POINT_VALUE),
             market_type="DERIVATIVE",
             quantity_unit="HĐ",
@@ -887,6 +904,7 @@ class DNSEConnector:
                 clearing_fee_per_contract=0.0,
                 broker_fee_rate=broker_rate,
                 tax_rate=float(getattr(config, "DNSE_STOCK_TAX_RATE", 0.0) or 0.0),
+                initial_margin_rate=0.0,
                 point_value=float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0),
                 market_type="STOCK",
                 quantity_unit="CP",
@@ -911,6 +929,10 @@ class DNSEConnector:
             exchange_fee_per_contract=float(getattr(config, "DNSE_EXCHANGE_FEE_PER_CONTRACT", 2700.0) or 0.0),
             clearing_fee_per_contract=float(getattr(config, "DNSE_CLEARING_FEE_PER_CONTRACT", 2550.0) or 0.0),
             tax_rate=float(getattr(config, "DNSE_TAX_RATE", 0.0) or 0.0),
+            initial_margin_rate=_to_float(
+                package.get("initialRate"),
+                float(getattr(config, "DNSE_DERIVATIVE_INITIAL_MARGIN_RATE", 0.20) or 0.20),
+            ),
             point_value=float(getattr(config, "DNSE_POINT_VALUE", DNSE_POINT_VALUE) or DNSE_POINT_VALUE),
             market_type="DERIVATIVE",
             quantity_unit="HĐ",
@@ -945,8 +967,8 @@ class DNSEConnector:
         self._fee_profile_cache_ts[symbol_key] = time.time()
         return profile
 
-    def calculate_trade_fee(self, symbol: str, price: float, contracts: float) -> float:
-        return self.get_fee_profile(symbol).estimate_fee(price, contracts)
+    def calculate_trade_fee(self, symbol: str, price: float, contracts: float, side: Any = None) -> float:
+        return self.get_fee_profile(symbol).estimate_fee(price, contracts, side=side)
 
     def get_order_detail(self, order_id: str) -> Optional[Dict[str, Any]]:
         if self._is_paper_mode():

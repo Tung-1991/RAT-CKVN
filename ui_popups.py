@@ -118,8 +118,8 @@ def open_advisor_popup(app):
     settings.pack(fill="x", padx=10, pady=4)
     settings.grid_columnconfigure(1, weight=1)
 
-    ctk.CTkLabel(settings, text="Số ngày export", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=0, column=0, sticky="w", pady=6)
-    ctk.CTkOptionMenu(settings, values=["1", "3", "7", "14", "30"], variable=app.var_advisor_export_days, width=110, height=28).grid(row=0, column=1, sticky="e", pady=6)
+    ctk.CTkLabel(settings, text="Số ngày giao dịch báo cáo", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=0, column=0, sticky="w", pady=6)
+    ctk.CTkEntry(settings, textvariable=app.var_advisor_export_days, width=110, height=28, placeholder_text="VD: 15").grid(row=0, column=1, sticky="e", pady=6)
 
     ctk.CTkLabel(settings, text="Chế độ", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=1, column=0, sticky="w", pady=6)
     ctk.CTkOptionMenu(settings, values=["Manual Only", "API Trigger"], variable=app.var_advisor_mode, width=160, height=28).grid(row=1, column=1, sticky="e", pady=6)
@@ -278,11 +278,12 @@ def open_advisor_popup(app):
     ctk.CTkButton(buttons, text="Send API", width=100, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
 
     from ai_advisor import api_client
-    from ai_advisor.exporter import ensure_advisor_flow, ensure_advisor_response_template, ensure_user_context
+    from ai_advisor.exporter import ensure_advisor_flow, ensure_advisor_response_template, ensure_expert_context, ensure_user_context
 
     api_client.ensure_advisor_prompt()
     ensure_advisor_flow()
     ensure_user_context()
+    ensure_expert_context()
     ensure_advisor_response_template()
     if not os.path.exists(api_client.paths.advisor_api_settings_path()):
         api_client.save_api_settings(api_client.DEFAULT_API_SETTINGS)
@@ -639,13 +640,13 @@ def open_advisor_popup(app):
     ).pack(anchor="w", padx=10, pady=(8, 2))
     ctk.CTkLabel(
         files_box,
-        text="Only these four files are hand-editable. technical_settings.json and advisor_export.xlsx are generated.",
+        text="Các file Prompt, Flow, User Context, Expert Context và Response có thể sửa. File dữ liệu được app tự sinh.",
         font=("Roboto", 10, "bold"),
         text_color="gray",
     ).pack(anchor="w", padx=10, pady=(0, 8))
     file_buttons = ctk.CTkFrame(files_box, fg_color="transparent")
     file_buttons.pack(fill="x", padx=10, pady=(0, 10))
-    for idx in range(4):
+    for idx in range(5):
         file_buttons.grid_columnconfigure(idx, weight=1)
 
     ctk.CTkButton(
@@ -674,12 +675,20 @@ def open_advisor_popup(app):
     ).grid(row=0, column=2, sticky="ew", padx=4)
     ctk.CTkButton(
         file_buttons,
+        text="Edit Expert Context",
+        height=30,
+        fg_color="#424242",
+        hover_color="#616161",
+        command=lambda: open_advisor_file_editor(app, api_client.paths.expert_context_path(), "expert_context.md"),
+    ).grid(row=0, column=3, sticky="ew", padx=(4, 0))
+    ctk.CTkButton(
+        file_buttons,
         text="Edit Response",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
         command=lambda: open_advisor_file_editor(app, api_client.paths.advisor_response_path(), "advisor_response.md"),
-    ).grid(row=0, column=3, sticky="ew", padx=(4, 0))
+    ).grid(row=0, column=4, sticky="ew", padx=(4, 0))
 
     edit_top = ctk.CTkFrame(edit_body, fg_color="#252526", corner_radius=6)
     edit_top.pack(fill="x", padx=10, pady=(0, 8))
@@ -730,7 +739,7 @@ def open_advisor_popup(app):
         if var_model.get() not in models:
             var_model.set(models[0] if models else "")
 
-    _edit_row("reasoning effort", var_reasoning, 4, ["low", "medium", "high", "xhigh"])
+    _edit_row("reasoning effort", var_reasoning, 4, ["none", "low", "medium", "high", "xhigh", "max"])
     _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 5)
     _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 6)
     _edit_row("max output tokens", var_max_output, 7)
@@ -2369,6 +2378,166 @@ def build_manual_margin_tab(app, parent):
     ctk.CTkButton(buttons, text="Refresh Snapshot", width=150, fg_color="#455A64", command=_refresh_snapshot).pack(side="left", padx=(8, 0))
 
 
+def build_market_calendar_tab(app, parent):
+    """Lịch giao dịch global: DNSE working dates + ngày né ENTRY VN30F."""
+    import threading
+    import core.storage_manager as storage_manager
+    from core import market_calendar
+
+    body = _speed_up_scroll(ctk.CTkScrollableFrame(parent, fg_color="transparent"))
+    body.pack(fill="both", expand=True, padx=6, pady=6)
+    settings = market_calendar.normalize_settings(
+        storage_manager.load_brain_settings().get("market_calendar", {})
+    )
+
+    status_box = ctk.CTkFrame(body, fg_color="#1f2a33", corner_radius=8)
+    status_box.pack(fill="x", padx=8, pady=(4, 10))
+    ctk.CTkLabel(
+        status_box,
+        text="TRẠNG THÁI LỊCH DNSE",
+        font=FONT_BOLD,
+        text_color="#4FC3F7",
+    ).pack(anchor="w", padx=12, pady=(10, 3))
+    lbl_status = ctk.CTkLabel(
+        status_box, text="Đang đọc lịch...", justify="left", anchor="w", wraplength=590
+    )
+    lbl_status.pack(fill="x", padx=12, pady=(0, 6))
+
+    button_row = ctk.CTkFrame(status_box, fg_color="transparent")
+    button_row.pack(fill="x", padx=12, pady=(0, 10))
+
+    def refresh_status():
+        info = market_calendar.calendar_summary()
+        labels = {
+            "TRADING": "HÔM NAY CÓ GIAO DỊCH",
+            "HOLIDAY": "HÔM NAY NGHỈ LỄ",
+            "WEEKEND": "HÔM NAY NGHỈ CUỐI TUẦN",
+            "UNKNOWN": "LỊCH DNSE CHƯA XÁC NHẬN",
+        }
+        text = (
+            f"{labels.get(info.get('status'), info.get('status'))} | nguồn: {info.get('source')}\n"
+            f"Cập nhật: {info.get('fetched_at') or 'chưa có'} | "
+            f"phủ lịch: {info.get('coverage_start') or '—'} → {info.get('coverage_end') or '—'}\n"
+            f"Đáo hạn VN30F gần nhất: {info.get('next_expiry') or '—'}"
+        )
+        if info.get("last_error"):
+            text += f"\nLần tải gần nhất lỗi: {info['last_error']}"
+        color = "#81C784" if info.get("status") == "TRADING" else (
+            "#FFB74D" if info.get("status") in {"HOLIDAY", "WEEKEND"} else "#E57373"
+        )
+        lbl_status.configure(text=text, text_color=color)
+
+    btn_refresh = None
+
+    def refresh_dnse():
+        btn_refresh.configure(state="disabled", text="Đang tải...")
+
+        def worker():
+            try:
+                from core.data_engine import dnse_api
+
+                market_calendar.refresh_from_dnse(dnse_api.get_working_dates)
+            finally:
+                app.after(0, lambda: (btn_refresh.configure(state="normal", text="Làm mới từ DNSE"), refresh_status()))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    btn_refresh = ctk.CTkButton(
+        button_row,
+        text="Làm mới từ DNSE",
+        width=150,
+        fg_color="#1565C0",
+        hover_color="#0D47A1",
+        command=refresh_dnse,
+    )
+    btn_refresh.pack(side="left")
+
+    config_box = ctk.CTkFrame(body, fg_color="#252526", corner_radius=8)
+    config_box.pack(fill="x", padx=8, pady=(0, 10))
+    ctk.CTkLabel(
+        config_box, text="LỊCH NGHỈ VÀ NGÀY NÉ ENTRY", font=FONT_BOLD, text_color="#FFD54F"
+    ).pack(anchor="w", padx=12, pady=(10, 4))
+
+    var_use_dnse = tk.BooleanVar(value=settings["use_dnse_working_dates"])
+    var_expiry = tk.BooleanVar(value=settings["avoid_vn30_expiry_entry"])
+    var_rebalance = tk.BooleanVar(value=settings["avoid_vn30_rebalance_entry"])
+    ctk.CTkCheckBox(
+        config_box,
+        text="Tự lấy ngày giao dịch/lễ Tết từ DNSE",
+        variable=var_use_dnse,
+        font=("Roboto", 12, "bold"),
+    ).pack(anchor="w", padx=12, pady=5)
+    ctk.CTkCheckBox(
+        config_box,
+        text="Né ngày đáo hạn VN30F (app tự tính)",
+        variable=var_expiry,
+        font=("Roboto", 12, "bold"),
+    ).pack(anchor="w", padx=12, pady=5)
+    ctk.CTkCheckBox(
+        config_box,
+        text="Né ngày đổi rổ VN30 (dùng danh sách bên dưới)",
+        variable=var_rebalance,
+        font=("Roboto", 12, "bold"),
+    ).pack(anchor="w", padx=12, pady=5)
+
+    ctk.CTkLabel(
+        config_box,
+        text="Ngày nghỉ bổ sung — mỗi dòng một ngày YYYY-MM-DD",
+        text_color="#B0BEC5",
+    ).pack(anchor="w", padx=12, pady=(10, 2))
+    txt_closed = ctk.CTkTextbox(config_box, height=80)
+    txt_closed.pack(fill="x", padx=12, pady=(0, 6))
+    txt_closed.insert("1.0", "\n".join(settings["manual_closed_dates"]))
+
+    ctk.CTkLabel(
+        config_box,
+        text="Ngày đổi rổ VN30 — mỗi dòng một ngày YYYY-MM-DD",
+        text_color="#B0BEC5",
+    ).pack(anchor="w", padx=12, pady=(8, 2))
+    txt_rebalance = ctk.CTkTextbox(config_box, height=80)
+    txt_rebalance.pack(fill="x", padx=12, pady=(0, 6))
+    txt_rebalance.insert("1.0", "\n".join(settings["vn30_rebalance_dates"]))
+
+    ctk.CTkLabel(
+        config_box,
+        text="Chỉ chặn BOT mở lệnh mới; DCA/PCA và quản lý lệnh đang giữ vẫn chạy.",
+        font=("Roboto", 11, "bold"),
+        text_color="#FFB74D",
+        wraplength=590,
+        justify="left",
+    ).pack(anchor="w", padx=12, pady=(8, 5))
+    lbl_save = ctk.CTkLabel(config_box, text="", text_color="#81C784")
+    lbl_save.pack(anchor="w", padx=12, pady=(0, 3))
+
+    def save_settings():
+        try:
+            next_settings = market_calendar.normalize_settings({
+                "use_dnse_working_dates": var_use_dnse.get(),
+                "manual_closed_dates": market_calendar.parse_date_text(txt_closed.get("1.0", "end")),
+                "avoid_vn30_expiry_entry": var_expiry.get(),
+                "avoid_vn30_rebalance_entry": var_rebalance.get(),
+                "vn30_rebalance_dates": market_calendar.parse_date_text(txt_rebalance.get("1.0", "end")),
+            })
+            brain = storage_manager.load_brain_settings()
+            brain["market_calendar"] = next_settings
+            if not storage_manager.save_brain_settings(brain):
+                raise RuntimeError("Không ghi được brain_settings.json")
+            lbl_save.configure(text="Đã lưu lịch thị trường.", text_color="#81C784")
+            refresh_status()
+        except Exception as exc:
+            lbl_save.configure(text=str(exc), text_color="#E57373")
+
+    ctk.CTkButton(
+        config_box,
+        text="LƯU LỊCH THỊ TRƯỜNG",
+        height=36,
+        fg_color="#2E7D32",
+        hover_color="#1B5E20",
+        command=save_settings,
+    ).pack(fill="x", padx=12, pady=(4, 12))
+    refresh_status()
+
+
 def open_advanced_tools_popup(app):
     """Trung tâm cài đặt hệ thống: tài khoản DNSE/.env + xác thực OTP (trading-token)."""
     import os
@@ -2386,10 +2555,12 @@ def open_advanced_tools_popup(app):
     tab_sys = tabs.add("Hệ thống")
     tab_cache = tabs.add("Cache & Mã")
     tab_margin = tabs.add("Margin CKCS")
+    tab_calendar = tabs.add("LỊCH THỊ TRƯỜNG")
 
     # Tab 2: gom cache + watchlist CKCS
     build_cache_and_symbols_tab(app, tab_cache)
     build_manual_margin_tab(app, tab_margin)
+    build_market_calendar_tab(app, tab_calendar)
 
     # Tab 1: tài khoản / cấu hình / OTP
     body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_sys, fg_color="transparent"))

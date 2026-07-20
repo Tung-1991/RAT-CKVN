@@ -22,6 +22,30 @@ _active_account_id = None
 _state_lock = threading.RLock()
 
 
+def _atomic_json_write(path: str, data: Any, attempts: int = 5) -> bool:
+    """Ghi JSON an toàn khi UI/daemon cùng lưu trên Windows."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with _state_lock:
+        for attempt in range(attempts):
+            tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as handle:
+                    json.dump(data if isinstance(data, dict) else {}, handle, indent=4, ensure_ascii=False)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+                return True
+            except (PermissionError, OSError):
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except OSError:
+                    pass
+                if attempt + 1 < attempts:
+                    time.sleep(0.05)
+    return False
+
+
 def _move_legacy_file(old_path: str, new_path: str):
     try:
         if old_path == new_path:
@@ -894,10 +918,12 @@ def load_brain_settings() -> Dict[str, Any]:
             "strict_risk": getattr(config, "STRICT_RISK_CALC", False),
         },
         "indicators": copy.deepcopy(sandbox_defaults.get("indicators", {})),
+        "check_indicators": copy.deepcopy(getattr(config, "CHECK_INDICATORS", {})),
         "dca_config": copy.deepcopy(getattr(config, "DCA_CONFIG", {})),
         "pca_config": copy.deepcopy(getattr(config, "PCA_CONFIG", {})),
         "entry_exit": copy.deepcopy(default_entry_exit),
         "manual_margin": copy.deepcopy(getattr(config, "MANUAL_MARGIN_CONFIG", {})),
+        "market_calendar": copy.deepcopy(getattr(config, "MARKET_CALENDAR_DEFAULT", {})),
         "bot_safeguard": copy.deepcopy(getattr(config, "BOT_SAFEGUARD", {})),
         "TSL_CONFIG": copy.deepcopy(getattr(config, "TSL_CONFIG", {})),
         "TSL_LOGIC_MODE": getattr(config, "TSL_LOGIC_MODE", "STATIC"),
@@ -963,12 +989,20 @@ def load_brain_settings() -> Dict[str, Any]:
                     else:
                         default_brain["indicators"][ind] = copy.deepcopy(cfg)
 
+            if "check_indicators" in data and isinstance(data["check_indicators"], dict):
+                for ind, cfg in data["check_indicators"].items():
+                    if ind in default_brain["check_indicators"] and isinstance(cfg, dict):
+                        merge_dict(default_brain["check_indicators"][ind], cfg)
+                    elif isinstance(cfg, dict):
+                        default_brain["check_indicators"][ind] = copy.deepcopy(cfg)
+
             for key in [
                 "risk_tsl",
                 "entry_exit",
                 "dca_config",
                 "pca_config",
                 "manual_margin",
+                "market_calendar",
                 "bot_safeguard",
                 "TSL_CONFIG",
                 "symbol_configs",
@@ -985,11 +1019,8 @@ def load_brain_settings() -> Dict[str, Any]:
 
 def save_brain_settings(data: Dict[str, Any]):
     try:
-        os.makedirs(os.path.dirname(BRAIN_FILE), exist_ok=True)
-        tmp_file = f"{BRAIN_FILE}.tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data if isinstance(data, dict) else {}, f, indent=4, ensure_ascii=False)
-        os.replace(tmp_file, BRAIN_FILE)
+        if not _atomic_json_write(BRAIN_FILE, data):
+            return False
         invalidate_settings_cache()
         try:
             from ai_advisor.history import ensure_config_snapshot, record_event
@@ -1002,10 +1033,18 @@ def save_brain_settings(data: Dict[str, Any]):
             )
         except Exception:
             pass
-    except:
-        pass
+        return True
+    except Exception:
+        return False
 
 def _normalize_brain_settings_shape(data: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from core.market_calendar import normalize_settings
+
+        data["market_calendar"] = normalize_settings(data.get("market_calendar", {}))
+    except Exception:
+        data["market_calendar"] = copy.deepcopy(getattr(config, "MARKET_CALENDAR_DEFAULT", {}))
+
     indicators = data.get("indicators", {})
     if not isinstance(indicators, dict):
         data["indicators"] = {}
@@ -1075,6 +1114,36 @@ def _normalize_brain_settings_shape(data: Dict[str, Any]) -> Dict[str, Any]:
                     params["atr_buffer"] = params["buffer_points"]
                 params.pop("buffer_points", None)
 
+    check_indicators = data.get("check_indicators", {})
+    if not isinstance(check_indicators, dict):
+        data["check_indicators"] = {}
+        check_indicators = data["check_indicators"]
+    for ind_name, cfg in check_indicators.items():
+        if not isinstance(cfg, dict):
+            continue
+        cfg["active"] = bool(cfg.get("active", False))
+        groups = cfg.get("groups", ["G2"])
+        if isinstance(groups, str):
+            groups = [groups]
+        cfg["groups"] = [str(g).upper() for g in groups if str(g).upper() in valid_groups]
+        if not cfg["groups"]:
+            cfg["groups"] = ["G2"]
+        if not isinstance(cfg.get("params"), dict):
+            cfg["params"] = {}
+        group_params = cfg.get("group_params", {})
+        if not isinstance(group_params, dict):
+            group_params = {}
+        cfg["group_params"] = {
+            str(g).upper(): params
+            for g, params in group_params.items()
+            if str(g).upper() in valid_groups and isinstance(params, dict)
+        }
+        if ind_name == "simple_breakout":
+            params = cfg["params"]
+            if "atr_buffer" not in params and "buffer_points" in params:
+                params["atr_buffer"] = params["buffer_points"]
+            params.pop("buffer_points", None)
+
     return data
 
 # =====================================================================
@@ -1094,11 +1163,8 @@ def load_symbol_overrides() -> Dict[str, Any]:
 
 def save_symbol_overrides(data: Dict[str, Any]):
     try:
-        os.makedirs(os.path.dirname(SYMBOL_OVERRIDES_FILE), exist_ok=True)
-        tmp_file = f"{SYMBOL_OVERRIDES_FILE}.tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data if isinstance(data, dict) else {}, f, indent=4, ensure_ascii=False)
-        os.replace(tmp_file, SYMBOL_OVERRIDES_FILE)
+        if not _atomic_json_write(SYMBOL_OVERRIDES_FILE, data):
+            return False
         invalidate_settings_cache()  # Xóa cache khi lưu override mới
         try:
             from ai_advisor.history import ensure_config_snapshot, record_event
@@ -1111,8 +1177,9 @@ def save_symbol_overrides(data: Dict[str, Any]):
             )
         except Exception:
             pass
+        return True
     except Exception:
-        pass
+        return False
 
 def _load_brain_cached() -> Dict[str, Any]:
     """Đọc brain_settings.json với cache TTL."""
@@ -1193,6 +1260,9 @@ def get_brain_settings_for_symbol(symbol: str = None) -> Dict[str, Any]:
             if "indicators" in sb:
                 if "indicators" not in base_brain: base_brain["indicators"] = {}
                 base_brain["indicators"] = sb["indicators"]
+
+            if "check_indicators" in sb:
+                base_brain["check_indicators"] = copy.deepcopy(sb["check_indicators"])
                 
             if "dca_config" in sb:
                 if "dca_config" not in base_brain: base_brain["dca_config"] = {}
