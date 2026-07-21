@@ -190,8 +190,8 @@ def render_full_report(cache=None, report_days=None):
     return "\n".join(parts).strip() + "\n"
 
 
-def export_ckcs_report(report_days=None):
-    """Tạo đúng một file MD đầy đủ để người dùng tự gửi LLM."""
+def export_ckcs_report(report_days=None, output_path=None, report_label=None):
+    """Tạo một báo cáo MD từ kho RAW; output mặc định giữ tương thích cũ."""
     cache = scan_cache.load_cache()
     selected = set(scan_cache.selected_research_symbols())
     cache = dict(cache)
@@ -204,7 +204,10 @@ def export_ckcs_report(report_days=None):
         return None
     paths.ensure_ckcs_research_dir()
     report_text = render_full_report(cache, report_days=report_days)
-    report_path = paths.scan_report_path()
+    if report_label:
+        report_text = f"> Báo cáo tự động: {str(report_label).strip()}\n\n" + report_text
+    report_path = output_path or paths.scan_report_path()
+    os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
     tmp_path = f"{report_path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as handle:

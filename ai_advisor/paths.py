@@ -117,6 +117,20 @@ def scan_report_path():
     return os.path.join(ckcs_research_root(), "scan_report.md")
 
 
+def scan_session_report_path(session):
+    session = str(session or "").strip().lower()
+    if session not in {"morning", "afternoon"}:
+        raise ValueError("CKCS session phải là morning hoặc afternoon")
+    return os.path.join(ckcs_research_root(), f"scan_report_{session}.md")
+
+
+def ckcs_response_path(session):
+    session = str(session or "").strip().lower()
+    if session not in {"morning", "afternoon"}:
+        raise ValueError("CKCS session phải là morning hoặc afternoon")
+    return os.path.join(ckcs_research_root(), f"ckcs_response_{session}.md")
+
+
 def research_private_context_path():
     return os.path.join(ckcs_research_root(), "private_context.md")
 

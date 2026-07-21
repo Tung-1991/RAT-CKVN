@@ -14,8 +14,8 @@ Protocol (matched to the official SDK, github.com/dnse-tech/openapi-sdk):
   * Subscribe:  {"action":"subscribe","channels":[{"name":"tick.G1.json","symbols":[...]},
                                                    {"name":"top_price.G1.json","symbols":[...]}]}
   * Data msgs:  flat payload dict with `symbol` + channel fields (matchPrice / bid / offer ...).
-  * Keepalive:  server PINGs ~every 3 min; client must PONG within 1 min. websocket-client
-                auto-replies to ping; we also send a proactive pong every DNSE_WS_PONG_INTERVAL.
+  * Keepalive:  send application {"action":"ping"} every 25s, answer application
+                ping with pong, and keep websocket transport ping/pong enabled as well.
   * A connection lives at most 8h (server closes); the reconnect loop handles it.
 
 Transport uses the synchronous ``websocket-client`` package so it fits the bot's
@@ -69,7 +69,6 @@ class DNSEMarketWS:
         base = getattr(config, "DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn").rstrip("/")
         self._encoding = getattr(config, "DNSE_WS_ENCODING", "json")
         self._url = f"{base}/v1/stream?encoding={self._encoding}"
-        self._board_id = getattr(config, "DNSE_WS_BOARD_ID", "G1")
         self._account_numbers = {
             str(value).strip()
             for value in (
@@ -80,7 +79,10 @@ class DNSEMarketWS:
             if str(value).strip()
         }
         self._reconnect_s = float(getattr(config, "DNSE_WS_RECONNECT_SECONDS", 5.0))
-        self._pong_interval = float(getattr(config, "DNSE_WS_PONG_INTERVAL", 150.0))
+        self._heartbeat_interval = float(getattr(config, "DNSE_WS_HEARTBEAT_SECONDS", 25.0) or 25.0)
+        self._heartbeat_timeout = float(
+            getattr(config, "DNSE_WS_HEARTBEAT_TIMEOUT_SECONDS", 60.0) or 60.0
+        )
 
         self._ticks: Dict[str, Dict] = {}
         self._orders: Dict[str, Dict] = {}
@@ -96,6 +98,11 @@ class DNSEMarketWS:
         self._connected = False
         self._authenticated = False
         self._last_pong = 0.0
+        self._last_app_ping = 0.0
+        self._last_app_pong = 0.0
+        self._awaiting_pong_since = 0.0
+        self._connection_generation = 0
+        self._heartbeat_started_generation = -1
         self._connected_at = 0.0
 
         self.stats = {
@@ -149,7 +156,12 @@ class DNSEMarketWS:
                 "last_message_ts": self.stats["last_message_ts"],
                 "last_market_message_ts": self.stats["last_market_message_ts"],
                 "last_trading_message_ts": self.stats["last_trading_message_ts"],
+                "last_ping_ts": self._last_app_ping,
+                "last_pong_ts": max(self._last_app_pong, self._last_pong),
+                "last_ping_age_seconds": max(0.0, time.time() - self._last_app_ping) if self._last_app_ping else None,
+                "last_pong_age_seconds": max(0.0, time.time() - max(self._last_app_pong, self._last_pong)) if max(self._last_app_pong, self._last_pong) else None,
                 "connection_age_seconds": max(0.0, time.time() - self._connected_at) if self._connected_at else 0.0,
+                "connection_generation": self._connection_generation,
                 "last_error": self.stats["last_error"],
             }
 
@@ -242,8 +254,16 @@ class DNSEMarketWS:
 
     def _channels(self) -> List[str]:
         enc = self._encoding
-        bid = self._board_id
-        return [f"tick.{bid}.{enc}", f"top_price.{bid}.{enc}", f"expected_price.{bid}.{enc}"]
+        # Bộ board theo official DNSE OpenAPI SDK. Đăng ký đủ board giúp cổ phiếu,
+        # phái sinh và các phiên/bảng khác không bị thiếu tick rồi rơi xuống REST.
+        tick_boards = ("G1", "G3", "G4", "G7", "T1", "T2", "T3", "T4", "T6")
+        quote_boards = ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
+        expected_boards = ("G1", "G3", "G4", "G7")
+        return (
+            [f"tick.{board}.{enc}" for board in tick_boards]
+            + [f"top_price.{board}.{enc}" for board in quote_boards]
+            + [f"expected_price.{board}.{enc}" for board in expected_boards]
+        )
 
     def _trading_channels(self) -> List[str]:
         enc = self._encoding
@@ -293,8 +313,9 @@ class DNSEMarketWS:
                     on_error=self._on_error,
                     on_close=self._on_close,
                     on_ping=self._on_ping,
+                    on_pong=self._on_pong,
                 )
-                self._ws.run_forever(ping_interval=0, ping_timeout=None)
+                self._ws.run_forever(ping_interval=30, ping_timeout=10)
             except Exception as exc:  # noqa: BLE001
                 self.stats["last_error"] = str(exc)
                 logger.debug("WS run error: %s", exc)
@@ -313,16 +334,21 @@ class DNSEMarketWS:
         self._authenticated = False
         self._connected_at = time.time()
         self._last_pong = time.time()
+        self._last_app_ping = 0.0
+        self._last_app_pong = time.time()
+        self._awaiting_pong_since = 0.0
+        self._connection_generation += 1
         logger.info("DNSE market WS connected: %s", self._url)
         try:
             self._ws.send(self._auth_message())
         except Exception as exc:  # noqa: BLE001
             logger.debug("auth send error: %s", exc)
 
-    def _heartbeat_loop(self):
-        while self._running and self._connected:
-            time.sleep(min(30.0, self._pong_interval))
-            if not self._connected:
+    def _heartbeat_loop(self, generation: int):
+        # generation ngăn heartbeat của kết nối cũ tiếp tục gửi trên socket mới.
+        while self._running and self._connected and generation == self._connection_generation:
+            time.sleep(max(1.0, self._heartbeat_interval))
+            if not self._connected or generation != self._connection_generation:
                 break
             try:
                 expired = (time.time() - self._connected_at) >= float(
@@ -333,19 +359,34 @@ class DNSEMarketWS:
                     break
             except Exception:
                 pass
-            if time.time() - self._last_pong >= self._pong_interval:
+            now = time.time()
+            last_reply = max(self._last_app_pong, self._last_pong, self.stats["last_message_ts"])
+            if self._awaiting_pong_since and (now - self._awaiting_pong_since) > self._heartbeat_timeout:
+                self.stats["last_error"] = "Heartbeat timeout"
+                logger.warning("DNSE market WS heartbeat timeout; reconnecting.")
                 try:
-                    self._ws.pong("")
-                    self._last_pong = time.time()
-                except Exception:
+                    self._ws.close()
+                finally:
                     break
+            try:
+                self._ws.send(json.dumps({"action": "ping"}))
+                self._last_app_ping = now
+                if not self._awaiting_pong_since:
+                    self._awaiting_pong_since = now
+            except Exception as exc:
+                self.stats["last_error"] = str(exc)
+                break
 
     def _on_ping(self, _ws, _data):
         try:
-            self._ws.pong("")
+            self._ws.pong(_data or "")
         except Exception:
             pass
         self._last_pong = time.time()
+
+    def _on_pong(self, _ws, _data):
+        self._last_pong = time.time()
+        self._awaiting_pong_since = 0.0
 
     def _on_error(self, _ws, error):
         self.stats["last_error"] = str(error)
@@ -392,6 +433,7 @@ class DNSEMarketWS:
                 self._ingest(data)
 
     def _handle_control(self, action: str, payload: Dict):
+        action = str(action or "").lower()
         if action == "auth_success":
             self._authenticated = True
             logger.info("DNSE market WS authenticated.")
@@ -400,7 +442,24 @@ class DNSEMarketWS:
             if desired and self._market_data_enabled:
                 self._send_subscribe(desired)
             self._send_trading_subscribe()
-            threading.Thread(target=self._heartbeat_loop, daemon=True, name="DNSEMarketWS-HB").start()
+            generation = self._connection_generation
+            if self._heartbeat_started_generation != generation:
+                self._heartbeat_started_generation = generation
+                threading.Thread(
+                    target=self._heartbeat_loop,
+                    args=(generation,),
+                    daemon=True,
+                    name=f"DNSEMarketWS-HB-{generation}",
+                ).start()
+        elif action == "ping":
+            try:
+                self._ws.send(json.dumps({"action": "pong"}))
+                self._last_app_pong = time.time()
+            except Exception as exc:
+                self.stats["last_error"] = str(exc)
+        elif action == "pong":
+            self._last_app_pong = time.time()
+            self._awaiting_pong_since = 0.0
         elif action in ("auth_error", "error"):
             self.stats["last_error"] = str(payload.get("message") or payload)
             logger.warning("DNSE market WS control error: %s", payload)
@@ -442,6 +501,7 @@ class DNSEMarketWS:
             if "bid" in tick and "ask" in tick:
                 tick["spread"] = round(float(tick["ask"]) - float(tick["bid"]), 2)
             tick["timestamp"] = now
+            tick["connection_generation"] = self._connection_generation
             self._ticks[symbol] = tick
 
     def _is_trading_event(self, data: Dict) -> bool:

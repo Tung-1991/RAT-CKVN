@@ -1375,6 +1375,47 @@ def setup_right_panel(app, parent):
         fg_color="#1565C0",
         command=app.refresh_api_health_panel,
     ).pack(side="right")
+
+    api_cards = ctk.CTkFrame(api_health_body, fg_color="transparent")
+    api_cards.pack(fill="x", padx=4, pady=(2, 7))
+    for index in range(4):
+        api_cards.grid_columnconfigure(index, weight=1)
+
+    def _health_card(column, title):
+        card = ctk.CTkFrame(api_cards, fg_color="#252526", corner_radius=6)
+        card.grid(row=0, column=column, sticky="ew", padx=4)
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=("Roboto", 10, "bold"),
+            text_color="#90A4AE",
+        ).pack(anchor="w", padx=8, pady=(5, 0))
+        value = ctk.CTkLabel(
+            card,
+            text="--",
+            font=("Roboto", 13, "bold"),
+            text_color="white",
+            anchor="w",
+        )
+        value.pack(fill="x", padx=8, pady=(0, 6))
+        return value
+
+    app.lbl_api_health_state = _health_card(0, "TRẠNG THÁI GIÁ")
+    app.lbl_api_health_source = _health_card(1, "NGUỒN MÃ ĐANG CHỌN")
+    app.lbl_api_health_ws = _health_card(2, "WEBSOCKET")
+    app.lbl_api_health_rest = _health_card(3, "REST DỰ PHÒNG")
+    app.lbl_api_health_explain = ctk.CTkLabel(
+        api_health_body,
+        text=(
+            "WS = DNSE đẩy giá realtime · REST = app hỏi giá có giới hạn · "
+            "CACHE = giá gần nhất, có thể đã cũ"
+        ),
+        font=("Roboto", 10),
+        text_color="#B0BEC5",
+        anchor="w",
+    )
+    app.lbl_api_health_explain.pack(fill="x", padx=10, pady=(0, 5))
+
     api_health_cols = ctk.CTkFrame(api_health_body, fg_color="transparent")
     api_health_cols.pack(fill="both", expand=True)
     api_health_cols.grid_columnconfigure(0, weight=1)

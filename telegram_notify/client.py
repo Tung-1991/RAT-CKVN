@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import logging
 import os
 import ssl
 import time
@@ -9,6 +10,19 @@ import urllib.request
 
 
 TELEGRAM_TEXT_LIMIT = 4096
+logger = logging.getLogger("RAT_CKVN")
+_failure_log_times = {}
+
+
+def _log_send_failure(action, error):
+    """Log one compact failure per action/error each minute; no retry queue."""
+    safe_error = str(error or "Telegram send failed")
+    signature = (str(action), safe_error)
+    now = time.time()
+    if now - float(_failure_log_times.get(signature, 0.0) or 0.0) < 60.0:
+        return
+    _failure_log_times[signature] = now
+    logger.warning("[TELEGRAM] %s failed: %s", action, safe_error)
 
 
 def get_env_value(name):
@@ -177,7 +191,9 @@ class TelegramClient:
                 result["chat_id"] = candidate
                 return result
             last_error = result.get("error", "Telegram send failed")
-        return {"ok": False, "error": last_error or "Telegram chat_id is not configured."}
+        error = last_error or "Telegram chat_id is not configured."
+        _log_send_failure("sendMessage", self._safe_error(error))
+        return {"ok": False, "error": error}
 
     def send_message_with_keyboard(self, chat_id, text, keyboard=None):
         last_error = ""
@@ -194,7 +210,9 @@ class TelegramClient:
                 result["chat_id"] = candidate
                 return result
             last_error = result.get("error", "Telegram send failed")
-        return {"ok": False, "error": last_error or "Telegram chat_id is not configured."}
+        error = last_error or "Telegram chat_id is not configured."
+        _log_send_failure("sendMessageWithKeyboard", self._safe_error(error))
+        return {"ok": False, "error": error}
 
     def edit_message_text(self, chat_id, message_id, text, keyboard=None):
         payload = {

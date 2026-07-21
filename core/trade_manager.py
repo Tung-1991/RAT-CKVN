@@ -96,9 +96,12 @@ class TradeManager:
             )
         return None
 
-    def _get_symbol_info(self, symbol):
+    def _get_symbol_info(self, symbol, poll_tick=True):
         if hasattr(self.connector, "get_symbol_info"):
-            return self.connector.get_symbol_info(symbol)
+            try:
+                return self.connector.get_symbol_info(symbol, poll_tick=poll_tick)
+            except TypeError:
+                return self.connector.get_symbol_info(symbol)
         return SimpleNamespace(
             symbol=symbol,
             point=float(getattr(config, "DNSE_PRICE_POINT", 0.1)),
@@ -109,6 +112,14 @@ class TradeManager:
             trade_stops_level=0.0,
             spread=0.0,
         )
+
+    def _market_data_state(self):
+        if hasattr(self.connector, "get_market_data_state"):
+            try:
+                return str(self.connector.get_market_data_state() or "LIVE").upper()
+            except Exception:
+                pass
+        return "LIVE"
 
     def _estimate_round_trip_cost_per_unit(
         self, symbol, entry_price, stop_price, entry_side, sym_info=None
@@ -608,6 +619,10 @@ class TradeManager:
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
             return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
+        if str(signal_class or "ENTRY").upper() == "ENTRY":
+            market_state = self._market_data_state()
+            if market_state in {"RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"}:
+                return f"SAFEGUARD_FAIL|MARKET_DATA_UNAVAILABLE|Nguồn giá đang {market_state}; BOT không mở lệnh mới."
         brain = self._get_brain_settings(symbol)
         if str(signal_class or "ENTRY").upper() == "ENTRY":
             try:
@@ -1068,7 +1083,7 @@ class TradeManager:
         msg = getattr(result, "message", "") or ""
         if msg or err != "API_ERROR":
             self.log(f"⛔ [BOT] Đặt lệnh {symbol} thất bại: {err} {msg}".strip(), target="bot")
-        return "API_ERROR"
+        return f"API_ERROR|{err}|{msg}".rstrip("|")
 
     def _adjust_basket_tp(self, parent_ticket):
         time.sleep(2)
@@ -1124,6 +1139,7 @@ class TradeManager:
         entry_exit_tactic="OFF",
         risk_gate_ack=False,  # True = user đã xác nhận popup RISK GATE, cho qua CONFIRM
         expected_paper_mode=None,
+        market_data_down_ack=False,
     ):
         if (
             expected_paper_mode is not None
@@ -1134,6 +1150,17 @@ class TradeManager:
         is_open, closed_reason = is_symbol_trade_window_open(symbol)
         if not is_open:
             return f"SAFEGUARD_FAIL|Market Hours|{closed_reason}"
+        market_state = self._market_data_state()
+        market_unavailable = market_state in {"RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"}
+        manual_entry_price = float(manual_entry_price or 0.0)
+        if market_unavailable:
+            if manual_entry_price <= 0 or str(order_kind or "").upper() in {"ATO", "ATC", "MOK", "MAK", "MTL"}:
+                return "SAFEGUARD_FAIL|MARKET_DATA_DOWN|Mất dữ liệu giá: chỉ cho phép LO nhập giá thủ công."
+            if not market_data_down_ack:
+                return (
+                    "MARKET_DATA_CONFIRM|Mất dữ liệu giá hiện tại. "
+                    f"Xác nhận tự đặt LO {symbol} tại giá {manual_entry_price:g}; app không dùng giá cache để đổi giá."
+                )
         acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
         margin_cfg = margin_rules.settings_from_brain(brain)
@@ -1155,12 +1182,19 @@ class TradeManager:
         sl_mode = str(params.get("MANUAL_SL_MODE") or ("SWING_REJECTION" if params.get("USE_SWING_SL", False) else "PERCENT")).upper()
 
         tick = self._get_tick(symbol)
-        sym_info = self._get_symbol_info(symbol)
+        sym_info = self._get_symbol_info(symbol, poll_tick=not market_unavailable)
+        if not tick and market_unavailable and manual_entry_price > 0:
+            tick = SimpleNamespace(
+                symbol=symbol,
+                bid=manual_entry_price,
+                ask=manual_entry_price,
+                last=manual_entry_price,
+                spread=0.0,
+            )
         if not tick or not sym_info:
             return "ERR_NO_TICK"
 
         market_price = tick.ask if direction == "BUY" else tick.bid
-        manual_entry_price = float(manual_entry_price or 0.0)
         price = manual_entry_price if manual_entry_price > 0 else market_price
         equity = acc_info["equity"]
         risk_base_amount = equity
@@ -1451,6 +1485,9 @@ class TradeManager:
 
         config.SYMBOL = symbol
         self._sync_state_lifecycle()
+        market_state = self._market_data_state()
+        if market_state in {"RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"}:
+            return f"TELEGRAM_FAIL|MARKET_DATA_DOWN|Nguồn giá đang {market_state}; không gửi lệnh Telegram."
         acc_info = self.connector.get_account_info()
         if not acc_info:
             return "TELEGRAM_FAIL|NO_ACCOUNT|Không lấy được tài khoản DNSE"
@@ -1591,6 +1628,9 @@ class TradeManager:
 
         config.SYMBOL = symbol
         self._sync_state_lifecycle()
+        market_state = self._market_data_state()
+        if market_state in {"RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"}:
+            return {"ok": False, "error": f"MARKET_DATA_DOWN|{market_state}"}
         acc_info = self.connector.get_account_info()
         if not acc_info:
             return {"ok": False, "error": "NO_ACCOUNT"}
@@ -2007,6 +2047,19 @@ class TradeManager:
             ]
 
             needs_save = False
+            market_state = self._market_data_state()
+            price_management_paused = market_state in {
+                "RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"
+            }
+            if price_management_paused:
+                now = time.time()
+                if now - float(getattr(self, "_market_pause_log_ts", 0.0) or 0.0) >= 60.0:
+                    self.log(
+                        f"[MARKET DATA] {market_state}: tạm dừng TSL/REV/ANTI-CASH cần giá; vẫn đồng bộ lệnh và vị thế.",
+                        error=True,
+                        target="bot",
+                    )
+                    self._market_pause_log_ts = now
 
             # ATC-exit: đóng vị thế BOT ở phiên ATC cuối ngày (nếu bật BOT_ATC_EXIT). 1 lần/ngày/ticket.
             try:
@@ -2062,6 +2115,10 @@ class TradeManager:
                             f"♻️ [TSL] Khôi phục tactic cho lệnh bot #{pos.ticket}: {restored_tactic}",
                             target="bot",
                         )
+
+                if price_management_paused:
+                    tsl_status_map[pos.ticket] = f"TẠM DỪNG · {market_state}"
+                    continue
 
                 before_excursion = self.state.get("trade_excursions", {}).get(
                     str(pos.ticket), {}

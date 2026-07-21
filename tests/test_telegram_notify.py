@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
+import logging
 import urllib.parse
 
 from telegram_notify import settings
 from telegram_notify.client import TelegramClient, _chat_id_candidates, _chunk_text
+import telegram_notify.client as telegram_client
 from telegram_notify import reporter
 
 
@@ -95,6 +97,26 @@ def test_send_long_message_requires_token(monkeypatch):
     result = TelegramClient(token_env="TELE_BOT_KEY").send_long_message("1003772881044", "hello")
     assert result["ok"] is False
     assert "TELE_BOT_KEY" in result["error"]
+
+
+def test_failed_send_is_logged_once_without_queue(monkeypatch, caplog):
+    monkeypatch.setenv("TELE_BOT_KEY", "secret-token")
+    monkeypatch.setattr(
+        TelegramClient,
+        "_request",
+        lambda self, method, payload: {"ok": False, "error": "network down"},
+    )
+    telegram_client._failure_log_times.clear()
+    caplog.set_level(logging.WARNING, logger="RAT_CKVN")
+
+    client = TelegramClient(token_env="TELE_BOT_KEY")
+    first = client.send_message("123", "hello")
+    second = client.send_message("123", "hello again")
+
+    assert first["ok"] is False and second["ok"] is False
+    messages = [record.getMessage() for record in caplog.records if "[TELEGRAM]" in record.getMessage()]
+    assert messages == ["[TELEGRAM] sendMessage failed: network down"]
+    assert "secret-token" not in messages[0]
 
 
 def test_send_long_message_sends_all_chunks(monkeypatch):

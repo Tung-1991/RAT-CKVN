@@ -85,26 +85,179 @@ def _speed_up_scroll(frame, factor=5):
     return frame
 
 
+ADVISOR_FILES_HELP_TEXT = """HAI CHỨC NĂNG HOÀN TOÀN TÁCH BIỆT
+
+1) BOT ADVISOR — đánh giá BOT, lịch sử lệnh và setting
+
+Thư mục làm việc: data/<tài khoản>/advisor/
+
+Tự tạo nếu thiếu ngay khi mở cửa sổ AI Advisor:
+- advisor_prompt.md: yêu cầu/luật giao việc cho LLM.
+- advisor_flow.md: giải thích luồng nghiệp vụ của BOT.
+- user_context.md: câu hỏi và mục tiêu Ngài muốn LLM đánh giá.
+- expert_context.md: nhận định hoặc tài liệu chuyên gia về BOT/thị trường.
+- advisor_response.md: chỗ lưu câu trả lời API gần nhất; lúc chưa gọi API chỉ là mẫu trống.
+
+Chỉ tạo hoặc làm mới khi bấm TẠO GÓI BOT ADVISOR:
+- technical_settings.json: toàn bộ setting BOT tại đúng thời điểm tạo gói.
+- advisor_export.xlsx: lệnh đã đóng, lệnh đang mở, phí, PnL và thống kê trong số ngày chọn.
+- external_package/package_manifest.json: danh sách file, model và thời điểm đóng gói.
+- external_package/*: các bản sao đã lọc thông tin nhạy cảm để gửi LLM thủ công.
+
+Tự tạo khi API Trigger chạy:
+- App tự làm mới toàn bộ gói như nút TẠO GÓI, sau đó mới gọi API.
+- API thành công sẽ ghi đè advisor_response.md và lưu thêm
+  history/advisor_response_<thời gian>.md.
+
+File nội bộ, không cần gửi LLM:
+- data/<tài khoản>/advisor_api_settings.json: provider, model, reasoning và giới hạn API.
+- data/<tài khoản>/history/advisor_history.xlsx: kho lịch sử đầy đủ dùng để dựng advisor_export.xlsx.
+- .template_versions.json hoặc *.latest.md: app quản lý phiên bản mẫu.
+
+Nếu tự gửi BOT Advisor qua trình duyệt: chỉ mở thư mục external_package và gửi các file trong đó.
+Nút Send API dùng gói đang có; nó không tự làm mới gói. API Trigger thì có tự làm mới.
+
+2A) CKCS RESEARCH / KHO DỮ LIỆU — chỉ thu thập dữ liệu các mã đã chọn
+
+Thư mục: data/<tài khoản>/ckcs_research/
+
+Tự tạo/cập nhật trong phiên:
+- scan_snapshot_cache.json: kho tổng hợp theo mã/ngày. Lần quét thành công đầu tiên ghi ngay;
+  sau đó mỗi chu kỳ mặc định 15 phút cập nhật cùng bản ghi ngày, không tạo file mới mỗi lần.
+
+Tạo thủ công khi Ngài bấm nút:
+- scan_report.md: bấm TẠO / LÀM MỚI BÁO CÁO. File lấy đúng số ngày giao dịch Ngài chọn.
+- private_context.md: bấm MỞ / ĐIỀN PRIVATE CONTEXT lần đầu; nội dung do Ngài tự nhập.
+
+2B) CKCS RESEARCH / BÁO CÁO & API — tạo báo cáo và tùy chọn gửi LLM
+
+Mặc định vào ngày giao dịch:
+- 11:35 tạo/làm mới scan_report_morning.md.
+- 14:50 tạo/làm mới scan_report_afternoon.md.
+- Hai công tắc tự gửi API mặc định tắt, nên không tự phát sinh phí.
+
+Khi bật gửi API của một phiên:
+- App gửi đúng báo cáo phiên đó + private_context.md.
+- Dùng chung provider, model, reasoning, web search và API key của BOT Advisor.
+- Kết quả được lưu vào ckcs_response_morning.md hoặc ckcs_response_afternoon.md.
+- Nếu Telegram Report đang bật, kết quả API được gửi sang Telegram; lỗi gửi chỉ ghi log.
+
+CKCS RAW/API không chọn mã bằng Python, không sửa BOT và không đặt lệnh.
+Nếu gửi qua trình duyệt: dùng SAO CHÉP CHO LLM hoặc gửi đúng scan_report.md + private_context.md.
+Không gửi scan_snapshot_cache.json vì đó là kho nội bộ, dài và khó đọc.
+"""
+
+
+def open_advisor_files_help(app, parent=None):
+    parent = parent or app
+    popup = ctk.CTkToplevel(parent)
+    popup.title("Giải thích file BOT Advisor và CKCS Research")
+    popup.geometry("820x720")
+    popup.minsize(680, 560)
+    _bring_popup_to_front(popup)
+
+    ctk.CTkLabel(
+        popup,
+        text="FILE NÀO TỰ TẠO, FILE NÀO PHẢI BẤM NÚT?",
+        font=("Roboto", 16, "bold"),
+        text_color="#80DEEA",
+    ).pack(anchor="w", padx=14, pady=(12, 6))
+    text_body = ctk.CTkFrame(popup, fg_color="transparent")
+    text_body.pack(fill="both", expand=True, padx=14, pady=6)
+    text_body.grid_columnconfigure(0, weight=1)
+    text_body.grid_rowconfigure(0, weight=1)
+    text_widget = tk.Text(
+        text_body,
+        font=("Consolas", 11),
+        bg="#151515",
+        fg="#E0E0E0",
+        insertbackground="white",
+        wrap="word",
+        bd=0,
+        highlightthickness=0,
+    )
+    text_widget.grid(row=0, column=0, sticky="nsew")
+    help_scroll = ttk.Scrollbar(text_body, orient="vertical", command=text_widget.yview)
+    help_scroll.grid(row=0, column=1, sticky="ns")
+    text_widget.configure(yscrollcommand=help_scroll.set)
+    text_widget.insert("1.0", ADVISOR_FILES_HELP_TEXT)
+    text_widget.configure(state="disabled")
+
+    buttons = ctk.CTkFrame(popup, fg_color="transparent")
+    buttons.pack(fill="x", padx=14, pady=(4, 12))
+
+    def _copy_help():
+        popup.clipboard_clear()
+        popup.clipboard_append(ADVISOR_FILES_HELP_TEXT)
+        popup.update()
+
+    ctk.CTkButton(buttons, text="SAO CHÉP GIẢI THÍCH", command=_copy_help).pack(side="left")
+    ctk.CTkButton(
+        buttons,
+        text="ĐÓNG",
+        width=90,
+        fg_color="#424242",
+        command=popup.destroy,
+    ).pack(side="right")
+
+
 def open_advisor_popup(app):
     top = ctk.CTkToplevel(app)
-    top.title("AI Advisor")
-    top.geometry("660x760")
-    top.minsize(600, 640)
+    top.title("AI Advisor — BOT & CKCS Research")
+    top.geometry("1080x820")
+    top.minsize(820, 680)
     _bring_popup_to_front(top)
 
     root = ctk.CTkFrame(top, fg_color="#1E1E1E", corner_radius=0)
     root.pack(fill="both", expand=True, padx=10, pady=10)
 
-    ctk.CTkLabel(root, text="AI ADVISOR", font=("Roboto", 18, "bold"), text_color="#80DEEA").pack(anchor="w", padx=10, pady=(8, 4))
+    advisor_header = ctk.CTkFrame(root, fg_color="transparent")
+    advisor_header.pack(fill="x", padx=10, pady=(8, 4))
+    title_group = ctk.CTkFrame(advisor_header, fg_color="transparent")
+    title_group.pack(side="left")
+    ctk.CTkLabel(title_group, text="AI ADVISOR", font=("Roboto", 18, "bold"), text_color="#80DEEA").pack(anchor="w")
+    ctk.CTkLabel(
+        title_group,
+        text="Hai luồng độc lập: đánh giá BOT và nghiên cứu dữ liệu CKCS",
+        font=("Roboto", 10),
+        text_color="#90A4AE",
+    ).pack(anchor="w")
+    ctk.CTkButton(
+        advisor_header,
+        text="❓ GIẢI THÍCH TOÀN BỘ FILE",
+        width=210,
+        height=28,
+        fg_color="#455A64",
+        hover_color="#546E7A",
+        command=lambda: open_advisor_files_help(app, top),
+    ).pack(side="right")
 
     tabs = ctk.CTkTabview(root)
     tabs.pack(fill="both", expand=True, padx=6, pady=(2, 6))
     tab_run = tabs.add("BOT ADVISOR")
-    tab_ckcs = tabs.add("CKCS RAW DATA")
-    tab_edit = tabs.add("CÀI ĐẶT")
-    tab_telegram = tabs.add("Telegram")
+    tab_ckcs_root = tabs.add("CKCS RESEARCH")
+    tab_edit = tabs.add("KẾT NỐI AI")
+    tab_telegram = tabs.add("TELEGRAM")
+    ckcs_tabs = ctk.CTkTabview(tab_ckcs_root, fg_color="#1E1E1E")
+    ckcs_tabs.pack(fill="both", expand=True, padx=2, pady=2)
+    tab_ckcs = ckcs_tabs.add("1 · KHO DỮ LIỆU")
+    tab_ckcs_api = ckcs_tabs.add("2 · BÁO CÁO & API")
     edit_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_edit, fg_color="transparent"))
     edit_body.pack(fill="both", expand=True, padx=0, pady=0)
+
+    bot_purpose = ctk.CTkFrame(tab_run, fg_color="#17333A", corner_radius=6)
+    bot_purpose.pack(fill="x", padx=10, pady=(2, 8))
+    ctk.CTkLabel(
+        bot_purpose,
+        text=(
+            "BOT ADVISOR: đánh giá setting, lịch sử lệnh và kết quả BOT. "
+            "Luồng này không đọc kho 40 mã CKCS Research."
+        ),
+        font=("Roboto", 11, "bold"),
+        text_color="#80DEEA",
+        wraplength=900,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=8)
 
     status_row = ctk.CTkFrame(tab_run, fg_color="#252526", corner_radius=6)
     status_row.pack(fill="x", padx=10, pady=(2, 8))
@@ -118,61 +271,76 @@ def open_advisor_popup(app):
     )
     app.lbl_advisor_status.pack(side="right", fill="x", expand=True, padx=10, pady=8)
 
-    settings = ctk.CTkFrame(tab_run, fg_color="transparent")
+    settings = ctk.CTkFrame(tab_run, fg_color="#252526", corner_radius=6)
     settings.pack(fill="x", padx=10, pady=4)
     settings.grid_columnconfigure(1, weight=1)
 
-    ctk.CTkLabel(settings, text="Số ngày giao dịch báo cáo", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=0, column=0, sticky="w", pady=6)
-    ctk.CTkEntry(settings, textvariable=app.var_advisor_export_days, width=110, height=28, placeholder_text="VD: 15").grid(row=0, column=1, sticky="e", pady=6)
+    def _save_advisor_schedule(_event=None, silent=False):
+        return app.save_advisor_schedule_settings(silent=silent)
 
-    ctk.CTkLabel(settings, text="Chế độ", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=1, column=0, sticky="w", pady=6)
-    ctk.CTkOptionMenu(settings, values=["Manual Only", "API Trigger"], variable=app.var_advisor_mode, width=160, height=28).grid(row=1, column=1, sticky="e", pady=6)
+    ctk.CTkLabel(
+        settings,
+        text="LỊCH VÀ PHẠM VI ĐÁNH GIÁ",
+        font=("Roboto", 13, "bold"),
+        text_color="#80DEEA",
+    ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+    ctk.CTkLabel(settings, text="Số ngày giao dịch báo cáo", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=1, column=0, sticky="w", padx=10, pady=6)
+    advisor_days_entry = ctk.CTkEntry(settings, textvariable=app.var_advisor_export_days, width=110, height=28, placeholder_text="VD: 15")
+    advisor_days_entry.grid(row=1, column=1, sticky="e", padx=10, pady=6)
+    advisor_days_entry.bind("<FocusOut>", lambda event: _save_advisor_schedule(event, silent=True))
+    advisor_days_entry.bind("<Return>", _save_advisor_schedule)
 
-    ctk.CTkLabel(settings, text="Giờ cố định", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=2, column=0, sticky="w", pady=6)
-    ctk.CTkEntry(settings, textvariable=app.var_advisor_fixed_time, width=110, height=28, placeholder_text="HH:MM").grid(row=2, column=1, sticky="e", pady=6)
+    ctk.CTkLabel(settings, text="Chế độ", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=2, column=0, sticky="w", padx=10, pady=6)
+    ctk.CTkOptionMenu(
+        settings,
+        values=["Manual Only", "API Trigger"],
+        variable=app.var_advisor_mode,
+        width=160,
+        height=28,
+        command=lambda _value: _save_advisor_schedule(silent=True),
+    ).grid(row=2, column=1, sticky="e", padx=10, pady=6)
+
+    ctk.CTkLabel(settings, text="Giờ cố định", font=("Roboto", 12, "bold"), text_color="#D7DCE2").grid(row=3, column=0, sticky="w", padx=10, pady=6)
+    advisor_time_entry = ctk.CTkEntry(settings, textvariable=app.var_advisor_fixed_time, width=110, height=28, placeholder_text="HH:MM")
+    advisor_time_entry.grid(row=3, column=1, sticky="e", padx=10, pady=6)
+    advisor_time_entry.bind("<FocusOut>", lambda event: _save_advisor_schedule(event, silent=True))
+    advisor_time_entry.bind("<Return>", _save_advisor_schedule)
 
     ctk.CTkCheckBox(
         settings,
         text="Cảnh báo khi bot bị global cooldown",
         variable=app.var_advisor_global_emergency,
+        command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 12, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 4))
+    ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 4))
 
     ctk.CTkCheckBox(
         settings,
         text="Gửi kèm advisor_response.md khi gọi API",
         variable=app.var_advisor_send_response_file,
+        command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 12, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 4))
-
-    def _show_advisor_file_help():
-        messagebox.showinfo(
-            "Các file BOT Advisor",
-            "BẤM ‘TẠO GÓI BOT ADVISOR’ ĐỂ LÀM MỚI GÓI:\n\n"
-            "• technical_settings.json: setting BOT hiện tại — app tự tạo lại.\n"
-            "• advisor_export.xlsx: lịch sử/kết quả giao dịch — app tự tạo lại.\n"
-            "• package_manifest.json: danh sách file, model và thời điểm tạo — app tự tạo.\n\n"
-            "FILE NỘI DUNG ĐƯỢC GIỮ VÀ SAO CHÉP VÀO GÓI:\n\n"
-            "• advisor_prompt.md: luật giao việc cho AI.\n"
-            "• advisor_flow.md: giải thích nghiệp vụ/cấu trúc BOT.\n"
-            "• user_context.md: câu hỏi, mục tiêu Ngài muốn AI đánh giá BOT.\n"
-            "• expert_context.md: nhận định/tài liệu chuyên gia để AI đối chiếu.\n\n"
-            "Bốn file MD trên sửa tại tab CÀI ĐẶT. Nút Generate không xóa nội dung Ngài đã điền.",
-            parent=top,
-        )
+    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(4, 4))
 
     ctk.CTkButton(
         settings,
-        text="❓ CÁC FILE GÓI BOT LÀ GÌ?",
+        text="LƯU LỊCH ADVISOR",
         height=29,
-        fg_color="#455A64",
-        hover_color="#546E7A",
-        command=_show_advisor_file_help,
-    ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        fg_color="#00695C",
+        hover_color="#004D40",
+        command=_save_advisor_schedule,
+    ).grid(row=6, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
+
+    ctk.CTkLabel(
+        settings,
+        text="API Trigger và giờ HH:MM được lưu theo tài khoản; lịch vẫn chạy ngoài phiên.",
+        font=("Roboto", 10),
+        text_color="#90CAF9",
+    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(3, 10))
 
     # --- Kho dữ liệu CKCS độc lập; không gọi LLM và không tác động BOT ---
     ckcs_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_ckcs, fg_color="transparent"))
@@ -182,7 +350,7 @@ def open_advisor_popup(app):
     warning.pack(fill="x", padx=6, pady=(0, 10))
     ctk.CTkLabel(
         warning,
-        text="CKCS RAW DATA chỉ thu thập và xuất báo cáo; không chọn mã, không gọi LLM và không tác động BOT.",
+        text="KHO DỮ LIỆU chỉ thu thập và tổng hợp các mã đã chọn; không gọi LLM và không tác động BOT.",
         font=("Roboto", 11, "bold"),
         text_color="#FFD54F",
         wraplength=560,
@@ -264,18 +432,33 @@ def open_advisor_popup(app):
     )
     app.lbl_ckcs_raw_status.pack(fill="x", padx=10, pady=9)
 
-    report_box = ctk.CTkFrame(ckcs_body, fg_color="#252526", corner_radius=6)
-    report_box.pack(fill="x", padx=6, pady=(0, 10))
-    report_box.grid_columnconfigure(1, weight=1)
-    ctk.CTkLabel(report_box, text="BÁO CÁO GỬI LLM", font=("Roboto", 13, "bold"), text_color="#80DEEA").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
-    ctk.CTkLabel(report_box, text="Số ngày giao dịch muốn xuất", font=("Roboto", 11, "bold")).grid(row=1, column=0, sticky="w", padx=10, pady=6)
-    ctk.CTkEntry(report_box, textvariable=app.var_ckcs_report_days, width=110, height=28, placeholder_text="VD: 15").grid(row=1, column=1, sticky="e", padx=10, pady=6)
+    raw_info = ctk.CTkFrame(ckcs_body, fg_color="#252526", corner_radius=6)
+    raw_info.pack(fill="x", padx=6, pady=(0, 10))
     ctk.CTkLabel(
-        report_box,
-        text="Gửi LLM: scan_report.md + private_context.md",
-        font=("Consolas", 11, "bold"),
-        text_color="#FFD54F",
-    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
+        raw_info,
+        text="FILE NỘI BỘ",
+        font=("Roboto", 13, "bold"),
+        text_color="#80DEEA",
+    ).pack(anchor="w", padx=10, pady=(10, 3))
+    ctk.CTkLabel(
+        raw_info,
+        text=(
+            "scan_snapshot_cache.json được app tự cập nhật theo mã/ngày. "
+            "Đây là kho nguồn để tạo báo cáo, không phải file gửi trực tiếp cho LLM."
+        ),
+        font=("Roboto", 11),
+        text_color="#CFD8DC",
+        wraplength=820,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=(0, 7))
+    ctk.CTkButton(
+        raw_info,
+        text="MỞ THƯ MỤC DỮ LIỆU",
+        height=30,
+        fg_color="#424242",
+        command=app.open_ckcs_research_folder,
+    ).pack(fill="x", padx=10, pady=(0, 10))
+
     def _open_private_context():
         from ai_advisor import paths as advisor_paths
 
@@ -284,7 +467,7 @@ def open_advisor_popup(app):
         if not os.path.isfile(path):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(
-                    "# PRIVATE CONTEXT — THÔNG TIN RIÊNG CHO VIỆC CHỌN MÃ\n\n"
+                    "# PRIVATE CONTEXT — THÔNG TIN RIÊNG CHO PHÂN TÍCH CKCS\n\n"
                     "## Tin tức / dữ liệu chuyên gia\n\n"
                     "Điền nội dung tại đây.\n\n"
                     "## Nhận định cá nhân\n\n"
@@ -292,26 +475,7 @@ def open_advisor_popup(app):
                     "## Mục tiêu và giới hạn đầu tư\n\n"
                     "Ví dụ: thời gian nắm giữ, mức vốn, ngành muốn ưu tiên hoặc tránh.\n"
                 )
-        open_advisor_file_editor(app, path, "private_context.md — CKCS RAW DATA")
-
-    ctk.CTkButton(
-        report_box,
-        text="📝 MỞ / ĐIỀN PRIVATE CONTEXT",
-        height=32,
-        fg_color="#8D6E00",
-        hover_color="#A67C00",
-        command=_open_private_context,
-    ).grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 7))
-    ctk.CTkButton(
-        report_box, text="TẠO / LÀM MỚI BÁO CÁO", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_ckcs_report_ui
-    ).grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
-    report_buttons = ctk.CTkFrame(report_box, fg_color="transparent")
-    report_buttons.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
-    for index in range(3):
-        report_buttons.grid_columnconfigure(index, weight=1)
-    ctk.CTkButton(report_buttons, text="SAO CHÉP CHO LLM", height=30, command=app.copy_ckcs_report_ui).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-    ctk.CTkButton(report_buttons, text="MỞ FILE", height=30, fg_color="#424242", command=app.open_ckcs_report_file).grid(row=0, column=1, sticky="ew", padx=4)
-    ctk.CTkButton(report_buttons, text="MỞ THƯ MỤC", height=30, fg_color="#424242", command=app.open_ckcs_research_folder).grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        open_advisor_file_editor(app, path, "private_context.md — CKCS Research")
 
     def _refresh_scan_status():
         try:
@@ -335,11 +499,242 @@ def open_advisor_popup(app):
 
     _refresh_scan_status()
 
-    api_hint = ctk.CTkFrame(tab_run, fg_color="#252526", corner_radius=6)
-    api_hint.pack(fill="x", padx=10, pady=(8, 2))
+    # --- CKCS API: lịch tạo hai file phiên và tùy chọn gửi LLM bên ngoài ---
+    ckcs_api_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_ckcs_api, fg_color="transparent"))
+    ckcs_api_body.pack(fill="both", expand=True, padx=8, pady=8)
+
+    ckcs_api_warning = ctk.CTkFrame(ckcs_api_body, fg_color="#3A2E08", corner_radius=6)
+    ckcs_api_warning.pack(fill="x", padx=6, pady=(0, 10))
+    ctk.CTkLabel(
+        ckcs_api_warning,
+        text=(
+            "Python chỉ tạo báo cáo và tùy chọn gửi ra LLM. Phần này không tự chọn mã, "
+            "không sửa setting và không đặt lệnh."
+        ),
+        font=("Roboto", 11, "bold"),
+        text_color="#FFD54F",
+        wraplength=760,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=8)
+
+    ckcs_api_status_box = ctk.CTkFrame(ckcs_api_body, fg_color="#252526", corner_radius=6)
+    ckcs_api_status_box.pack(fill="x", padx=6, pady=(0, 10))
+    app.lbl_ckcs_api_status = ctk.CTkLabel(
+        ckcs_api_status_box,
+        text=getattr(app, "ckcs_api_last_status", "Chưa chạy CKCS API"),
+        font=("Roboto", 11, "bold"),
+        text_color="#B0BEC5",
+        anchor="w",
+        justify="left",
+        wraplength=760,
+    )
+    app.lbl_ckcs_api_status.pack(fill="x", padx=10, pady=9)
+
+    ckcs_common = ctk.CTkFrame(ckcs_api_body, fg_color="#252526", corner_radius=6)
+    ckcs_common.pack(fill="x", padx=6, pady=(0, 10))
+    ckcs_common.grid_columnconfigure(1, weight=1)
+    ctk.CTkLabel(
+        ckcs_common,
+        text="CẤU HÌNH CHUNG",
+        font=("Roboto", 13, "bold"),
+        text_color="#80DEEA",
+    ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+    ctk.CTkLabel(
+        ckcs_common,
+        text="Số ngày giao dịch đưa vào mỗi báo cáo",
+        font=("Roboto", 11, "bold"),
+    ).grid(row=1, column=0, sticky="w", padx=10, pady=6)
+    ckcs_api_days = ctk.CTkEntry(
+        ckcs_common,
+        textvariable=app.var_ckcs_report_days,
+        width=110,
+        height=28,
+        placeholder_text="VD: 15",
+    )
+    ckcs_api_days.grid(row=1, column=1, sticky="e", padx=10, pady=6)
+    ckcs_api_days.bind("<FocusOut>", lambda event: _save_advisor_schedule(event, silent=True))
+    ckcs_api_days.bind("<Return>", _save_advisor_schedule)
+    ctk.CTkLabel(
+        ckcs_common,
+        text=(
+            "Báo cáo thủ công dùng scan_report.md. Báo cáo tự động dùng hai file sáng/chiều bên dưới. "
+            "API dùng chung cấu hình tại tab KẾT NỐI AI."
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color="#90CAF9",
+        wraplength=740,
+        justify="left",
+    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
+    common_actions = ctk.CTkFrame(ckcs_common, fg_color="transparent")
+    common_actions.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
+    for index in range(3):
+        common_actions.grid_columnconfigure(index, weight=1)
+    ctk.CTkButton(
+        common_actions,
+        text="ĐIỀN PRIVATE CONTEXT",
+        height=30,
+        fg_color="#8D6E00",
+        hover_color="#A67C00",
+        command=_open_private_context,
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+    ctk.CTkButton(
+        common_actions,
+        text="TẠO BÁO CÁO THỦ CÔNG",
+        height=30,
+        fg_color="#00695C",
+        hover_color="#004D40",
+        command=app.generate_ckcs_report_ui,
+    ).grid(row=0, column=1, sticky="ew", padx=4)
+    ctk.CTkButton(
+        common_actions,
+        text="SAO CHÉP CHO LLM",
+        height=30,
+        command=app.copy_ckcs_report_ui,
+    ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
+    common_files = ctk.CTkFrame(ckcs_common, fg_color="transparent")
+    common_files.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+    for index in range(2):
+        common_files.grid_columnconfigure(index, weight=1)
+    ctk.CTkButton(
+        common_files,
+        text="MỞ scan_report.md",
+        height=28,
+        fg_color="#424242",
+        command=app.open_ckcs_report_file,
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+    ctk.CTkButton(
+        common_files,
+        text="MỞ THƯ MỤC CKCS",
+        height=28,
+        fg_color="#424242",
+        command=app.open_ckcs_research_folder,
+    ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+    sessions_grid = ctk.CTkFrame(ckcs_api_body, fg_color="transparent")
+    sessions_grid.pack(fill="x", padx=6, pady=(0, 10))
+    sessions_grid.grid_columnconfigure(0, weight=1, uniform="ckcs_sessions")
+    sessions_grid.grid_columnconfigure(1, weight=1, uniform="ckcs_sessions")
+
+    def _add_ckcs_session_box(parent, column, session, title, report_var, api_var, time_var):
+        box = ctk.CTkFrame(parent, fg_color="#252526", corner_radius=6)
+        box.grid(row=0, column=column, sticky="nsew", padx=(0, 5) if column == 0 else (5, 0))
+        box.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            box,
+            text=title,
+            font=("Roboto", 13, "bold"),
+            text_color="#80DEEA",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        ctk.CTkLabel(box, text="Giờ chạy", font=("Roboto", 11, "bold")).grid(
+            row=1, column=0, sticky="w", padx=10, pady=5
+        )
+        time_entry = ctk.CTkEntry(box, textvariable=time_var, width=100, height=28, placeholder_text="HH:MM")
+        time_entry.grid(row=1, column=1, sticky="e", padx=10, pady=5)
+        time_entry.bind("<FocusOut>", lambda event: _save_advisor_schedule(event, silent=True))
+        time_entry.bind("<Return>", _save_advisor_schedule)
+        ctk.CTkCheckBox(
+            box,
+            text="Tự tạo báo cáo mỗi ngày giao dịch",
+            variable=report_var,
+            command=lambda: _save_advisor_schedule(silent=True),
+            font=("Roboto", 11, "bold"),
+            checkbox_width=18,
+            checkbox_height=18,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        ctk.CTkCheckBox(
+            box,
+            text="Tự gửi API sau khi tạo báo cáo (có thể phát sinh phí)",
+            variable=api_var,
+            command=lambda: _save_advisor_schedule(silent=True),
+            font=("Roboto", 11, "bold"),
+            checkbox_width=18,
+            checkbox_height=18,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        report_name = f"scan_report_{session}.md"
+        response_name = f"ckcs_response_{session}.md"
+        ctk.CTkLabel(
+            box,
+            text=f"Báo cáo: {report_name}\nKết quả: {response_name}",
+            font=("Consolas", 10, "bold"),
+            text_color="#FFD54F",
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 7))
+        actions = ctk.CTkFrame(box, fg_color="transparent")
+        actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
+        for index in range(2):
+            actions.grid_columnconfigure(index, weight=1)
+        ctk.CTkButton(
+            actions,
+            text="TẠO FILE",
+            height=30,
+            fg_color="#00695C",
+            hover_color="#004D40",
+            command=lambda s=session: app.run_ckcs_session_ui(s, send_api=False),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(
+            actions,
+            text="TẠO + GỬI API",
+            height=30,
+            command=lambda s=session: app.run_ckcs_session_ui(s, send_api=True),
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        file_actions = ctk.CTkFrame(box, fg_color="transparent")
+        file_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        for index in range(2):
+            file_actions.grid_columnconfigure(index, weight=1)
+        ctk.CTkButton(
+            file_actions,
+            text="MỞ BÁO CÁO",
+            height=28,
+            fg_color="#424242",
+            command=lambda s=session: app.open_ckcs_session_file(s, response=False),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(
+            file_actions,
+            text="MỞ KẾT QUẢ API",
+            height=28,
+            fg_color="#424242",
+            command=lambda s=session: app.open_ckcs_session_file(s, response=True),
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+    _add_ckcs_session_box(
+        sessions_grid,
+        0,
+        "morning",
+        "PHIÊN SÁNG",
+        app.var_ckcs_auto_report_morning,
+        app.var_ckcs_send_api_morning,
+        app.var_ckcs_morning_time,
+    )
+    _add_ckcs_session_box(
+        sessions_grid,
+        1,
+        "afternoon",
+        "CUỐI NGÀY",
+        app.var_ckcs_auto_report_afternoon,
+        app.var_ckcs_send_api_afternoon,
+        app.var_ckcs_afternoon_time,
+    )
+    ctk.CTkButton(
+        ckcs_api_body,
+        text="LƯU LỊCH CKCS",
+        height=32,
+        fg_color="#2E7D32",
+        hover_color="#1B5E20",
+        command=_save_advisor_schedule,
+    ).pack(fill="x", padx=6, pady=(0, 6))
+    ctk.CTkButton(
+        ckcs_api_body,
+        text="MỞ THƯ MỤC CKCS",
+        height=30,
+        fg_color="#424242",
+        command=app.open_ckcs_research_folder,
+    ).pack(fill="x", padx=6, pady=(0, 10))
+
+    api_hint = ctk.CTkFrame(edit_body, fg_color="#252526", corner_radius=6)
+    api_hint.pack(fill="x", padx=10, pady=(8, 8))
     ctk.CTkLabel(
         api_hint,
-        text="API key chỉ đọc từ PowerShell hiện tại, không lưu xuống file.",
+        text="API KEY — chỉ đọc từ môi trường Windows, không ghi token vào file setting",
         font=("Roboto", 10, "bold"),
         text_color="#FBC02D",
     ).pack(anchor="w", padx=10, pady=(7, 2))
@@ -348,7 +743,7 @@ def open_advisor_popup(app):
     api_cmd = '$env:OPENAI_API_KEY="TOKEN"'
     ctk.CTkLabel(
         api_cmd_row,
-        text=api_cmd,
+        text=f"OpenAI: {api_cmd}\nAnthropic: $env:ANTHROPIC_API_KEY=\"TOKEN\"",
         font=("Consolas", 11, "bold"),
         text_color="#D7DCE2",
         anchor="w",
@@ -366,8 +761,8 @@ def open_advisor_popup(app):
 
     ctk.CTkButton(
         api_cmd_row,
-        text="Copy",
-        width=70,
+        text="COPY OPENAI",
+        width=110,
         height=26,
         fg_color="#424242",
         hover_color="#616161",
@@ -376,9 +771,9 @@ def open_advisor_popup(app):
 
     buttons = ctk.CTkFrame(tab_run, fg_color="transparent")
     buttons.pack(fill="x", padx=10, pady=(10, 8))
-    ctk.CTkButton(buttons, text="TẠO GÓI BOT ADVISOR", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
-    ctk.CTkButton(buttons, text="Open Folder", width=105, height=34, fg_color="#424242", hover_color="#616161", command=app.open_advisor_folder).pack(side="left", padx=5)
-    ctk.CTkButton(buttons, text="Send API", width=100, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
+    ctk.CTkButton(buttons, text="TẠO / LÀM MỚI GÓI", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
+    ctk.CTkButton(buttons, text="MỞ THƯ MỤC", width=125, height=34, fg_color="#424242", hover_color="#616161", command=app.open_advisor_folder).pack(side="left", padx=5)
+    ctk.CTkButton(buttons, text="GỬI GÓI HIỆN TẠI QUA API", width=210, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
 
     from ai_advisor import api_client
     from ai_advisor.exporter import ensure_advisor_flow, ensure_advisor_response_template, ensure_expert_context, ensure_user_context
@@ -737,13 +1132,13 @@ def open_advisor_popup(app):
     files_box.pack(fill="x", padx=10, pady=(10, 8))
     ctk.CTkLabel(
         files_box,
-        text="Editable package files",
+        text="NỘI DUNG BOT ADVISOR",
         font=("Roboto", 12, "bold"),
         text_color="#80DEEA",
     ).pack(anchor="w", padx=10, pady=(8, 2))
     ctk.CTkLabel(
         files_box,
-        text="Các file Prompt, Flow, User Context, Expert Context và Response có thể sửa. File dữ liệu được app tự sinh.",
+        text="Chỉ các file nội dung dưới đây được sửa tay; setting và lịch sử giao dịch do app tự sinh.",
         font=("Roboto", 10, "bold"),
         text_color="gray",
     ).pack(anchor="w", padx=10, pady=(0, 8))
@@ -754,7 +1149,7 @@ def open_advisor_popup(app):
 
     ctk.CTkButton(
         file_buttons,
-        text="Edit Prompt",
+        text="PROMPT",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -762,7 +1157,7 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
     ctk.CTkButton(
         file_buttons,
-        text="Edit Flow",
+        text="LUỒNG BOT",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -770,7 +1165,7 @@ def open_advisor_popup(app):
     ).grid(row=0, column=1, sticky="ew", padx=4)
     ctk.CTkButton(
         file_buttons,
-        text="Edit User Context",
+        text="YÊU CẦU CỦA NGÀI",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -778,7 +1173,7 @@ def open_advisor_popup(app):
     ).grid(row=0, column=2, sticky="ew", padx=4)
     ctk.CTkButton(
         file_buttons,
-        text="Edit Expert Context",
+        text="Ý KIẾN CHUYÊN GIA",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -786,7 +1181,7 @@ def open_advisor_popup(app):
     ).grid(row=0, column=3, sticky="ew", padx=(4, 0))
     ctk.CTkButton(
         file_buttons,
-        text="Edit Response",
+        text="KẾT QUẢ GẦN NHẤT",
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -798,13 +1193,13 @@ def open_advisor_popup(app):
     edit_top.grid_columnconfigure(1, weight=1)
     ctk.CTkLabel(
         edit_top,
-        text="API Limits",
+        text="MODEL VÀ GIỚI HẠN API",
         font=("Roboto", 12, "bold"),
         text_color="#80DEEA",
     ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 2))
     ctk.CTkLabel(
         edit_top,
-        text="Internal send limits. This JSON is not part of the manual web-upload package.",
+        text="Dùng chung cho BOT Advisor và CKCS API. Thay đổi tại đây không làm thay đổi logic BOT.",
         font=("Roboto", 10, "bold"),
         text_color="gray",
     ).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
@@ -829,10 +1224,10 @@ def open_advisor_popup(app):
             ctk.CTkEntry(edit_top, textvariable=variable, width=150, height=28).grid(row=row, column=1, sticky="e", padx=10, pady=4)
 
     # Provider + Model (model phụ thuộc provider đang chọn).
-    ctk.CTkLabel(edit_top, text="provider", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=2, column=0, sticky="w", padx=10, pady=4)
+    ctk.CTkLabel(edit_top, text="Nhà cung cấp", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=2, column=0, sticky="w", padx=10, pady=4)
     ctk.CTkOptionMenu(edit_top, values=list(api_client._providers().keys()), variable=var_provider, width=150, height=28, command=lambda _v=None: _on_provider_change()).grid(row=2, column=1, sticky="e", padx=10, pady=4)
 
-    ctk.CTkLabel(edit_top, text="model", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=3, column=0, sticky="w", padx=10, pady=4)
+    ctk.CTkLabel(edit_top, text="Model", font=("Roboto", 11, "bold"), text_color="#D7DCE2").grid(row=3, column=0, sticky="w", padx=10, pady=4)
     cbo_model = ctk.CTkOptionMenu(edit_top, values=api_client.models_for(var_provider.get()), variable=var_model, width=150, height=28)
     cbo_model.grid(row=3, column=1, sticky="e", padx=10, pady=4)
 
@@ -842,14 +1237,14 @@ def open_advisor_popup(app):
         if var_model.get() not in models:
             var_model.set(models[0] if models else "")
 
-    _edit_row("reasoning effort", var_reasoning, 4, ["none", "low", "medium", "high", "xhigh", "max"])
-    _edit_row("technical_settings.json limit (CHAR)", var_tech_limit, 5)
-    _edit_row("advisor_export.xlsx rows/sheet", var_workbook_rows, 6)
-    _edit_row("max output tokens", var_max_output, 7)
+    _edit_row("Mức suy luận", var_reasoning, 4, ["none", "low", "medium", "high", "xhigh", "max"])
+    _edit_row("Giới hạn technical_settings (ký tự)", var_tech_limit, 5)
+    _edit_row("Số dòng Excel mỗi sheet", var_workbook_rows, 6)
+    _edit_row("Giới hạn token đầu ra", var_max_output, 7)
 
     ctk.CTkCheckBox(
         edit_top,
-        text="Enable web search",
+        text="Bật tìm kiếm web",
         variable=var_web_search,
         font=("Roboto", 11, "bold"),
         checkbox_width=18,
@@ -893,8 +1288,8 @@ def open_advisor_popup(app):
         except Exception as exc:
             app._set_advisor_status("API settings ERR", str(exc))
 
-    ctk.CTkButton(limit_buttons, text="Save Limits", height=30, fg_color="#00695C", hover_color="#004D40", command=save_api_edit).pack(side="left", fill="x", expand=True, padx=(0, 6))
-    ctk.CTkButton(limit_buttons, text="Preview Token/Cost", width=160, height=30, fg_color="#1f538d", hover_color="#14375e", command=app.preview_advisor_api_payload).pack(side="right")
+    ctk.CTkButton(limit_buttons, text="LƯU CẤU HÌNH API", height=30, fg_color="#00695C", hover_color="#004D40", command=save_api_edit).pack(side="left", fill="x", expand=True, padx=(0, 6))
+    ctk.CTkButton(limit_buttons, text="ƯỚC TÍNH TOKEN / PHÍ", width=190, height=30, fg_color="#1f538d", hover_color="#14375e", command=app.preview_advisor_api_payload).pack(side="right")
 
     preview_box = ctk.CTkFrame(edit_body, fg_color="#252526", corner_radius=6)
     preview_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -972,8 +1367,11 @@ def open_advisor_file_editor(app, path, title):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             status.configure(text="Saved", text_color="#00C853")
-            if "CKCS RAW DATA" in title and hasattr(app, "_set_ckcs_raw_status"):
-                app._set_ckcs_raw_status("Đã lưu private_context.md")
+            if "CKCS" in title:
+                if hasattr(app, "_set_ckcs_raw_status"):
+                    app._set_ckcs_raw_status("Đã lưu private_context.md")
+                if hasattr(app, "_set_ckcs_api_status"):
+                    app._set_ckcs_api_status("Đã lưu private_context.md")
             elif hasattr(app, "_set_advisor_status"):
                 app._set_advisor_status(f"{title} saved")
         except Exception as exc:

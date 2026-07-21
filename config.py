@@ -96,17 +96,31 @@ DNSE_FEE_CACHE_TTL_SECONDS = float(os.getenv("DNSE_FEE_CACHE_TTL_SECONDS", "3600
 # là công tắc tắt rõ ràng. Cài đặt mới mặc định auto theo chính sách RAT6.
 _DNSE_WS_LEGACY_RAW = os.getenv("DNSE_WS_ENABLED", "")
 DNSE_WS_LEGACY_ENABLED = _DNSE_WS_LEGACY_RAW.strip().lower() in ("1", "true", "yes", "on")
-DNSE_WS_MODE = os.getenv("DNSE_WS_MODE", "auto").strip().lower()
+_DNSE_WS_MODE_RAW = os.getenv("DNSE_WS_MODE", "").strip().lower()
+# Thứ tự ưu tiên tương thích ngược:
+#   DNSE_WS_MODE được khai báo -> dùng mode mới;
+#   nếu chưa có mode mới nhưng có DNSE_WS_ENABLED cũ -> ánh xạ true/false;
+#   nếu cả hai đều chưa có -> auto.
+DNSE_WS_MODE = _DNSE_WS_MODE_RAW or (
+    ("auto" if DNSE_WS_LEGACY_ENABLED else "off") if _DNSE_WS_LEGACY_RAW.strip() else "auto"
+)
 if DNSE_WS_MODE not in ("auto", "off"):
     DNSE_WS_MODE = "auto"
 DNSE_WS_ENABLED = DNSE_WS_MODE != "off"
 DNSE_WS_URL = os.getenv("DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn")
 DNSE_WS_ENCODING = os.getenv("DNSE_WS_ENCODING", "json")
 DNSE_WS_BOARD_ID = os.getenv("DNSE_WS_BOARD_ID", "G1")
-DNSE_WS_RECONNECT_SECONDS = 5.0
-DNSE_WS_PONG_INTERVAL = 150.0  # gửi PONG mỗi 150s (< 180s server PING) để giữ kết nối
-# Khi WS bật: nếu tick từ WS cũ hơn ngưỡng này (giây) thì fallback sang REST.
-DNSE_WS_STALE_SECONDS = 5.0
+DNSE_WS_RECONNECT_SECONDS = float(os.getenv("DNSE_WS_RECONNECT_SECONDS", "5.0"))
+DNSE_WS_HEARTBEAT_SECONDS = float(os.getenv("DNSE_WS_HEARTBEAT_SECONDS", "25.0"))
+DNSE_WS_HEARTBEAT_TIMEOUT_SECONDS = float(os.getenv("DNSE_WS_HEARTBEAT_TIMEOUT_SECONDS", "60.0"))
+DNSE_WS_FALLBACK_DELAY_SECONDS = float(os.getenv("DNSE_WS_FALLBACK_DELAY_SECONDS", "5.0"))
+# Giữ tên cũ để bundle setting cũ không lỗi. Tuổi tick chỉ dùng để hiển thị; không còn
+# dùng nó để kết luận WebSocket chết khi một mã đứng giá.
+DNSE_WS_PONG_INTERVAL = DNSE_WS_HEARTBEAT_SECONDS
+DNSE_WS_STALE_SECONDS = float(os.getenv("DNSE_WS_STALE_SECONDS", "5.0"))
+DNSE_MARKET_REST_MAX_SYMBOLS_PER_SECOND = float(
+    os.getenv("DNSE_MARKET_REST_MAX_SYMBOLS_PER_SECOND", "2.0")
+)
 DNSE_WS_MAX_CONNECTION_SECONDS = float(os.getenv("DNSE_WS_MAX_CONNECTION_SECONDS", "28200"))  # 7h50
 DNSE_WS_RECONCILE_SECONDS = float(os.getenv("DNSE_WS_RECONCILE_SECONDS", "300"))
 RESET_HOUR = 0

@@ -8,7 +8,9 @@ import copy
 import json
 import os
 import logging
+import threading
 import time
+from collections import deque
 import config
 import pandas_ta as ta 
 from core.storage_manager import get_brain_settings_for_symbol
@@ -48,24 +50,116 @@ class DataEngine:
         self._last_tick = {}  # Cache tick real-time: {symbol: {bid, ask, last, ...}}
         self._bars_cache = {}
         self._ws_started = False
+        # App UI sẽ chuyển sang consumer ngay khi dựng xong; daemon giữ owner=True.
+        # Mặc định True bảo toàn hành vi cho script/test dùng DataEngine độc lập.
+        self._market_data_owner = True
+        self._shared_tick_provider = None
+        self._market_state_provider = None
+        self._market_state = "RECOVERING"
+        self._market_state_since = time.time()
+        self._ws_unavailable_since = 0.0
+        self._ws_symbol_requested_at = {}
+        self._rest_budget_lock = threading.Lock()
+        self._rest_symbol_calls = deque()
         self.cache_stats = {
             "tick_hits": 0,
             "tick_misses": 0,
             "ohlc_hits": 0,
             "ohlc_misses": 0,
             "ws_hits": 0,
+            "shared_hits": 0,
+            "rest_fallbacks": 0,
+            "rest_budget_skips": 0,
         }
 
+    def configure_market_data_owner(self, owner, tick_provider=None, state_provider=None):
+        """Chọn vai trò nguồn giá.
+
+        owner=True: được mở market WS và gọi latest REST. owner=False: chỉ đọc feed
+        chia sẻ do daemon cung cấp, tuyệt đối không tự gọi endpoint latest.
+        """
+        self._market_data_owner = bool(owner)
+        self._shared_tick_provider = tick_provider
+        self._market_state_provider = state_provider
+        if not self._market_data_owner:
+            try:
+                market_ws.set_market_data_enabled(False)
+            except Exception:
+                pass
+
+    def market_data_state(self):
+        if not self._market_data_owner and callable(self._market_state_provider):
+            try:
+                state = str(self._market_state_provider() or "").upper()
+                if state:
+                    return state
+            except Exception:
+                pass
+        return self._market_state
+
+    def _set_market_state(self, state, reason=""):
+        state = str(state or "RECOVERING").upper()
+        if state != self._market_state:
+            old = self._market_state
+            self._market_state = state
+            self._market_state_since = time.time()
+            logger.info("Market data: %s -> %s%s", old, state, f" ({reason})" if reason else "")
+
+    @staticmethod
+    def _decorate_tick(tick, source, state):
+        if not tick:
+            return None
+        row = dict(tick)
+        now = time.time()
+        ts = float(row.get("timestamp", row.get("tick_timestamp", 0.0)) or 0.0)
+        row["timestamp"] = ts or now
+        row["source"] = str(source or row.get("source") or "CACHE").upper()
+        row["market_state"] = str(state or row.get("market_state") or "RECOVERING").upper()
+        row["age_seconds"] = max(0.0, now - row["timestamp"])
+        row["freshness"] = "LIVE" if row["market_state"] in ("LIVE", "REST FALLBACK", "REST_FALLBACK") else "STALE"
+        row["stale"] = row["freshness"] != "LIVE"
+        return row
+
+    def _shared_tick(self, symbol):
+        if not callable(self._shared_tick_provider):
+            return None
+        try:
+            raw = self._shared_tick_provider(str(symbol).upper())
+        except Exception:
+            raw = None
+        if not raw:
+            return None
+        state = str(raw.get("market_state") or self.market_data_state() or "RECOVERING").upper()
+        tick = self._decorate_tick(raw, raw.get("source", "CACHE"), state)
+        if tick:
+            self._last_tick[str(symbol).upper()] = tick
+            self.cache_stats["shared_hits"] += 1
+        return tick
+
+    def _claim_rest_symbol_budget(self):
+        limit = max(0.0, float(getattr(config, "DNSE_MARKET_REST_MAX_SYMBOLS_PER_SECOND", 2.0) or 0.0))
+        if limit <= 0:
+            return False
+        now = time.time()
+        with self._rest_budget_lock:
+            while self._rest_symbol_calls and now - self._rest_symbol_calls[0] >= 1.0:
+                self._rest_symbol_calls.popleft()
+            if len(self._rest_symbol_calls) >= max(1, int(limit)):
+                self.cache_stats["rest_budget_skips"] += 1
+                return False
+            self._rest_symbol_calls.append(now)
+            return True
 
     def _get_brain_settings(self, symbol=None):
         return get_brain_settings_for_symbol(symbol)
 
     def _ensure_ws_symbol(self, symbol):
         """Khởi động WS (1 lần) và subscribe symbol khi streaming được bật."""
-        if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
+        if not self._market_data_owner or not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
             return
         if not is_symbol_network_window_open(symbol, include_preopen=True)[0]:
             market_ws.set_market_data_enabled(False)
+            self._set_market_state("SLEEP", "market closed")
             if not market_ws.is_running():
                 self._ws_started = market_ws.start()
             return
@@ -73,15 +167,17 @@ class DataEngine:
         if not self._ws_started or not market_ws.is_running():
             self._ws_started = market_ws.start()
         market_ws.subscribe([symbol])
+        self._ws_symbol_requested_at.setdefault(str(symbol).upper(), time.time())
 
     def set_stream_symbols(self, symbols):
         """Đồng bộ danh sách mã đang stream với watchlist hiện tại (gọi từ UI/daemon)."""
-        if not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
+        if not self._market_data_owner or not getattr(config, "DNSE_WS_ENABLED", False) or not market_ws.available:
             return
         symbols = [str(symbol).upper() for symbol in (symbols or []) if symbol]
         if not any(is_symbol_network_window_open(symbol, include_preopen=True)[0] for symbol in symbols):
             market_ws.set_symbols(symbols)
             market_ws.set_market_data_enabled(False)
+            self._set_market_state("SLEEP", "market closed")
             if not market_ws.is_running():
                 self._ws_started = market_ws.start()
             return
@@ -589,10 +685,21 @@ class DataEngine:
         return df_entry, df_trend, context
 
     def fetch_realtime_tick(self, symbol):
-        """Lấy giá real-time từ DNSE: trades/latest (giá khớp) + quotes/latest (bid/ask).
-        Trả về dict {bid, ask, last, high, low, spread, timestamp} hoặc None.
-        Cache kết quả vào self._last_tick[symbol].
+        """Lấy tick từ một nguồn duy nhất.
+
+        Daemon (owner) ưu tiên WS và chỉ dùng REST sau thời gian chờ reconnect. UI
+        (consumer) chỉ đọc feed chia sẻ, không bao giờ chạm latest REST.
         """
+        symbol = str(symbol or "").upper()
+        if not symbol:
+            return None
+        if not self._market_data_owner:
+            shared = self._shared_tick(symbol)
+            if shared:
+                return shared
+            cached = self._last_tick.get(symbol)
+            return self._decorate_tick(cached, "CACHE", self.market_data_state())
+
         # Ngoài giờ/nghỉ trưa chỉ trả cache giá; market channels tắt nhưng trading WS
         # (order/position) vẫn kết nối, và không fallback REST market-data.
         enforce_session_gate = isinstance(dnse_api, DNSEConnector)
@@ -600,32 +707,57 @@ class DataEngine:
         network_open = bool(is_symbol_network_window_open(symbol, include_preopen=True)[0]) if enforce_session_gate else True
         if not network_open:
             market_ws.set_market_data_enabled(False)
+            self._set_market_state("SLEEP", "market closed")
             if getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available and not market_ws.is_running():
                 self._ws_started = market_ws.start()
-            return self._last_tick.get(symbol)
+            return self._decorate_tick(self._last_tick.get(symbol), "CACHE", self._market_state)
 
-        # 0. Ưu tiên dữ liệu WebSocket streaming nếu được bật và còn tươi.
-        if getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available:
+        ws_enabled = bool(getattr(config, "DNSE_WS_ENABLED", False) and market_ws.available)
+        ws_connected = False
+        if ws_enabled:
             self._ensure_ws_symbol(symbol)
+            ws_connected = bool(market_ws.is_connected())
             ws_tick = market_ws.latest_tick(symbol)
-            if ws_tick:
-                stale = float(getattr(config, "DNSE_WS_STALE_SECONDS", 5.0) or 0.0)
-                age = time.time() - float(ws_tick.get("timestamp", 0.0) or 0.0)
-                if stale <= 0 or age < stale:
-                    self._last_tick[symbol] = ws_tick
-                    self.cache_stats["ws_hits"] += 1
-                    return ws_tick
+            try:
+                ws_generation = int((market_ws.snapshot() or {}).get("connection_generation", 0) or 0)
+            except Exception:
+                ws_generation = 0
+            tick_generation = int((ws_tick or {}).get("connection_generation", ws_generation) or 0)
+            if ws_connected and ws_tick and (not ws_generation or tick_generation == ws_generation):
+                # Một mã có thể đứng giá lâu. Kết nối/heartbeat khỏe mới là tiêu chí
+                # nguồn sống, không phải tuổi của riêng tick đó.
+                tick = self._decorate_tick(ws_tick, "WS", "LIVE")
+                self._last_tick[symbol] = tick
+                self._ws_unavailable_since = 0.0
+                self._set_market_state("LIVE", "WebSocket healthy")
+                self.cache_stats["ws_hits"] += 1
+                return tick
+
+        now = time.time()
+        fallback_delay = max(0.0, float(getattr(config, "DNSE_WS_FALLBACK_DELAY_SECONDS", 5.0) or 0.0))
+        if ws_enabled:
+            if ws_connected:
+                waiting_since = float(self._ws_symbol_requested_at.get(symbol, now) or now)
+            else:
+                if not self._ws_unavailable_since:
+                    self._ws_unavailable_since = now
+                waiting_since = self._ws_unavailable_since
+            if (now - waiting_since) < fallback_delay:
+                self._set_market_state("RECOVERING", "waiting for WebSocket")
+                return self._decorate_tick(self._last_tick.get(symbol), "CACHE", "RECOVERING")
 
         # Warm-up chỉ dùng để thiết lập WebSocket. REST market data chỉ được gọi khi
         # ATO/OPEN/ATC thực sự bắt đầu.
         if not market_open:
-            return self._last_tick.get(symbol)
+            return self._decorate_tick(self._last_tick.get(symbol), "CACHE", self._market_state)
 
         cache_ttl = float(getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0) or 0.0)
         cached = self._last_tick.get(symbol)
         if cached and cache_ttl > 0 and (time.time() - float(cached.get("timestamp", 0.0) or 0.0)) < cache_ttl:
             self.cache_stats["tick_hits"] += 1
-            return cached
+            return self._decorate_tick(cached, cached.get("source", "CACHE"), self._market_state)
+        if not self._claim_rest_symbol_budget():
+            return self._decorate_tick(cached, "CACHE", self._market_state)
         self.cache_stats["tick_misses"] += 1
         tick_data = {"symbol": symbol}
         try:
@@ -667,13 +799,21 @@ class DataEngine:
             tick_data["timestamp"] = time.time()
             
             if "last" in tick_data or "bid" in tick_data:
+                tick_data = self._decorate_tick(tick_data, "REST", "REST FALLBACK")
                 self._last_tick[symbol] = tick_data
+                self._set_market_state("REST FALLBACK", "WebSocket unavailable")
+                self.cache_stats["rest_fallbacks"] += 1
                 return tick_data
                 
         except Exception as e:
             logger.error(f"fetch_realtime_tick({symbol}) error: {e}")
-        
-        return self._last_tick.get(symbol)
+
+        if not ws_connected:
+            self._set_market_state("MARKET DATA DOWN", "WebSocket and REST unavailable")
+            state = "MARKET DATA DOWN"
+        else:
+            state = "RECOVERING"
+        return self._decorate_tick(self._last_tick.get(symbol), "CACHE", state)
 
     def get_api_health_snapshot(self):
         stats = {}
@@ -686,6 +826,10 @@ class DataEngine:
         except Exception:
             ws_info = {}
         return {
+            "owner_pid": os.getpid() if self._market_data_owner else None,
+            "role": "OWNER" if self._market_data_owner else "CONSUMER",
+            "market_state": self.market_data_state(),
+            "market_state_since": self._market_state_since,
             "connector": stats,
             "cache": dict(self.cache_stats),
             "cache_sizes": {

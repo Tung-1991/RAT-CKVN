@@ -190,6 +190,8 @@ class BotUI(ctk.CTk):
         self.tsl_states_map = {}
         self.last_price_val = 0.0
         self.latest_market_context = {}
+        self.market_data_health = {}
+        self._last_market_health_state = ""
         # [SANDBOX-FETCH] Fetch context on-demand cho symbol dashboard (mirror ui_bot_strategy)
         self.ctx_fetch_lock = threading.Lock()
         self.ctx_fetch_inflight = set()
@@ -213,14 +215,26 @@ class BotUI(ctk.CTk):
         self.var_advisor_global_emergency = tk.BooleanVar(value=True)
         self.var_advisor_send_response_file = tk.BooleanVar(value=False)
         self.var_advisor_send_previous_response = self.var_advisor_send_response_file
+        self.var_ckcs_auto_report_morning = tk.BooleanVar(value=True)
+        self.var_ckcs_auto_report_afternoon = tk.BooleanVar(value=True)
+        self.var_ckcs_send_api_morning = tk.BooleanVar(value=False)
+        self.var_ckcs_send_api_afternoon = tk.BooleanVar(value=False)
+        self.var_ckcs_morning_time = tk.StringVar(value="11:35")
+        self.var_ckcs_afternoon_time = tk.StringVar(value="14:50")
         self.advisor_api_preview_text = "API payload: not estimated"
         self.advisor_api_preview_detail_text = ""
         self.advisor_last_export_status = "Never"
         self.advisor_last_error = ""
         self._advisor_worker_active = False
         self._ckcs_report_worker_active = False
+        self._ckcs_api_worker_active = False
         self._advisor_last_trigger_check = 0.0
         self._advisor_last_trigger_fire = {}
+        self._advisor_last_fixed_date = ""
+        self._ckcs_last_morning_date = ""
+        self._ckcs_last_afternoon_date = ""
+        self._ckcs_auto_retry_after = {"morning": 0.0, "afternoon": 0.0}
+        self._api_health_refresh_job = None
 
         # [V6.9.5] Hiển thị cửa sổ ngay; kết nối DNSE ở luồng nền để không treo UI khi mở app.
         self.connector = DNSEConnector()
@@ -270,6 +284,19 @@ class BotUI(ctk.CTk):
         # tránh trường hợp file cũ ghi BOT=ON nhưng đèn UI lại đang OFF.
         self._disarm_auto_trade_on_startup()
         setattr(config, "UI_ACTIVE_SYMBOL", config.DEFAULT_SYMBOL)
+
+        # UI chỉ tiêu thụ feed giá do daemon ghi vào heartbeat. Từ đây mọi lời gọi
+        # get_tick/fetch_realtime_tick trong UI và TradeManager đều không được tự
+        # mở market WS hoặc gọi /trades|quotes/latest.
+        data_engine.configure_market_data_owner(
+            False,
+            tick_provider=self._shared_market_tick,
+            state_provider=self._shared_market_state,
+        )
+        self.connector.set_market_data_provider(
+            self._shared_market_tick,
+            self._shared_market_state,
+        )
 
         self.checklist_mgr = ChecklistManager(self.connector)
         self.trade_mgr = TradeManager(
@@ -488,6 +515,24 @@ class BotUI(ctk.CTk):
         self.brain_status = heartbeat.get("status", "UNKNOWN")
         self.brain_wakeup_time = heartbeat.get("wakeup_time", 0)
         self.brain_active_symbols = heartbeat.get("active_symbols", [])
+        health = heartbeat.get("market_data_health", {})
+        if isinstance(health, dict) and health:
+            self.market_data_health = health
+            new_state = str(health.get("market_state") or "RECOVERING").upper()
+            if new_state != self._last_market_health_state:
+                previous = self._last_market_health_state
+                self._last_market_health_state = new_state
+                if new_state in ("RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"):
+                    self.log_message(
+                        f"[MARKET DATA] {new_state}: BOT không mở lệnh mới; giá cache được đánh dấu GIÁ CŨ.",
+                        error=True,
+                        target="api-health",
+                    )
+                elif previous:
+                    self.log_message(
+                        f"[MARKET DATA] Đã phục hồi: {new_state}.",
+                        target="api-health",
+                    )
 
         contexts = heartbeat.get("contexts", {})
         if contexts:
@@ -504,6 +549,39 @@ class BotUI(ctk.CTk):
                 )
             except Exception:
                 pass
+
+    def _shared_market_state(self):
+        health = self.market_data_health if isinstance(self.market_data_health, dict) else {}
+        heartbeat_age = max(0.0, time.time() - float(self.brain_wakeup_time or 0.0)) if self.brain_wakeup_time else 999999.0
+        if heartbeat_age > 60.0:
+            return "MARKET DATA DOWN"
+        if heartbeat_age > 15.0:
+            return "RECOVERING"
+        return str(health.get("market_state") or "RECOVERING").upper()
+
+    def _shared_market_tick(self, symbol):
+        symbol = str(symbol or "").upper()
+        context = (self.latest_market_context or {}).get(symbol, {}) or {}
+        last = float(context.get("current_price", context.get("last", 0.0)) or 0.0)
+        bid = float(context.get("bid", last) or last)
+        ask = float(context.get("ask", last) or last)
+        if not (last or bid or ask):
+            return None
+        timestamp = float(context.get("tick_timestamp", context.get("timestamp", 0.0)) or 0.0)
+        return {
+            "symbol": symbol,
+            "last": last or bid or ask,
+            "bid": bid or last,
+            "ask": ask or last,
+            "spread": float(context.get("spread", max(0.0, ask - bid)) or 0.0),
+            "high": float(context.get("day_high", context.get("high", 0.0)) or 0.0),
+            "low": float(context.get("day_low", context.get("low", 0.0)) or 0.0),
+            "open": float(context.get("day_open", context.get("open", 0.0)) or 0.0),
+            "timestamp": timestamp or self.brain_wakeup_time or time.time(),
+            "source": str(context.get("tick_source", context.get("source", "CACHE")) or "CACHE"),
+            "market_state": str(context.get("market_state") or self._shared_market_state()),
+            "synthetic_quote": bool(context.get("synthetic_quote", False)),
+        }
 
     def _bot_enabled_for(self, symbol=None):
         """Cờ bật-bot theo nhóm mã. symbol=None -> cờ tổng (legacy)."""
@@ -2574,6 +2652,7 @@ class BotUI(ctk.CTk):
                     config.TSL_CONFIG.update(json.load(f))
             except:
                 pass
+        self._load_advisor_schedule_settings()
         if os.path.exists(PRESETS_FILE):
             try:
                 with open(PRESETS_FILE, "r") as f:
@@ -3390,6 +3469,18 @@ class BotUI(ctk.CTk):
                 self.log_message(f"[LIMIT ORDER] Da gui {side} {symbol} -> {result}", target="manual")
             elif "MODE_CHANGED" in str(result):
                 pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_MATCHING_MODE")
+            elif "MARKET_DATA_CONFIRM" in str(result) or "MARKET_DATA_DOWN" in str(result):
+                # Lệnh hẹn không có người đứng trước UI để xác nhận dùng giá LO khi
+                # feed hỏng; giữ nguyên hàng chờ, tuyệt đối không tự gửi bằng cache.
+                pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_MARKET_DATA")
+            elif "ORDER_STATUS_UNKNOWN" in str(result):
+                pending_orders.mark(order_id, pending_orders.UNKNOWN, str(result))
+                self._update_opportunity_order_result(item, "UNKNOWN", str(result))
+                self.log_message(
+                    f"[LIMIT ORDER] Chưa xác định DNSE đã nhận {side} {symbol}; không tự gửi lại: {result}",
+                    error=True,
+                    target="manual",
+                )
             else:
                 pending_orders.mark(order_id, pending_orders.FAILED, str(result))
                 self._update_opportunity_order_result(item, "FAILED", str(result))
@@ -3543,6 +3634,9 @@ class BotUI(ctk.CTk):
                 continue
             try:
                 sym = self.cbo_symbol.get()
+                # Advisor là tác vụ báo cáo độc lập với phiên giá. Đặt lịch ở đây
+                # để giờ hẹn vẫn chạy khi thị trường nghỉ/đóng cửa.
+                self.run_advisor_triggers_tick()
                 from core.market_hours import (
                     is_symbol_network_window_open,
                     is_symbol_trade_window_open,
@@ -3667,7 +3761,6 @@ class BotUI(ctk.CTk):
                     pos_extras,
                 )
                 self._run_pending_order_scheduler()
-                self.run_advisor_triggers_tick()
             except Exception as e:
                 main_logger.exception("[BG_LOOP ERROR] %s", e)
             time.sleep(config.LOOP_SLEEP_SECONDS)
@@ -3920,9 +4013,18 @@ class BotUI(ctk.CTk):
 
         if tick:
             cur_price = tick.ask if d == "BUY" else tick.bid
+            tick_raw = getattr(tick, "raw", {}) or {}
+            tick_state = str(
+                tick_raw.get("market_state")
+                or sym_ctx.get("market_state")
+                or self._shared_market_state()
+            ).upper()
+            is_stale_price = bool(tick_raw.get("stale")) or tick_state in (
+                "RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"
+            )
             self.lbl_dashboard_price.configure(
-                text=self._fmt_price(cur_price, sym),
-                text_color=COL_GREEN if cur_price >= self.last_price_val else COL_RED,
+                text=f"{self._fmt_price(cur_price, sym)}{' · GIÁ CŨ' if is_stale_price else ''}",
+                text_color="#FFB300" if is_stale_price else (COL_GREEN if cur_price >= self.last_price_val else COL_RED),
             )
             self.last_price_val = cur_price
             # Trần/TC/Sàn (nếu DNSE trả về) — hiện cho cả CKCS lẫn phái sinh.
@@ -4840,6 +4942,25 @@ class BotUI(ctk.CTk):
         if me > 0 and phase != "OPEN":
             self.log_message("LO chi gui trong phien OPEN; dung LIMIT ORDER de cache toi phien.", error=True, target="manual")
             return
+        market_data_down_ack = False
+        market_state = self._shared_market_state()
+        if market_state in ("RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"):
+            if me <= 0:
+                self.log_message(
+                    "Mất dữ liệu giá: không gửi lệnh thị trường. Hãy nhập giá LO cụ thể.",
+                    error=True,
+                    target="manual",
+                )
+                return
+            market_data_down_ack = messagebox.askyesno(
+                "Xác nhận LO khi mất giá",
+                f"Nguồn giá đang {market_state}.\n\n"
+                f"Gửi lệnh LO {d} {s} tại giá {me:g} do Ngài tự nhập?\n"
+                "App sẽ không tự thay bằng giá cache.",
+                parent=self,
+            )
+            if not market_data_down_ack:
+                return
         if not self._ensure_trading_otp():
             return
         expected_paper_mode = bool(getattr(config, "PAPER_TRADING", True))
@@ -4861,6 +4982,7 @@ class BotUI(ctk.CTk):
                 entry_exit_tactic=self.get_current_entry_exit_tactic_string(),
                 risk_gate_ack=risk_gate_ack,
                 expected_paper_mode=expected_paper_mode,
+                market_data_down_ack=market_data_down_ack,
             )
             # [RISK GATE] Vượt trần %NAV -> hỏi user trên Tk main thread rồi gọi lại với ack.
             # Con số user xác nhận = con số code thực thi vừa tính (không dùng preview).
@@ -4895,6 +5017,119 @@ class BotUI(ctk.CTk):
                 )
             except Exception:
                 pass
+
+    def _set_ckcs_api_status(self, status, error=""):
+        self.ckcs_api_last_status = status
+        self.ckcs_api_last_error = error or ""
+        label = getattr(self, "lbl_ckcs_api_status", None)
+        if label is not None:
+            try:
+                label.configure(
+                    text=f"{status}{(' | ' + error) if error else ''}",
+                    text_color="#D50000" if error else "#00C853",
+                )
+            except Exception:
+                pass
+
+    def _ckcs_session_worker(self, session, send_api=False, reason="manual"):
+        session = str(session or "").strip().lower()
+        session_vi = "SÁNG" if session == "morning" else "CHIỀU"
+        try:
+            from ai_advisor import ckcs_api
+
+            try:
+                days = max(1, int(self.var_ckcs_report_days.get() or 15))
+            except (TypeError, ValueError):
+                days = 15
+            self.after(0, lambda: self._set_ckcs_api_status(f"Đang tạo báo cáo {session_vi}..."))
+            result = ckcs_api.generate_session_report(session, report_days=days)
+            if not result:
+                self._ckcs_auto_retry_after[session] = time.time() + 300
+                self.after(0, lambda: self._set_ckcs_api_status(
+                    f"Chưa tạo được báo cáo {session_vi}",
+                    "Kho RAW chưa có dữ liệu; app sẽ thử lại sau.",
+                ))
+                return
+
+            today = time.strftime("%Y-%m-%d")
+            if session == "morning":
+                self._ckcs_last_morning_date = today
+            else:
+                self._ckcs_last_afternoon_date = today
+            self._ckcs_auto_retry_after[session] = 0.0
+            self.save_advisor_schedule_settings(silent=True)
+            report_name = os.path.basename(result.get("report") or "")
+            self.log_message(
+                f"[CKCS API] Đã tạo {report_name} | {result.get('symbols', 0)} mã | "
+                f"{result.get('days', days)} ngày | {reason}",
+                target="manual",
+            )
+            if not send_api:
+                self.after(0, lambda: self._set_ckcs_api_status(f"Báo cáo {session_vi} OK | {report_name}"))
+                return
+
+            self.after(0, lambda: self._set_ckcs_api_status(f"Đang gửi API phiên {session_vi}..."))
+            api_result = ckcs_api.send_session_to_api(session)
+            if not api_result.get("ok"):
+                error = api_result.get("error", "API failed")
+                self.log_message(f"[CKCS API] {session_vi} lỗi: {error}", error=True, target="manual")
+                self.after(0, lambda e=error: self._set_ckcs_api_status(f"API {session_vi} lỗi", e))
+                return
+
+            response_path = api_result.get("response")
+            telegram_result = None
+            try:
+                from telegram_notify.reporter import send_advisor_response
+
+                telegram_result = send_advisor_response(
+                    response_path,
+                    title=f"CKCS AI — {session_vi} — {today}",
+                )
+                if not telegram_result.get("ok") and not telegram_result.get("skipped"):
+                    self.log_message(
+                        f"[TELEGRAM] CKCS {session_vi} gửi lỗi: "
+                        f"{telegram_result.get('error', 'Telegram failed')}",
+                        error=True,
+                        target="manual",
+                    )
+            except Exception as exc:
+                self.log_message(f"[TELEGRAM] CKCS {session_vi} gửi lỗi: {exc}", error=True, target="manual")
+            status = f"CKCS {session_vi} | API OK | {os.path.basename(response_path or '')}"
+            if telegram_result and telegram_result.get("ok"):
+                status += " | Telegram OK"
+            self.after(0, lambda m=status: self._set_ckcs_api_status(m))
+        except Exception as exc:
+            self.log_message(f"[CKCS API] Worker lỗi: {exc}", error=True, target="manual")
+            self.after(0, lambda e=str(exc): self._set_ckcs_api_status("CKCS API lỗi", e))
+        finally:
+            self._ckcs_api_worker_active = False
+
+    def run_ckcs_session_ui(self, session, send_api=False):
+        if self._ckcs_api_worker_active:
+            self._set_ckcs_api_status("CKCS đang xử lý, vui lòng chờ...")
+            return
+        self._ckcs_api_worker_active = True
+        threading.Thread(
+            target=self._ckcs_session_worker,
+            kwargs={"session": session, "send_api": bool(send_api), "reason": "manual"},
+            daemon=True,
+        ).start()
+
+    def open_ckcs_session_file(self, session, response=False):
+        try:
+            from ai_advisor import paths as advisor_paths
+
+            path = (
+                advisor_paths.ckcs_response_path(session)
+                if response
+                else advisor_paths.scan_session_report_path(session)
+            )
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"Chưa có {os.path.basename(path)}")
+            os.startfile(path)
+            self._set_ckcs_api_status(f"Đã mở {os.path.basename(path)}")
+        except Exception as exc:
+            self._set_ckcs_api_status("Mở file lỗi", str(exc))
 
     def _ckcs_report_worker(self):
         try:
@@ -5001,10 +5236,12 @@ class BotUI(ctk.CTk):
         except Exception:
             pass
 
-    def _advisor_worker(self, send_api=False, reason="manual"):
-        if self._advisor_worker_active:
-            return
-        self._advisor_worker_active = True
+    def _advisor_worker(self, send_api=False, reason="manual", claimed=False):
+        if not claimed:
+            if self._advisor_worker_active:
+                return
+            self._advisor_worker_active = True
+        api_wait_stop = None
         try:
             from ai_advisor.exporter import generate_advisor_package
 
@@ -5149,12 +5386,15 @@ class BotUI(ctk.CTk):
             self._advisor_stdout_log(f"error: {exc}")
             self.log_message(f"[AI ADVISOR] Error: {exc}", error=True, target="manual")
         finally:
+            if api_wait_stop:
+                api_wait_stop.set()
             self._advisor_worker_active = False
 
-    def _advisor_api_worker(self, reason="api_button"):
-        if self._advisor_worker_active:
-            return
-        self._advisor_worker_active = True
+    def _advisor_api_worker(self, reason="api_button", claimed=False):
+        if not claimed:
+            if self._advisor_worker_active:
+                return
+            self._advisor_worker_active = True
         api_wait_stop = None
         try:
             from ai_advisor import paths as advisor_paths
@@ -5275,15 +5515,25 @@ class BotUI(ctk.CTk):
         if self._advisor_worker_active:
             self._set_advisor_status("Advisor busy")
             return
+        self._advisor_worker_active = True
         self._set_advisor_status("Advisor exporting...")
-        threading.Thread(target=self._advisor_worker, kwargs={"send_api": False, "reason": "manual_button"}, daemon=True).start()
+        threading.Thread(
+            target=self._advisor_worker,
+            kwargs={"send_api": False, "reason": "manual_button", "claimed": True},
+            daemon=True,
+        ).start()
 
     def send_advisor_api_now(self):
         if self._advisor_worker_active:
             self._set_advisor_status("Advisor busy")
             return
+        self._advisor_worker_active = True
         self._set_advisor_status("Advisor API sending...")
-        threading.Thread(target=self._advisor_api_worker, kwargs={"reason": "api_button"}, daemon=True).start()
+        threading.Thread(
+            target=self._advisor_api_worker,
+            kwargs={"reason": "api_button", "claimed": True},
+            daemon=True,
+        ).start()
 
     def preview_advisor_api_payload(self):
         try:
@@ -5356,38 +5606,170 @@ class BotUI(ctk.CTk):
             self._set_advisor_status("Advisor folder ERR", str(exc))
             self.log_message(f"[AI ADVISOR] Cannot open folder: {exc}", error=True, target="manual")
 
+    def _load_advisor_schedule_settings(self):
+        try:
+            from ai_advisor import schedule_settings
+
+            saved = schedule_settings.load()
+            self.var_advisor_mode.set(saved["mode"])
+            self.var_advisor_fixed_time.set(saved["fixed_time"])
+            self.var_advisor_export_days.set(str(saved["export_days"]))
+            self.var_advisor_global_emergency.set(bool(saved["global_emergency"]))
+            self.var_advisor_send_response_file.set(bool(saved["include_previous_response"]))
+            self._advisor_last_fixed_date = str(saved.get("last_fixed_date") or "")
+            self.var_ckcs_auto_report_morning.set(bool(saved["ckcs_auto_report_morning"]))
+            self.var_ckcs_auto_report_afternoon.set(bool(saved["ckcs_auto_report_afternoon"]))
+            self.var_ckcs_send_api_morning.set(bool(saved["ckcs_send_api_morning"]))
+            self.var_ckcs_send_api_afternoon.set(bool(saved["ckcs_send_api_afternoon"]))
+            self.var_ckcs_morning_time.set(saved["ckcs_morning_time"])
+            self.var_ckcs_afternoon_time.set(saved["ckcs_afternoon_time"])
+            self.var_ckcs_report_days.set(str(saved["ckcs_report_days"]))
+            self._ckcs_last_morning_date = str(saved.get("ckcs_last_morning_date") or "")
+            self._ckcs_last_afternoon_date = str(saved.get("ckcs_last_afternoon_date") or "")
+            return saved
+        except Exception as exc:
+            main_logger.warning("[AI ADVISOR] Cannot load schedule settings: %s", exc)
+            return None
+
+    def save_advisor_schedule_settings(self, silent=False):
+        try:
+            from ai_advisor import schedule_settings
+
+            saved = schedule_settings.save(
+                {
+                    "mode": self.var_advisor_mode.get(),
+                    "fixed_time": self.var_advisor_fixed_time.get(),
+                    "export_days": self.var_advisor_export_days.get(),
+                    "global_emergency": self.var_advisor_global_emergency.get(),
+                    "include_previous_response": self.var_advisor_send_response_file.get(),
+                    "last_fixed_date": self._advisor_last_fixed_date,
+                    "ckcs_auto_report_morning": self.var_ckcs_auto_report_morning.get(),
+                    "ckcs_auto_report_afternoon": self.var_ckcs_auto_report_afternoon.get(),
+                    "ckcs_send_api_morning": self.var_ckcs_send_api_morning.get(),
+                    "ckcs_send_api_afternoon": self.var_ckcs_send_api_afternoon.get(),
+                    "ckcs_morning_time": self.var_ckcs_morning_time.get(),
+                    "ckcs_afternoon_time": self.var_ckcs_afternoon_time.get(),
+                    "ckcs_report_days": self.var_ckcs_report_days.get(),
+                    "ckcs_last_morning_date": self._ckcs_last_morning_date,
+                    "ckcs_last_afternoon_date": self._ckcs_last_afternoon_date,
+                }
+            )
+            self.var_advisor_mode.set(saved["mode"])
+            self.var_advisor_fixed_time.set(saved["fixed_time"])
+            self.var_advisor_export_days.set(str(saved["export_days"]))
+            self.var_ckcs_auto_report_morning.set(bool(saved["ckcs_auto_report_morning"]))
+            self.var_ckcs_auto_report_afternoon.set(bool(saved["ckcs_auto_report_afternoon"]))
+            self.var_ckcs_send_api_morning.set(bool(saved["ckcs_send_api_morning"]))
+            self.var_ckcs_send_api_afternoon.set(bool(saved["ckcs_send_api_afternoon"]))
+            self.var_ckcs_morning_time.set(saved["ckcs_morning_time"])
+            self.var_ckcs_afternoon_time.set(saved["ckcs_afternoon_time"])
+            self.var_ckcs_report_days.set(str(saved["ckcs_report_days"]))
+            if not silent:
+                self._set_advisor_status(
+                    f"Đã lưu lịch Advisor | {saved['mode']}"
+                    f"{(' | ' + saved['fixed_time']) if saved['fixed_time'] else ''}"
+                )
+                self._set_ckcs_api_status(
+                    f"Đã lưu lịch CKCS | sáng {saved['ckcs_morning_time']} | "
+                    f"chiều {saved['ckcs_afternoon_time']}"
+                )
+            return saved
+        except Exception as exc:
+            if not silent:
+                self._set_advisor_status("Lưu lịch Advisor lỗi", str(exc))
+                self._set_ckcs_api_status("Lưu lịch CKCS lỗi", str(exc))
+            return None
+
     def run_advisor_triggers_tick(self):
-        if self.var_advisor_mode.get() != "API Trigger":
-            return
         now = time.time()
         if now - self._advisor_last_trigger_check < 30:
             return
         self._advisor_last_trigger_check = now
-        if self._advisor_worker_active:
-            return
         try:
-            fixed_time = (self.var_advisor_fixed_time.get() or "").strip()
-            reasons = []
-            if fixed_time and time.strftime("%H:%M") == fixed_time:
-                reasons.append("fixed_time_report")
-            if self.var_advisor_global_emergency.get():
-                from ai_advisor.triggers import evaluate
+            today = time.strftime("%Y-%m-%d")
+            current_hhmm = time.strftime("%H:%M")
 
-                reasons.extend(evaluate(getattr(self.trade_mgr, "state", {}), connector=self.connector))
-            fresh = []
-            for reason in sorted(set(reasons)):
-                last = self._advisor_last_trigger_fire.get(reason, 0.0)
-                if now - last >= 3600:
-                    fresh.append(reason)
-                    self._advisor_last_trigger_fire[reason] = now
-            if fresh:
-                reason_text = "+".join(fresh)
-                self.log_message(f"[AI ADVISOR] Trigger: {reason_text}", target="manual")
+            if self.var_advisor_mode.get() == "API Trigger" and not self._advisor_worker_active:
+                fixed_time = (self.var_advisor_fixed_time.get() or "").strip()
+                reasons = []
+                if fixed_time and current_hhmm == fixed_time and self._advisor_last_fixed_date != today:
+                    reasons.append("fixed_time_report")
+                if self.var_advisor_global_emergency.get():
+                    from ai_advisor.triggers import evaluate
+
+                    reasons.extend(evaluate(getattr(self.trade_mgr, "state", {}), connector=self.connector))
+                fresh = []
+                for reason in sorted(set(reasons)):
+                    last = self._advisor_last_trigger_fire.get(reason, 0.0)
+                    if now - last >= 3600:
+                        fresh.append(reason)
+                        self._advisor_last_trigger_fire[reason] = now
+                if fresh:
+                    reason_text = "+".join(fresh)
+                    if "fixed_time_report" in fresh:
+                        self._advisor_last_fixed_date = today
+                        self.save_advisor_schedule_settings(silent=True)
+                    self.log_message(f"[AI ADVISOR] Trigger: {reason_text}", target="manual")
+                    self._advisor_worker_active = True
+                    threading.Thread(
+                        target=self._advisor_worker,
+                        kwargs={
+                            "send_api": True,
+                            "reason": f"trigger:{reason_text}",
+                            "claimed": True,
+                        },
+                        daemon=True,
+                    ).start()
+
+            if self._ckcs_api_worker_active or self._advisor_worker_active:
+                return
+            from core.market_calendar import date_status
+
+            calendar_state = str((date_status() or {}).get("status") or "UNKNOWN").upper()
+            if calendar_state in {"HOLIDAY", "WEEKEND"}:
+                return
+
+            def _minutes(value):
+                hour, minute = str(value).split(":", 1)
+                return int(hour) * 60 + int(minute)
+
+            current_minutes = _minutes(current_hhmm)
+            jobs = [
+                (
+                    "morning",
+                    self.var_ckcs_auto_report_morning.get(),
+                    self.var_ckcs_send_api_morning.get(),
+                    self.var_ckcs_morning_time.get(),
+                    self._ckcs_last_morning_date,
+                ),
+                (
+                    "afternoon",
+                    self.var_ckcs_auto_report_afternoon.get(),
+                    self.var_ckcs_send_api_afternoon.get(),
+                    self.var_ckcs_afternoon_time.get(),
+                    self._ckcs_last_afternoon_date,
+                ),
+            ]
+            for session, enabled, send_api, target_time, last_date in jobs:
+                if not enabled or last_date == today or now < self._ckcs_auto_retry_after.get(session, 0.0):
+                    continue
+                target_minutes = _minutes(target_time)
+                if current_minutes < target_minutes:
+                    continue
+                if session == "morning" and current_minutes >= 13 * 60:
+                    continue
+                self._ckcs_api_worker_active = True
+                self.log_message(
+                    f"[CKCS API] Lịch {session}: tạo báo cáo"
+                    f"{' + gửi API' if send_api else ''}",
+                    target="manual",
+                )
                 threading.Thread(
-                    target=self._advisor_worker,
-                    kwargs={"send_api": True, "reason": f"trigger:{reason_text}"},
+                    target=self._ckcs_session_worker,
+                    kwargs={"session": session, "send_api": bool(send_api), "reason": "schedule"},
                     daemon=True,
                 ).start()
+                break
         except Exception as exc:
             self.log_message(f"[AI ADVISOR] Trigger check error: {exc}", error=True, target="manual")
 
@@ -5456,11 +5838,19 @@ class BotUI(ctk.CTk):
             except Exception:
                 engine_health = {}
 
+            daemon_health = self.market_data_health if isinstance(self.market_data_health, dict) else {}
+            if daemon_health:
+                engine_health = daemon_health
+            market_connector_health = engine_health.get("connector", {}) if isinstance(engine_health, dict) else {}
+
             cache = engine_health.get("cache", {}) if isinstance(engine_health, dict) else {}
             sizes = engine_health.get("cache_sizes", {}) if isinstance(engine_health, dict) else {}
             ws_health = engine_health.get("ws", {}) if isinstance(engine_health, dict) else {}
-            total = int(connector_health.get("total_requests", 0) or 0)
-            started = float(connector_health.get("started_at", time.time()) or time.time())
+            total = int(connector_health.get("total_requests", 0) or 0) + int(market_connector_health.get("total_requests", 0) or 0)
+            started = min(
+                float(connector_health.get("started_at", time.time()) or time.time()),
+                float(market_connector_health.get("started_at", time.time()) or time.time()),
+            )
             elapsed_min = max(1.0 / 60.0, (time.time() - started) / 60.0)
             rpm = total / elapsed_min
             last_endpoint = connector_health.get("last_endpoint", "-")
@@ -5490,6 +5880,17 @@ class BotUI(ctk.CTk):
             tick_bar, tick_pct = _pct_bar(tick_hit_rate, 100.0, 18)
             ohlc_bar, ohlc_pct = _pct_bar(ohlc_hit_rate, 100.0, 18)
             latency = float(connector_health.get("last_latency_ms", 0.0) or 0.0)
+            selected_symbol = str(self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else "").upper()
+            selected_tick = self._shared_market_tick(selected_symbol) if selected_symbol else None
+            selected_age = None
+            if selected_tick:
+                if selected_tick.get("age_seconds") is not None:
+                    selected_age = max(0.0, float(selected_tick.get("age_seconds") or 0.0))
+                else:
+                    selected_ts = float(selected_tick.get("timestamp", 0.0) or 0.0)
+                    selected_age = max(0.0, time.time() - selected_ts) if selected_ts > 0 else None
+            last_market_ts = float(ws_health.get("last_market_message_ts", 0.0) or 0.0)
+            last_market_age = max(0.0, time.time() - last_market_ts) if last_market_ts else None
             rpm_bar, rpm_pct = _pct_bar(rpm, 120.0, 18)
             latency_bar, latency_pct = _pct_bar(latency, 1000.0, 18)
 
@@ -5510,30 +5911,112 @@ class BotUI(ctk.CTk):
                 f"  Size         tick={sizes.get('ticks', 0)} ohlc={sizes.get('ohlc', 0)}",
                 "",
                 "WEBSOCKET",
+                f"  Owner/Role   PID {engine_health.get('owner_pid', '--')} / {engine_health.get('role', 'CONSUMER')}",
+                f"  Market state {engine_health.get('market_state', self._shared_market_state())}",
+                f"  Broker API   {connector_health.get('broker_api_state', 'LIVE')} ({int(connector_health.get('broker_api_consecutive_failures', 0) or 0)} lỗi liên tiếp)",
                 f"  Mode/State   {ws_health.get('mode', 'off')} / {'CONNECTED' if ws_health.get('connected') else 'OFFLINE'}",
                 f"  Market feed  {'ON' if ws_health.get('market_data_enabled') else 'SLEEP'} · trading feed {'ON' if ws_health.get('connected') else 'OFF'}",
                 f"  Auth/Sub     {bool(ws_health.get('authenticated'))} / {len(ws_health.get('subscribed', []) or [])}",
                 f"  Messages     {int(ws_health.get('messages', 0) or 0)} · reconnect {int(ws_health.get('reconnects', 0) or 0)}",
                 f"  Events       order={int(ws_health.get('order_events', 0) or 0)} position={int(ws_health.get('position_events', 0) or 0)}",
+                f"  Ping/Pong    {ws_health.get('last_ping_age_seconds')}s / {ws_health.get('last_pong_age_seconds')}s ago",
+                f"  Market msg   {last_market_age if last_market_age is not None else '--'}s ago",
+                f"  Selected     {selected_symbol or '--'} · {(selected_tick or {}).get('source', '--')} · age {selected_age if selected_age is not None else '--'}s",
             ]
             if ws_health.get("last_error"):
                 lines.append(f"  WS error     {ws_health.get('last_error')}")
-            rate_limits = connector_health.get("rate_limits", {}) or {}
-            throttled = connector_health.get("throttled_endpoints", {}) or {}
-            lines.extend(["", "RATE LIMIT"])
+            rate_limits = {
+                **(connector_health.get("rate_limits", {}) or {}),
+                **(market_connector_health.get("rate_limits", {}) or {}),
+            }
+            throttled = {
+                **(connector_health.get("throttled_endpoints", {}) or {}),
+                **(market_connector_health.get("throttled_endpoints", {}) or {}),
+            }
+            now_ts = time.time()
+            throttle_wait = max(
+                [max(0, int(float(until) - now_ts)) for until in throttled.values()] or [0]
+            )
+            market_state = str(
+                engine_health.get("market_state", self._shared_market_state()) or "RECOVERING"
+            ).upper().replace("_", " ")
+            selected_source = str((selected_tick or {}).get("source") or "--").upper()
+            if market_state == "SLEEP" and selected_source == "--":
+                selected_source = "SLEEP"
+            ws_online = bool(ws_health.get("connected") and ws_health.get("authenticated"))
+            rest_active = market_state == "REST FALLBACK"
+            rest_label = "ĐANG DÙNG" if rest_active else (f"CHỜ {throttle_wait}s" if throttle_wait else "DỰ PHÒNG")
+            bot_entry_blocked = market_state in {"RECOVERING", "MARKET DATA DOWN", "SLEEP"}
+            suppressed_429 = int(connector_health.get("suppressed_429", 0) or 0) + int(
+                market_connector_health.get("suppressed_429", 0) or 0
+            )
+            state_color = {
+                "LIVE": "#00C853",
+                "REST FALLBACK": "#FFAB00",
+                "RECOVERING": "#FFAB00",
+                "MARKET DATA DOWN": "#D50000",
+                "SLEEP": "#90A4AE",
+            }.get(market_state, "white")
+            source_color = {
+                "WS": "#00C853",
+                "REST": "#FFAB00",
+                "CACHE": "#FF7043",
+                "SLEEP": "#90A4AE",
+            }.get(selected_source, "#B0BEC5")
+
+            if hasattr(self, "lbl_api_health_state"):
+                self.lbl_api_health_state.configure(text=market_state, text_color=state_color)
+            if hasattr(self, "lbl_api_health_source"):
+                age_text = "--" if selected_age is None else f"{selected_age:.1f}s"
+                self.lbl_api_health_source.configure(
+                    text=f"{selected_source} · {age_text}", text_color=source_color
+                )
+            if hasattr(self, "lbl_api_health_ws"):
+                self.lbl_api_health_ws.configure(
+                    text="ONLINE" if ws_online else "OFFLINE",
+                    text_color="#00C853" if ws_online else "#D50000",
+                )
+            if hasattr(self, "lbl_api_health_rest"):
+                self.lbl_api_health_rest.configure(
+                    text=rest_label,
+                    text_color="#FFAB00" if rest_active or throttle_wait else "#90A4AE",
+                )
+            if hasattr(self, "lbl_api_health_summary"):
+                self.lbl_api_health_summary.configure(
+                    text=(
+                        f"{selected_symbol or '--'} · {selected_source} · {market_state} | "
+                        f"BOT ENTRY {'TẠM CHẶN' if bot_entry_blocked else 'SẴN SÀNG'} | "
+                        f"429: {suppressed_429}"
+                    ),
+                    text_color=state_color,
+                )
+
+            lines[0:0] = [
+                "TÓM TẮT NGUỒN GIÁ",
+                f"  Mã/Nguồn     {selected_symbol or '--'} / {selected_source}",
+                f"  Trạng thái   {market_state}",
+                f"  BOT ENTRY    {'TẠM CHẶN' if bot_entry_blocked else 'SẴN SÀNG'}",
+                f"  REST         {rest_label} · 429 gộp {suppressed_429}",
+                "",
+            ]
+
+            lines.extend(["", "RATE LIMIT THỰC TẾ"])
             if rate_limits:
                 for endpoint, quota in sorted(rate_limits.items()):
                     lines.append(
                         f"  {endpoint} remaining={quota.get('remaining')} limit={quota.get('limit')} reset={quota.get('reset_at')}"
                     )
             else:
-                lines.append("  No DNSE quota header received")
+                lines.append("  DNSE chưa trả header hạn mức")
             for endpoint, until in sorted(throttled.items()):
-                lines.append(f"  THROTTLED {endpoint} · {max(0, int(float(until) - time.time()))}s")
+                lines.append(f"  ĐANG CHỜ {endpoint} · {max(0, int(float(until) - time.time()))}s")
+            lines.append(f"  429 đã gộp {suppressed_429}")
             if connector_health.get("last_error"):
                 lines.extend(["", f"ERROR {connector_health.get('last_error')}"])
             lines.extend(["", "ENDPOINTS"])
-            by_endpoint = connector_health.get("by_endpoint", {}) or {}
+            by_endpoint = dict(connector_health.get("by_endpoint", {}) or {})
+            for endpoint, count in (market_connector_health.get("by_endpoint", {}) or {}).items():
+                by_endpoint[endpoint] = int(by_endpoint.get(endpoint, 0) or 0) + int(count or 0)
             if by_endpoint:
                 for endpoint, count in sorted(by_endpoint.items(), key=lambda item: str(item[0])):
                     lines.append(f"  {count:5d}  {endpoint}")
@@ -5559,15 +6042,16 @@ class BotUI(ctk.CTk):
                 detail_lines.append("No API request yet")
             detail_lines.extend([
                 "",
-                "LIMIT LOAD",
+                "CÁCH ĐỌC",
+                "WS     DNSE đẩy giá realtime về app.",
+                "REST   App hỏi giá theo lượt, chỉ dùng dự phòng.",
+                "CACHE  Giá gần nhất; kiểm tra độ cũ trước khi dùng.",
+                "",
+                f"Request hiện tại  {rpm:.2f}/phút",
+                f"REST fallback     {int(cache.get('rest_fallbacks', 0) or 0)} lượt",
+                f"Reconnect WS      {int(ws_health.get('reconnects', 0) or 0)} lần",
+                f"429 đã gộp        {suppressed_429}",
             ])
-            for label, used, limit in (
-                ("Current rpm", rpm, 120.0),
-                ("Latest data", rpm * 60.0, 10000.0),
-                ("OHLC", rpm * 60.0, 50000.0),
-            ):
-                bar, pct = _pct_bar(used, limit, 26)
-                detail_lines.append(f"{label:<12} {bar} {pct:>5.1f}%")
             detail_widget = getattr(self, "txt_api_health_detail", None)
             if detail_widget and detail_widget.winfo_exists():
                 detail_widget.configure(state="normal")
@@ -5581,6 +6065,23 @@ class BotUI(ctk.CTk):
                 widget.delete("1.0", "end")
                 widget.insert("end", f"API Health error: {exc}")
                 widget.configure(state="disabled")
+        finally:
+            self._schedule_api_health_refresh()
+
+    def _schedule_api_health_refresh(self):
+        previous = getattr(self, "_api_health_refresh_job", None)
+        if previous:
+            try:
+                self.after_cancel(previous)
+            except Exception:
+                pass
+        self._api_health_refresh_job = None
+        try:
+            tabview = getattr(self, "log_tabview", None)
+            if tabview and "API Health" in str(tabview.get()):
+                self._api_health_refresh_job = self.after(2000, self.refresh_api_health_panel)
+        except Exception:
+            self._api_health_refresh_job = None
 
     def _set_log_tab_unread(self, target, unread):
         tabview = getattr(self, "log_tabview", None)
@@ -6095,14 +6596,31 @@ if __name__ == "__main__":
     # data/logs/sẽ tự động được tạo ra
     setup_logging(debug_mode=getattr(config, "ENABLE_DEBUG_LOGGING", False))
 
+    from core.process_lock import ProcessLock
+
+    app_lock = ProcessLock(os.path.join("data", "run", "rat_ckvn_app.lock"))
+    if not app_lock.acquire():
+        message = "Ứng dụng RAT-CKVN đang chạy. Không mở thêm phiên thứ hai."
+        print(message)
+        try:
+            hidden = tk.Tk()
+            hidden.withdraw()
+            messagebox.showerror("RAT-CKVN", message, parent=hidden)
+            hidden.destroy()
+        except Exception:
+            pass
+        sys.exit(2)
     try:
-        app = BotUI()
-        app.mainloop()
-    except Exception as e:
-        logger = logging.getLogger("RAT_CKVN")
-        logger.critical(f"💥 Lỗi nghiêm trọng tại Main Loop: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-    except KeyboardInterrupt:
-        sys.exit(0)
+        try:
+            app = BotUI()
+            app.mainloop()
+        except Exception as e:
+            logger = logging.getLogger("RAT_CKVN")
+            logger.critical(f"💥 Lỗi nghiêm trọng tại Main Loop: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+        except KeyboardInterrupt:
+            sys.exit(0)
+    finally:
+        app_lock.release()
 

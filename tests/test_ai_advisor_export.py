@@ -6,6 +6,25 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from ai_advisor import api_client, config_snapshot, exporter, history, paths
+import ui_popups
+
+
+def test_file_help_separates_advisor_and_raw_data_outputs():
+    text = ui_popups.ADVISOR_FILES_HELP_TEXT
+    for name in (
+        "technical_settings.json",
+        "advisor_export.xlsx",
+        "package_manifest.json",
+        "scan_snapshot_cache.json",
+        "scan_report.md",
+        "scan_report_morning.md",
+        "scan_report_afternoon.md",
+        "ckcs_response_morning.md",
+        "ckcs_response_afternoon.md",
+        "private_context.md",
+    ):
+        assert name in text
+    assert "CKCS RAW/API không chọn mã bằng Python" in text
 
 
 def _patch_account_dir(monkeypatch, tmp_path):
@@ -44,6 +63,15 @@ def test_advisor_paths_split_history_and_export(monkeypatch, tmp_path):
     )
     assert paths.scan_report_path().replace("\\", "/").endswith(
         "ckcs_research/scan_report.md"
+    )
+    assert paths.scan_session_report_path("morning").replace("\\", "/").endswith(
+        "ckcs_research/scan_report_morning.md"
+    )
+    assert paths.scan_session_report_path("afternoon").replace("\\", "/").endswith(
+        "ckcs_research/scan_report_afternoon.md"
+    )
+    assert paths.ckcs_response_path("morning").replace("\\", "/").endswith(
+        "ckcs_research/ckcs_response_morning.md"
     )
     assert paths.research_private_context_path().replace("\\", "/").endswith(
         "ckcs_research/private_context.md"

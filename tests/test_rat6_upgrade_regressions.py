@@ -92,6 +92,8 @@ def test_ui_closed_session_does_not_touch_connector(monkeypatch):
     app.cbo_symbol = SimpleNamespace(get=lambda: "FPT")
     app.connector = SimpleNamespace(get_account_info=lambda: pytest.fail("account network call"))
     app._run_pending_order_scheduler = lambda: None
+    advisor_checks = []
+    app.run_advisor_triggers_tick = lambda: advisor_checks.append("checked")
     rendered = []
     app._render_cached_ui_snapshot = lambda symbol: rendered.append(symbol)
     monkeypatch.setattr(market_hours, "is_symbol_network_window_open", lambda *_a, **_k: (False, "closed"))
@@ -104,6 +106,7 @@ def test_ui_closed_session_does_not_touch_connector(monkeypatch):
     monkeypatch.setattr(main.time, "sleep", stop)
     main.BotUI.bg_update_loop(app)
     assert rendered == ["FPT"]
+    assert advisor_checks == ["checked"]
 
 
 def test_off_hours_paper_positions_are_rendered_from_local_broker(monkeypatch):
@@ -252,7 +255,7 @@ def test_ws_ingests_only_configured_account_events():
     assert [item["id"] for item in client.latest_position_events()] == [3]
 
 
-def test_stale_ws_tick_falls_back_to_rest(monkeypatch):
+def test_unchanged_ws_tick_does_not_fall_back_to_rest(monkeypatch):
     calls = []
     fake_api = SimpleNamespace(
         get_latest_trade=lambda _s: calls.append("trade") or {"matchPrice": 25.5},
@@ -274,8 +277,9 @@ def test_stale_ws_tick_falls_back_to_rest(monkeypatch):
     monkeypatch.setattr(config, "DNSE_WS_ENABLED", True)
     monkeypatch.setattr(config, "DNSE_WS_STALE_SECONDS", 5.0)
     tick = DataEngine().fetch_realtime_tick("FPT")
-    assert tick["last"] == 25.5
-    assert calls == ["trade"]
+    assert tick["last"] == 24.0
+    assert tick["source"] == "WS"
+    assert calls == []
 
 
 def test_ws_msgpack_binary_frame_is_decoded():

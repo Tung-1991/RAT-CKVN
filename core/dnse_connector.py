@@ -5,11 +5,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 import json
+import copy
 import logging
 import os
 import random
+import re
 import threading
 import time
+import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
@@ -260,6 +263,7 @@ class DNSEConnector:
         self._quota_lock = threading.RLock()
         self._endpoint_throttle_until: Dict[str, float] = {}
         self._endpoint_request_locks: Dict[str, threading.Lock] = {}
+        self._rate_limit_strikes: Dict[str, int] = {}
         self.last_latency_ms = 0.0
         self.market_type = os.getenv("DNSE_MARKET_TYPE", "DERIVATIVE")
         self.order_category = os.getenv("DNSE_ORDER_CATEGORY", "NORMAL")
@@ -276,6 +280,8 @@ class DNSEConnector:
         self._ppse_cache_ts: Dict[str, float] = {}
         self._tick_cache: Dict[str, BrokerTick] = {}
         self._tick_cache_ts: Dict[str, float] = {}
+        self._market_tick_provider = None
+        self._market_state_provider = None
         # Map alias phái sinh (symbolType: VN30F1M...) -> mã hợp đồng thật (41I1G6000...).
         # Mã thật ĐỔI theo tháng đáo hạn nên tra động từ /instruments rồi cache.
         self._symbol_map: Dict[str, str] = {}
@@ -293,6 +299,9 @@ class DNSEConnector:
             "last_latency_ms": 0.0,
             "rate_limits": {},
             "throttled_endpoints": {},
+            "suppressed_429": 0,
+            "broker_api_state": "LIVE",
+            "broker_api_consecutive_failures": 0,
         }
         self._load_token_from_disk()  # opt-in: nạp token đã lưu (nếu còn hiệu lực) để khỏi OTP lại sau restart
 
@@ -346,6 +355,19 @@ class DNSEConnector:
         self._account_cache_ts = 0.0
         self._positions_cache = []
         self._positions_cache_ts = 0.0
+
+    def set_market_data_provider(self, tick_provider=None, state_provider=None):
+        """Đặt feed giá dùng chung. Khi provider tồn tại connector không gọi latest REST."""
+        self._market_tick_provider = tick_provider
+        self._market_state_provider = state_provider
+
+    def get_market_data_state(self) -> str:
+        if callable(self._market_state_provider):
+            try:
+                return str(self._market_state_provider() or "RECOVERING").upper()
+            except Exception:
+                return "RECOVERING"
+        return "LIVE"
 
     # ---- Lưu/nạp trading-token qua restart (opt-in, PERSIST_TRADING_TOKEN) ----
     def _token_file(self) -> Optional[str]:
@@ -443,6 +465,27 @@ class DNSEConnector:
         self.api_stats["last_status"] = status_code
         self.api_stats["last_error"] = error or ""
         self.api_stats["last_latency_ms"] = float(latency_ms or 0.0)
+        if not self._is_market_price_path(path):
+            if 200 <= int(status_code or 0) < 500 and int(status_code or 0) != 429:
+                self.api_stats["broker_api_consecutive_failures"] = 0
+                self.api_stats["broker_api_state"] = "LIVE"
+            elif int(status_code or 0) == 0 or int(status_code or 0) >= 500:
+                failures = int(self.api_stats.get("broker_api_consecutive_failures", 0) or 0) + 1
+                self.api_stats["broker_api_consecutive_failures"] = failures
+                if failures >= 3:
+                    self.api_stats["broker_api_state"] = "BROKER_API_DOWN"
+
+    @staticmethod
+    def _is_market_price_path(path: str) -> bool:
+        return bool(re.match(r"^/price/[^/]+/(?:trades|quotes)/latest$", str(path or "")))
+
+    @classmethod
+    def _endpoint_family(cls, method: str, path: str) -> str:
+        path_text = str(path or "")
+        match = re.match(r"^/price/[^/]+/(trades|quotes)/latest$", path_text)
+        if match:
+            return f"{method.upper()} /price/*/{match.group(1)}/latest"
+        return f"{method.upper()} {path_text}"
 
     @staticmethod
     def _parse_rate_reset(value: Any, now: Optional[float] = None) -> float:
@@ -465,6 +508,7 @@ class DNSEConnector:
 
     def _record_rate_limit_headers(self, method: str, path: str, response: Any):
         endpoint = f"{method.upper()} {path}"
+        family = self._endpoint_family(method, path)
         headers = getattr(response, "headers", {}) or {}
         limit_raw = headers.get("X-RateLimit-Limit")
         remaining_raw = headers.get("X-RateLimit-Remaining")
@@ -489,7 +533,7 @@ class DNSEConnector:
                 "updated_at": now,
             }
             if remaining is not None and remaining <= 1 and reset_at > now:
-                self._endpoint_throttle_until[endpoint] = reset_at
+                self._endpoint_throttle_until[family] = reset_at
             self.api_stats["throttled_endpoints"] = {
                 key: until
                 for key, until in self._endpoint_throttle_until.items()
@@ -497,7 +541,7 @@ class DNSEConnector:
             }
 
     def _endpoint_throttle_seconds(self, method: str, path: str) -> float:
-        endpoint = f"{method.upper()} {path}"
+        endpoint = self._endpoint_family(method, path)
         now = time.time()
         with self._quota_lock:
             until = float(self._endpoint_throttle_until.get(endpoint, 0.0) or 0.0)
@@ -507,7 +551,7 @@ class DNSEConnector:
             return until - now
 
     def _throttle_endpoint(self, method: str, path: str, wait_seconds: float):
-        endpoint = f"{method.upper()} {path}"
+        endpoint = self._endpoint_family(method, path)
         until = time.time() + max(0.0, float(wait_seconds or 0.0))
         with self._quota_lock:
             self._endpoint_throttle_until[endpoint] = max(
@@ -523,8 +567,10 @@ class DNSEConnector:
                 for endpoint, until in self._endpoint_throttle_until.items()
                 if until > now
             }
+        with self._quota_lock:
+            stats = copy.deepcopy(self.api_stats)
         return {
-            **self.api_stats,
+            **stats,
             "throttled_endpoints": throttled,
             "account_cache_age": max(0.0, time.time() - self._account_cache_ts) if self._account_cache else None,
             "positions_cache_age": max(0.0, time.time() - self._positions_cache_ts) if self._positions_cache_ts else None,
@@ -547,7 +593,7 @@ class DNSEConnector:
         return headers
 
     def _request(self, method: str, path: str, **kwargs) -> Tuple[bool, Any, int, str]:
-        endpoint = f"{method.upper()} {path}"
+        endpoint = self._endpoint_family(method, path)
         with self._quota_lock:
             request_lock = self._endpoint_request_locks.setdefault(endpoint, threading.Lock())
         # Serialize the same endpoint so one 429 response can close the gate before
@@ -570,7 +616,7 @@ class DNSEConnector:
         throttle_seconds = self._endpoint_throttle_seconds(method, path)
         if throttle_seconds > 0:
             message = f"LOCAL_RATE_LIMIT: retry after {throttle_seconds:.1f}s"
-            self._record_api_request(method, path, 429, 0.0, message)
+            self.api_stats["suppressed_429"] = int(self.api_stats.get("suppressed_429", 0) or 0) + 1
             return False, None, 429, message
         max_429_retries = int(getattr(config, "DNSE_RATE_LIMIT_RETRIES", 1) or 0)
         attempt = 0
@@ -594,10 +640,13 @@ class DNSEConnector:
                 except ValueError:
                     data = {"text": response.text}
                 if 200 <= response.status_code < 300:
+                    family = self._endpoint_family(method, path)
+                    self._rate_limit_strikes.pop(family, None)
                     self._record_api_request(method, path, response.status_code, self.last_latency_ms)
                     return True, data, response.status_code, ""
                 # [24/7] Dính rate-limit (429): chờ theo Retry-After rồi thử lại tối đa N lần.
-                if response.status_code == 429 and attempt < max_429_retries:
+                is_market_price = self._is_market_price_path(path)
+                if response.status_code == 429 and attempt < max_429_retries and not is_market_price:
                     attempt += 1
                     try:
                         wait_s = float(response.headers.get("Retry-After", "") or 0.0)
@@ -624,7 +673,15 @@ class DNSEConnector:
                         retry_after = 0.0
                     reset_at = self._parse_rate_reset(response.headers.get("X-RateLimit-Reset"))
                     reset_wait = max(0.0, reset_at - time.time()) if reset_at else 0.0
-                    self._throttle_endpoint(method, path, retry_after or reset_wait or 2.0)
+                    family = self._endpoint_family(method, path)
+                    strikes = int(self._rate_limit_strikes.get(family, 0) or 0) + 1
+                    self._rate_limit_strikes[family] = strikes
+                    default_wait = min(300.0, 60.0 * (2 ** max(0, strikes - 1)))
+                    wait_s = retry_after or reset_wait or default_wait
+                    self._throttle_endpoint(method, path, wait_s)
+                    logger.warning(
+                        "DNSE %s bị giới hạn 429; khóa nhóm %.0fs.", family, wait_s
+                    )
                 message = data.get("message") if isinstance(data, dict) else str(data)
                 if response.status_code == 401 and "token is invalid" in str(message or data).lower():
                     self._clear_trading_token(remove_file=True)
@@ -632,7 +689,13 @@ class DNSEConnector:
                 return False, data, response.status_code, message or response.text
         except Exception as exc:
             self._record_api_request(method, path, 0, 0.0, str(exc))
-            logger.error("DNSE %s %s failed: %s", method.upper(), path, exc)
+            now = time.time()
+            log_key = self._endpoint_family(method, path)
+            last_logs = getattr(self, "_network_error_log_ts", {})
+            if now - float(last_logs.get(log_key, 0.0) or 0.0) >= 60.0:
+                logger.error("DNSE %s failed: %s", log_key, exc)
+                last_logs[log_key] = now
+                self._network_error_log_ts = last_logs
             return False, None, 0, str(exc)
 
     def has_trading_token(self) -> bool:
@@ -1319,6 +1382,19 @@ class DNSEConnector:
                 magic=magic,
                 comment=comment,
             )
+        market_state = self.get_market_data_state()
+        order_type_name = order_kind or ("LO" if float(price or 0) > 0 else "MOK")
+        if market_state in {"MARKET DATA DOWN", "MARKET_DATA_DOWN"}:
+            is_bot_order = "[BOT]" in str(comment or "").upper()
+            if is_bot_order or order_type_name != "LO" or float(price or 0.0) <= 0:
+                return BrokerOrderResult(
+                    ok=False,
+                    error="MARKET_DATA_DOWN",
+                    message=(
+                        "Mất dữ liệu giá: BOT/lệnh thị trường bị chặn. "
+                        "Chỉ cho phép lệnh LO nhập giá thủ công sau xác nhận."
+                    ),
+                )
         if not bool(getattr(config, "AUTO_TRADE_ENABLED", False)):
             return BrokerOrderResult(
                 ok=False,
@@ -1326,7 +1402,6 @@ class DNSEConnector:
                 message="AUTO_TRADE_ENABLED is False; refusing to send a new live DNSE order.",
             )
         side = self._normalize_side(order_type)
-        order_type_name = order_kind or ("LO" if float(price or 0) > 0 else "MOK")
         market_type = self.market_type_for_symbol(symbol)
         account_no = self.account_no_for_symbol(symbol)
         symbol_key = str(symbol or "").strip().upper()
@@ -1350,8 +1425,9 @@ class DNSEConnector:
             "orderType": order_type_name,
             "price": float(price or 0),
         }
-        if comment:
-            payload["remark"] = comment
+        request_id = uuid.uuid4().hex[:12].upper()
+        request_tag = f"RID:{request_id}"
+        payload["remark"] = f"{comment} {request_tag}".strip()
         if magic:
             payload["magicNumber"] = int(magic)
         if sl:
@@ -1367,6 +1443,28 @@ class DNSEConnector:
             require_trading_token=True,
         )
         result = self._order_result(ok, data, status_code, message)
+        if not ok and status_code == 0:
+            matched = self._reconcile_order_request(
+                request_tag,
+                account_no=account_no,
+                market_type=market_type,
+            )
+            if matched:
+                result = self._order_result(True, matched, 200, "")
+                result.message = result.message or "Đã đối soát thấy lệnh tại DNSE sau khi kết nối gián đoạn."
+            else:
+                result.status = "UNKNOWN"
+                result.error = "ORDER_STATUS_UNKNOWN"
+                result.message = (
+                    f"TRẠNG THÁI LỆNH CHƯA XÁC ĐỊNH ({request_tag}). "
+                    "Không tự gửi lại; cần làm mới danh sách lệnh DNSE trước."
+                )
+                result.raw = {
+                    "request_id": request_id,
+                    "request_tag": request_tag,
+                    "request_payload": payload,
+                    "transport_error": message,
+                }
         if not result.ok:
             logger.error("DNSE order failed: %s", result.error or result.raw)
         elif side == "NB" and is_stock:
@@ -1378,6 +1476,27 @@ class DNSEConnector:
             except Exception as exc:
                 logger.warning("Settlement ledger record failed for %s %s: %s", symbol_key, ticket, exc)
         return result
+
+    def _reconcile_order_request(self, request_tag: str, *, account_no: str, market_type: str):
+        """Đối soát POST timeout bằng RID trong remark; không bao giờ gửi lại POST."""
+        try:
+            ok, data, _status, _message = self._request(
+                "GET",
+                f"/accounts/{account_no}/orders",
+                params={"marketType": market_type},
+                timeout=5.0,
+            )
+            if not ok:
+                return None
+            rows = _unwrap_payload(data, ("orders",))
+            if isinstance(rows, dict):
+                rows = [rows]
+            for item in rows if isinstance(rows, list) else []:
+                if request_tag in str(_first_value(item, ("remark", "comment", "note"), "")):
+                    return item
+        except Exception:
+            pass
+        return None
 
     def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="", order_kind=None, price=0.0) -> BrokerOrderResult:
         # order_kind: None -> tự LO/MOK; "ATO"/"ATC" -> lệnh phiên định kỳ mở/đóng cửa.
@@ -1541,8 +1660,37 @@ class DNSEConnector:
         return self._working_dates
 
     def get_tick(self, symbol: str) -> Optional[BrokerTick]:
-        cache_ttl = float(getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0) or 0.0)
         sym_key = str(symbol).upper()
+        if callable(self._market_tick_provider):
+            try:
+                raw = self._market_tick_provider(sym_key)
+            except Exception:
+                raw = None
+            if isinstance(raw, BrokerTick):
+                return raw
+            if not isinstance(raw, dict):
+                return None
+            last = _to_float(_first_value(raw, ("last", "current_price", "price")), 0.0)
+            bid = _to_float(raw.get("bid"), last)
+            ask = _to_float(raw.get("ask"), last)
+            if not (last or bid or ask):
+                return None
+            return BrokerTick(
+                symbol=sym_key,
+                bid=bid or last,
+                ask=ask or last,
+                last=last or bid or ask,
+                high=_to_float(_first_value(raw, ("high", "day_high")), 0.0),
+                low=_to_float(_first_value(raw, ("low", "day_low")), 0.0),
+                open=_to_float(_first_value(raw, ("open", "day_open")), 0.0),
+                spread=_to_float(raw.get("spread"), max(0.0, (ask or last) - (bid or last))),
+                ceiling=_to_float(raw.get("ceiling"), 0.0),
+                floor=_to_float(raw.get("floor"), 0.0),
+                reference=_to_float(raw.get("reference"), 0.0),
+                timestamp=_to_float(_first_value(raw, ("timestamp", "tick_timestamp")), time.time()),
+                raw=dict(raw),
+            )
+        cache_ttl = float(getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0) or 0.0)
         if cache_ttl > 0 and sym_key in self._tick_cache and (time.time() - self._tick_cache_ts.get(sym_key, 0.0)) < cache_ttl:
             return self._tick_cache[sym_key]
         trade = self.get_latest_trade(symbol) or {}

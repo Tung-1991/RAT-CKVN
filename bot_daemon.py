@@ -59,6 +59,7 @@ def update_daemon_paths(account_id: str):
 class StandaloneBotDaemon:
     def __init__(self):
         self.running = False
+        data_engine.configure_market_data_owner(True)
         self.connector = DNSEConnector()
         if not self.connector.connect():
             logger.error("Không thể kết nối DNSE. Daemon sẽ dừng.")
@@ -75,6 +76,7 @@ class StandaloneBotDaemon:
         self.last_dca_pca_scan = 0
         self.pending_signals = []
         self.heartbeat_contexts, restored_symbols = self._restore_heartbeat_snapshot()
+        self._last_heartbeat_write = 0.0
         self.last_entry_signal_times = {}
         self._tick_thread = None
         self._active_symbols = restored_symbols
@@ -194,6 +196,7 @@ class StandaloneBotDaemon:
                     "wakeup_time": time.time(),
                     "active_symbols": list(active_symbols or []),
                     "contexts": self.heartbeat_contexts,
+                    "market_data_health": data_engine.get_api_health_snapshot(),
                 },
                 "pending_signals": self.pending_signals[-10:],
             }
@@ -217,6 +220,7 @@ class StandaloneBotDaemon:
                     self.signal_write_fault = None
                     if previous_fault:
                         logger.info("Ghi tín hiệu đã hoạt động lại bình thường.")
+                    self._last_heartbeat_write = time.time()
                     return True
                 except (PermissionError, OSError) as exc:
                     last_error = exc
@@ -321,21 +325,43 @@ class StandaloneBotDaemon:
             return cached[1]
 
         picked = []
+        def add(symbol):
+            symbol = str(symbol or "").upper()
+            if symbol and symbol not in picked:
+                picked.append(symbol)
+
+        # 1) Vị thế mở luôn đứng đầu để quản lý SL/TSL có giá trước.
         try:
             for pos in (self.connector.get_positions() or []):
                 sym = getattr(pos, "symbol", None) or (pos.get("symbol") if isinstance(pos, dict) else None)
-                sym = str(sym or "").upper()
-                if sym and sym not in picked:
-                    picked.append(sym)
+                add(sym)
         except Exception:
             pass
+
+        # 2) Lệnh chờ local và tín hiệu đang chờ.
+        try:
+            from core import pending_orders
+            for item in pending_orders.list_active():
+                add(item.get("symbol"))
+        except Exception:
+            pass
+        for item in list(getattr(self, "pending_signals", []) or []):
+            add(item.get("symbol"))
+
+        # 3) Mã người dùng đang xem trên UI.
+        live_cfg = self._read_live_config()
+        add(live_cfg.get("UI_ACTIVE_SYMBOL", getattr(config, "UI_ACTIVE_SYMBOL", "")))
+
+        # 4) Khi BOT bật, stream các mã có quyền trade. RAW-only không được thêm ở đây.
+        bot_active = bool(live_cfg.get("BOT_ACTIVE", live_cfg.get("AUTO_TRADE_ENABLED", False)))
+        if bot_active:
+            for sym in live_cfg.get("BOT_ACTIVE_SYMBOLS", getattr(config, "BOT_ACTIVE_SYMBOLS", [])) or []:
+                add(sym)
 
         # Opt-in: scalping phái sinh cần tick CKPS ngay cả khi chưa có vị thế.
         if getattr(config, "DAEMON_TICK_INCLUDE_CKPS", False):
             for sym in (getattr(config, "CKPS_SYMBOLS", []) or []):
-                sym = str(sym or "").upper()
-                if sym and sym not in picked:
-                    picked.append(sym)
+                add(sym)
 
         self._tick_symbols_cache = (now, picked)
         return picked
@@ -379,6 +405,10 @@ class StandaloneBotDaemon:
                             if "low" in tick:
                                 ctx["day_low"] = tick["low"]
                             ctx["tick_timestamp"] = tick.get("timestamp", time.time())
+                            ctx["tick_source"] = tick.get("source", "CACHE")
+                            ctx["tick_age_seconds"] = tick.get("age_seconds", 0.0)
+                            ctx["tick_freshness"] = tick.get("freshness", "STALE")
+                            ctx["market_state"] = tick.get("market_state", data_engine.market_data_state())
                             self.heartbeat_contexts[sym] = ctx
                         updated = True
                 # [FIX I/O] Ghi file signals 1 lần/vòng thay vì sau TỪNG mã (file ~245KB)
@@ -452,7 +482,9 @@ class StandaloneBotDaemon:
 
                 market_data_window = is_any_network_window_open(symbols or None, include_preopen=True)
                 try:
-                    data_engine.set_stream_symbols(symbols)
+                    # Chỉ stream nhóm cần realtime. Danh sách RAW DATA vẫn được quét
+                    # OHLC theo chu kỳ nhưng không ép mở tick cho hàng chục mã.
+                    data_engine.set_stream_symbols(self._tick_symbols())
                 except Exception:
                     pass
                 if acc_info is None or (now - last_acc_check > 15.0):
@@ -470,6 +502,11 @@ class StandaloneBotDaemon:
                         storage_manager.set_active_account(current_acc_id)
                         update_daemon_paths(current_acc_id)
                         logger.info(f"🔄 Daemon phát hiện đổi tài khoản DNSE sang {current_acc_id}. Đã cập nhật Workspace.")
+
+                # Heartbeat phải sống cả ngoài phiên/nghỉ trưa. Nếu không, UI sẽ
+                # hiểu nhầm daemon chết dù account/trading sync vẫn hoạt động.
+                if now - float(getattr(self, "_last_heartbeat_write", 0.0) or 0.0) >= 5.0:
+                    self._atomic_write_signals(symbols)
 
                 # Ngoài phiên chỉ market-data ngủ. Account REST + trading WS phía trên
                 # vẫn hoạt động để balances/positions/orders luôn đồng bộ.
@@ -813,12 +850,18 @@ if __name__ == "__main__":
     # [FIX V5] Đổi tên tiến trình thành "daemon" để không đụng file log của UI (WinError 32)
     logger = setup_logging(debug_mode=getattr(config, "ENABLE_DEBUG_LOGGING", False), process_name="daemon")
 
-    daemon = StandaloneBotDaemon()
-    try:
-        if daemon.connector._is_connected:
-            daemon.run()
-    except KeyboardInterrupt:
-        import logging
+    from core.process_lock import ProcessLock
 
-        logger = logging.getLogger("BotDaemon")
-        logger.info("Đang tắt tiến trình Daemon...")
+    daemon_lock = ProcessLock(os.path.join("data", "run", "rat_ckvn_daemon.lock"))
+    if not daemon_lock.acquire():
+        logger.error("Bot Daemon đang chạy; tiến trình trùng sẽ thoát.")
+        raise SystemExit(2)
+    try:
+        daemon = StandaloneBotDaemon()
+        try:
+            if daemon.connector._is_connected:
+                daemon.run()
+        except KeyboardInterrupt:
+            logger.info("Đang tắt tiến trình Daemon...")
+    finally:
+        daemon_lock.release()
