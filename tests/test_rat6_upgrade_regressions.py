@@ -466,11 +466,14 @@ def test_old_default_model_migrates_to_plain_56(monkeypatch, tmp_path):
 def test_external_ai_redaction_removes_secrets_accounts_and_paths(monkeypatch):
     monkeypatch.setenv("DNSE_API_SECRET", "super-secret")
     monkeypatch.setenv("DNSE_ACCOUNT_NO", "0011223344")
+    monkeypatch.setenv("TELE_BOT_KEY", "telegram-secret-value")
     clean = api_client._sanitize_external_text(
-        "secret=super-secret account 0011223344 path C:\\Users\\Kaiser\\private.json"
+        "secret=super-secret telegram-secret-value account 0011223344 "
+        "path C:\\Users\\Kaiser\\private.json"
     )
     assert "super-secret" not in clean
     assert "0011223344" not in clean
+    assert "telegram-secret-value" not in clean
     assert "C:\\Users" not in clean
     assert "ACCOUNT#" in clean
 

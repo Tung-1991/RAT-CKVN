@@ -7,6 +7,7 @@ The functions below preserve unrelated lines, comments and ordering.
 """
 
 import os
+import re
 import threading
 from typing import Dict, Optional
 
@@ -14,6 +15,7 @@ DEFAULT_ENV_PATH = ".env"
 
 # Writing .env from the UI thread while the daemon may also read it: guard writes.
 _env_lock = threading.Lock()
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _strip_value(raw: str) -> str:
@@ -88,3 +90,65 @@ def update_env(updates: Dict[str, str], path: str = DEFAULT_ENV_PATH) -> None:
 
     for key, val in updates.items():
         os.environ[key] = str(val)
+
+
+def _write_windows_user_environment(name: str, value: str) -> None:
+    import winreg
+
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SendMessageTimeoutW(
+            0xFFFF,  # HWND_BROADCAST
+            0x001A,  # WM_SETTINGCHANGE
+            0,
+            "Environment",
+            0x0002,  # SMTO_ABORTIFHUNG
+            2000,
+            None,
+        )
+    except Exception:
+        pass
+
+
+def set_user_environment_secret(name: str, value: str, *, persist: bool = True) -> Dict[str, object]:
+    """Lưu secret cho process hiện tại và Windows User Environment.
+
+    Hàm này không ghi vào .env, JSON, log hoặc workspace. Giá trị trả về chỉ
+    chứa trạng thái, tuyệt đối không trả lại secret.
+    """
+    env_name = str(name or "").strip()
+    secret = str(value or "").strip()
+    if not _ENV_NAME_RE.fullmatch(env_name):
+        raise ValueError("Tên biến môi trường không hợp lệ.")
+    if not secret:
+        raise ValueError(f"{env_name} không được để trống.")
+    if "\x00" in secret or "\r" in secret or "\n" in secret:
+        raise ValueError("Token không được chứa ký tự xuống dòng.")
+    if persist:
+        if os.name != "nt":
+            raise RuntimeError("Lưu token vĩnh viễn qua UI hiện chỉ hỗ trợ Windows.")
+        _write_windows_user_environment(env_name, secret)
+    os.environ[env_name] = secret
+    return {"ok": True, "name": env_name, "persisted": bool(persist), "length": len(secret)}
+
+
+def user_environment_secret_present(name: str) -> bool:
+    """Chỉ trả có/không; không đưa secret ra UI hoặc log."""
+    env_name = str(name or "").strip()
+    if not _ENV_NAME_RE.fullmatch(env_name):
+        return False
+    if os.environ.get(env_name):
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _kind = winreg.QueryValueEx(key, env_name)
+        return bool(str(value or "").strip())
+    except OSError:
+        return False

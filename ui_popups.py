@@ -738,36 +738,79 @@ def open_advisor_popup(app):
         font=("Roboto", 10, "bold"),
         text_color="#FBC02D",
     ).pack(anchor="w", padx=10, pady=(7, 2))
-    api_cmd_row = ctk.CTkFrame(api_hint, fg_color="transparent")
-    api_cmd_row.pack(fill="x", padx=10, pady=(0, 8))
-    api_cmd = '$env:OPENAI_API_KEY="TOKEN"'
-    ctk.CTkLabel(
-        api_cmd_row,
-        text=f"OpenAI: {api_cmd}\nAnthropic: $env:ANTHROPIC_API_KEY=\"TOKEN\"",
-        font=("Consolas", 11, "bold"),
-        text_color="#D7DCE2",
-        anchor="w",
-    ).pack(side="left", fill="x", expand=True)
+    from core import env_utils as secret_env
 
-    def copy_api_cmd():
+    var_openai_key = tk.StringVar(value="")
+    api_secret_row = ctk.CTkFrame(api_hint, fg_color="transparent")
+    api_secret_row.pack(fill="x", padx=10, pady=(2, 4))
+    ctk.CTkLabel(
+        api_secret_row,
+        text="OPENAI_API_KEY",
+        width=135,
+        anchor="w",
+        font=("Consolas", 11, "bold"),
+    ).pack(side="left")
+    openai_key_entry = ctk.CTkEntry(
+        api_secret_row,
+        textvariable=var_openai_key,
+        show="*",
+        placeholder_text="Dán API key mới — để trống không thay đổi",
+        height=30,
+    )
+    openai_key_entry.pack(side="left", fill="x", expand=True, padx=(6, 6))
+    openai_key_visible = tk.BooleanVar(value=False)
+
+    def toggle_openai_key():
+        openai_key_visible.set(not openai_key_visible.get())
+        openai_key_entry.configure(show="" if openai_key_visible.get() else "*")
+
+    api_key_status = ctk.CTkLabel(
+        api_hint,
+        text=(
+            "● ĐÃ CÓ KEY" if secret_env.user_environment_secret_present("OPENAI_API_KEY")
+            else "○ CHƯA CÓ KEY"
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color=(
+            "#81C784" if secret_env.user_environment_secret_present("OPENAI_API_KEY")
+            else "#FFB74D"
+        ),
+        anchor="w",
+    )
+
+    def save_openai_key():
         try:
-            top.clipboard_clear()
-            top.clipboard_append(api_cmd)
-            top.update()
-            if hasattr(app, "_set_advisor_status"):
-                app._set_advisor_status("API env command copied")
-        except Exception:
-            pass
+            secret_env.set_user_environment_secret("OPENAI_API_KEY", var_openai_key.get())
+            var_openai_key.set("")
+            openai_key_visible.set(False)
+            openai_key_entry.configure(show="*")
+            api_key_status.configure(
+                text="● ĐÃ LƯU KEY VÀO WINDOWS — app dùng được ngay",
+                text_color="#81C784",
+            )
+            app._set_advisor_status("OPENAI_API_KEY đã được lưu")
+        except Exception as exc:
+            api_key_status.configure(text=f"Lưu key lỗi: {exc}", text_color="#EF5350")
+            app._set_advisor_status("Lưu OPENAI_API_KEY lỗi", str(exc))
 
     ctk.CTkButton(
-        api_cmd_row,
-        text="COPY OPENAI",
-        width=110,
-        height=26,
+        api_secret_row,
+        text="HIỆN",
+        width=65,
+        height=30,
         fg_color="#424242",
-        hover_color="#616161",
-        command=copy_api_cmd,
-    ).pack(side="right", padx=(8, 0))
+        command=toggle_openai_key,
+    ).pack(side="left", padx=(0, 6))
+    ctk.CTkButton(
+        api_secret_row,
+        text="LƯU KEY",
+        width=105,
+        height=30,
+        fg_color="#2E7D32",
+        hover_color="#1B5E20",
+        command=save_openai_key,
+    ).pack(side="left")
+    api_key_status.pack(fill="x", padx=10, pady=(0, 8))
 
     buttons = ctk.CTkFrame(tab_run, fg_color="transparent")
     buttons.pack(fill="x", padx=10, pady=(10, 8))
@@ -803,17 +846,7 @@ def open_advisor_popup(app):
     var_tg_poll_interval = tk.StringVar(value=str(tg_settings.get("control_poll_interval_seconds", 2.0)))
     var_tg_signal_cooldown = tk.StringVar(value=str(tg_settings.get("signal_proposal_cooldown_minutes", 15.0)))
     var_tg_chunk = tk.StringVar(value=str(tg_settings.get("chunk_size", 3500)))
-    var_tg_env_cmd = tk.StringVar()
-
-    def refresh_telegram_env_cmd(*_args):
-        env_name = (var_tg_env.get() or "TELE_BOT_KEY").strip() or "TELE_BOT_KEY"
-        var_tg_env_cmd.set(
-            f'$env:{env_name}="key"; '
-            f'[Environment]::SetEnvironmentVariable("{env_name}", $env:{env_name}, "User")'
-        )
-
-    var_tg_env.trace_add("write", refresh_telegram_env_cmd)
-    refresh_telegram_env_cmd()
+    var_tg_token = tk.StringVar(value="")
 
     tg_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_telegram, fg_color="transparent"), factor=12)
     tg_body.pack(fill="both", expand=True, padx=10, pady=10)
@@ -829,20 +862,82 @@ def open_advisor_popup(app):
     ).pack(anchor="w", padx=10, pady=(8, 2))
     ctk.CTkLabel(
         tg_status,
-        text="Token doc tu ENV, khong luu file. Set ENV xong can restart app.",
+        text="Token lưu vào Windows User Environment, không ghi vào .env/JSON và dùng được ngay.",
         font=("Roboto", 11, "bold"),
         text_color="#FBC02D",
         anchor="w",
     ).pack(anchor="w", padx=10, pady=(0, 6))
 
     tg_env_row = ctk.CTkFrame(tg_status, fg_color="transparent")
-    tg_env_row.pack(fill="x", padx=10, pady=(0, 10))
-    ctk.CTkEntry(
+    tg_env_row.pack(fill="x", padx=10, pady=(0, 4))
+    ctk.CTkLabel(
         tg_env_row,
-        textvariable=var_tg_env_cmd,
-        height=28,
+        text="TELE_BOT_KEY",
+        width=135,
+        anchor="w",
         font=("Consolas", 11, "bold"),
-    ).pack(side="left", fill="x", expand=True)
+    ).pack(side="left")
+    tg_token_entry = ctk.CTkEntry(
+        tg_env_row,
+        textvariable=var_tg_token,
+        show="*",
+        placeholder_text="Dán Telegram bot token mới — để trống không thay đổi",
+        height=30,
+    )
+    tg_token_entry.pack(side="left", fill="x", expand=True, padx=(6, 6))
+    tg_token_visible = tk.BooleanVar(value=False)
+    tg_token_status = ctk.CTkLabel(
+        tg_status,
+        text=(
+            "● ĐÃ CÓ TOKEN" if secret_env.user_environment_secret_present(var_tg_env.get())
+            else "○ CHƯA CÓ TOKEN"
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color=(
+            "#81C784" if secret_env.user_environment_secret_present(var_tg_env.get())
+            else "#FFB74D"
+        ),
+        anchor="w",
+    )
+
+    def toggle_telegram_token():
+        tg_token_visible.set(not tg_token_visible.get())
+        tg_token_entry.configure(show="" if tg_token_visible.get() else "*")
+
+    def save_telegram_token():
+        try:
+            env_name = (var_tg_env.get() or "TELE_BOT_KEY").strip() or "TELE_BOT_KEY"
+            secret_env.set_user_environment_secret(env_name, var_tg_token.get())
+            var_tg_token.set("")
+            tg_token_visible.set(False)
+            tg_token_entry.configure(show="*")
+            tg_token_status.configure(
+                text=f"● ĐÃ LƯU {env_name} VÀO WINDOWS — dùng được ngay",
+                text_color="#81C784",
+            )
+            app._set_advisor_status(f"{env_name} đã được lưu")
+        except Exception as exc:
+            tg_token_status.configure(text=f"Lưu token lỗi: {exc}", text_color="#EF5350")
+            app._set_advisor_status("Lưu Telegram token lỗi", str(exc))
+
+    ctk.CTkButton(
+        tg_env_row,
+        text="HIỆN",
+        width=65,
+        height=30,
+        fg_color="#424242",
+        command=toggle_telegram_token,
+    ).pack(side="left", padx=(0, 6))
+    ctk.CTkButton(
+        tg_env_row,
+        text="LƯU TOKEN",
+        width=110,
+        height=30,
+        fg_color="#2E7D32",
+        hover_color="#1B5E20",
+        command=save_telegram_token,
+    ).pack(side="left")
+    tg_token_status.pack(fill="x", padx=10, pady=(0, 8))
 
     tg_settings_col = ctk.CTkFrame(tg_body, fg_color="#252526", corner_radius=6)
     tg_settings_col.grid(row=1, column=0, sticky="nsew", padx=(0, 5), pady=(0, 10))
@@ -926,21 +1021,11 @@ def open_advisor_popup(app):
             var_tg_poll_interval.set(str(saved.get("control_poll_interval_seconds", 2.0)))
             var_tg_signal_cooldown.set(str(saved.get("signal_proposal_cooldown_minutes", 15.0)))
             var_tg_chunk.set(str(saved.get("chunk_size", 3500)))
-            refresh_telegram_env_cmd()
             app._set_advisor_status("Telegram settings saved")
             return saved
         except Exception as exc:
             app._set_advisor_status("Telegram settings ERR", str(exc))
             return None
-
-    def copy_telegram_env():
-        try:
-            top.clipboard_clear()
-            top.clipboard_append(var_tg_env_cmd.get())
-            top.update()
-            app._set_advisor_status("Telegram env command copied")
-        except Exception:
-            pass
 
     def open_telegram_report_sender():
         saved = save_telegram_settings()
@@ -1093,23 +1178,14 @@ def open_advisor_popup(app):
         ).grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
 
     ctk.CTkButton(
-        tg_env_row,
-        text="Copy ENV",
-        width=120,
-        height=28,
-        fg_color="#424242",
-        hover_color="#616161",
-        command=copy_telegram_env,
-    ).pack(side="right", padx=(8, 0))
-    ctk.CTkButton(
-        tg_env_row,
+        tg_status,
         text="Help",
         width=130,
         height=28,
         fg_color="#1f538d",
         hover_color="#14375e",
         command=open_telegram_help,
-    ).pack(side="right", padx=(8, 0))
+    ).pack(anchor="e", padx=10, pady=(0, 8))
 
     ctk.CTkButton(
         tg_buttons,

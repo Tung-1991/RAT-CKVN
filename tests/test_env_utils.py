@@ -47,6 +47,28 @@ class EnvUtilsTests(unittest.TestCase):
         self._write('KEY="quoted value"\n')
         self.assertEqual(env_utils.load_env(self.path)["KEY"], "quoted value")
 
+    def test_secret_is_set_in_process_without_writing_env_file(self):
+        self._write("KEEP=1\n")
+        old_value = os.environ.get("RAT_TEST_SECRET")
+        try:
+            result = env_utils.set_user_environment_secret(
+                "RAT_TEST_SECRET", "very-secret", persist=False
+            )
+            self.assertTrue(result["ok"])
+            self.assertNotIn("very-secret", str(result))
+            self.assertEqual(os.environ["RAT_TEST_SECRET"], "very-secret")
+            with open(self.path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "KEEP=1\n")
+        finally:
+            if old_value is None:
+                os.environ.pop("RAT_TEST_SECRET", None)
+            else:
+                os.environ["RAT_TEST_SECRET"] = old_value
+
+    def test_secret_rejects_invalid_environment_name(self):
+        with self.assertRaises(ValueError):
+            env_utils.set_user_environment_secret("BAD NAME", "secret", persist=False)
+
 
 if __name__ == "__main__":
     unittest.main()

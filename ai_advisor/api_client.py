@@ -319,6 +319,7 @@ def _sanitize_external_text(value):
     for name in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "TELE_BOT_KEY",
         "DNSE_API_KEY",
         "DNSE_API_SECRET",
         "DNSE_CUSTODY_CODE",
