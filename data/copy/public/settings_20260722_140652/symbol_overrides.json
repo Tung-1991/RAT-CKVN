@@ -1,0 +1,28 @@
+{
+  "VN30F1M": {
+    "sandbox": {
+      "voting_rules": {
+        "G0": {
+          "max_opposite": 0,
+          "max_none": 0,
+          "master_rule": "IGNORE"
+        },
+        "G1": {
+          "max_opposite": 0,
+          "max_none": 0,
+          "master_rule": "IGNORE"
+        },
+        "G2": {
+          "max_opposite": 0,
+          "max_none": 1,
+          "master_rule": "IGNORE"
+        },
+        "G3": {
+          "max_opposite": 0,
+          "max_none": 1,
+          "master_rule": "IGNORE"
+        }
+      }
+    }
+  }
+}

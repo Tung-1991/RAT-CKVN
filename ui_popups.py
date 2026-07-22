@@ -2863,19 +2863,35 @@ def build_dnse_account_picker(app, parent):
 def build_cache_and_symbols_tab(app, parent):
     """Tab gom: watchlist CKCS (mã cơ sở) + Cache/WebSocket. Có nút lưu riêng."""
     from core import env_utils
+    top = parent.winfo_toplevel()
     frame = _speed_up_scroll(ctk.CTkScrollableFrame(parent, fg_color="transparent"))
     frame.pack(fill="both", expand=True, padx=6, pady=6)
 
+    cache_panel = ctk.CTkFrame(
+        frame,
+        fg_color="#20262A",
+        corner_radius=10,
+        border_width=1,
+        border_color="#37474F",
+    )
+    cache_panel.pack(fill="x", padx=6, pady=(4, 10))
+    ctk.CTkLabel(
+        cache_panel,
+        text="CACHE & DANH SÁCH MÃ",
+        font=("Roboto", 13, "bold"),
+        text_color="#80DEEA",
+    ).pack(anchor="w", padx=14, pady=(12, 6))
+
     # --- Watchlist CKCS (mã cơ sở nhập tay) ---
-    ctk.CTkLabel(frame, text="WATCHLIST CKCS (MÃ CƠ SỞ) — NHẬP TAY, CÁCH NHAU DẤU PHẨY",
+    ctk.CTkLabel(cache_panel, text="WATCHLIST CKCS (MÃ CƠ SỞ) — NHẬP TAY, CÁCH NHAU DẤU PHẨY",
                  font=FONT_BOLD, text_color="#26C6DA").pack(pady=(6, 2))
     _add_popup_hint(
-        frame,
+        cache_panel,
         "- CKPS (phái sinh) chỉ trade VN30F, watchlist khoá sẵn.\n"
         "- CKCS (cơ sở) nhập mã tại đây, vd: FPT,SSI,VCB. Lưu vào .env (DNSE_CKCS_WATCHLIST).",
         padx=18, pady=(0, 6),
     )
-    e_ckcs = ctk.CTkEntry(frame, justify="center")
+    e_ckcs = ctk.CTkEntry(cache_panel, justify="center")
     e_ckcs.insert(0, env_utils.get_env_value("DNSE_CKCS_WATCHLIST", "") or "")
     e_ckcs.pack(fill="x", padx=18, pady=(0, 10))
 
@@ -2890,7 +2906,7 @@ def build_cache_and_symbols_tab(app, parent):
         if str(item).strip()
     }
     raw_vars = {}
-    f_raw = ctk.CTkFrame(frame, fg_color="#232D33", corner_radius=8)
+    f_raw = ctk.CTkFrame(cache_panel, fg_color="#232D33", corner_radius=8)
     f_raw.pack(fill="x", padx=12, pady=(0, 10))
     ctk.CTkLabel(
         f_raw,
@@ -2959,15 +2975,15 @@ def build_cache_and_symbols_tab(app, parent):
     ).pack(side="left", padx=5)
 
     # --- Cache & Market Data ---
-    ctk.CTkLabel(frame, text="CACHE & MARKET DATA", font=FONT_BOLD, text_color="#FFD54F").pack(pady=(4, 2))
+    ctk.CTkLabel(cache_panel, text="CACHE & MARKET DATA", font=FONT_BOLD, text_color="#FFD54F").pack(pady=(4, 2))
     _add_popup_hint(
-        frame,
+        cache_panel,
         "- Bật WebSocket để stream giá real-time → giảm REST, add nhiều mã không bị BAN.\n"
         "- TTL cache REST (giây): tăng = gọi API ít hơn, giảm = cập nhật nhanh hơn.\n"
         "- WebSocket lỗi sẽ tự fallback REST.",
         padx=18, pady=(0, 6),
     )
-    f_cache = ctk.CTkFrame(frame, fg_color="#2b2b2b", corner_radius=8)
+    f_cache = ctk.CTkFrame(cache_panel, fg_color="#2b2b2b", corner_radius=8)
     f_cache.pack(fill="x", padx=12, pady=(0, 8))
     var_ws_enabled = ctk.BooleanVar(value=bool(getattr(config, "DNSE_WS_ENABLED", False)))
     ctk.CTkSwitch(
@@ -3019,11 +3035,11 @@ def build_cache_and_symbols_tab(app, parent):
     # --- Nâng cao (ít dùng, mặc định ẩn): WS URL / encoding / board ---
     adv_state = {"open": False}
     btn_adv = ctk.CTkButton(
-        frame, text="▸ Nâng cao (WebSocket URL / encoding / board)", width=340,
+        cache_panel, text="▸ Nâng cao (WebSocket URL / encoding / board)", width=340,
         fg_color="#37474F", hover_color="#455A64", anchor="w", font=("Roboto", 11),
     )
     btn_adv.pack(fill="x", padx=12, pady=(2, 2))
-    f_adv = ctk.CTkFrame(frame, fg_color="#2b2b2b", corner_radius=8)
+    f_adv = ctk.CTkFrame(cache_panel, fg_color="#2b2b2b", corner_radius=8)
 
     def _adv_entry(label, value, row):
         ctk.CTkLabel(f_adv, text=label).grid(row=row, column=0, sticky="w", padx=10, pady=4)
@@ -3047,7 +3063,7 @@ def build_cache_and_symbols_tab(app, parent):
 
     btn_adv.configure(command=_toggle_adv)
 
-    lbl_msg = ctk.CTkLabel(frame, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=520, justify="left")
+    lbl_msg = ctk.CTkLabel(cache_panel, text="", font=("Roboto", 11), text_color="#B0BEC5", wraplength=620, justify="left")
     lbl_msg.pack(anchor="w", padx=14, pady=(2, 2))
 
     def _save():
@@ -3117,78 +3133,168 @@ def build_cache_and_symbols_tab(app, parent):
         except Exception as exc:  # noqa: BLE001
             lbl_msg.configure(text=f"Lỗi lưu: {exc}", text_color="#E57373")
 
-    ctk.CTkButton(frame, text="Lưu Cache & Mã", width=180, fg_color="#2E7D32", command=_save).pack(anchor="w", padx=14, pady=(2, 10))
+    ctk.CTkButton(cache_panel, text="LƯU CACHE & MÃ", width=180, fg_color="#2E7D32", command=_save).pack(anchor="w", padx=14, pady=(2, 14))
 
-    # --- [CONFIG BUNDLE] Export/Import toàn bộ settings ra 1 file (mang máy khác import là xong) ---
-    ctk.CTkLabel(
+    # --- Sao lưu/chuyển máy: tách phần có thể public và phần riêng tư ---
+    transfer_panel = ctk.CTkFrame(
         frame,
-        text="SAO LƯU / CHUYỂN MÁY — gom brain + overrides + presets + TSL + watchlist vào 1 file (không kèm API key/token):",
-        font=("Roboto", 11, "bold"),
+        fg_color="#252229",
+        corner_radius=10,
+        border_width=1,
+        border_color="#4A3B52",
+    )
+    transfer_panel.pack(fill="x", padx=6, pady=(0, 10))
+    ctk.CTkLabel(
+        transfer_panel,
+        text="SAO LƯU / CHUYỂN MÁY",
+        font=("Roboto", 12, "bold"),
         text_color="#90CAF9",
         wraplength=520,
         justify="left",
-    ).pack(anchor="w", padx=14, pady=(8, 2))
+    ).pack(anchor="w", padx=14, pady=(12, 2))
+    ctk.CTkLabel(
+        transfer_panel,
+        text=(
+            "PUBLIC: rule, risk, watchlist, indicator, preset — có thể đưa GitHub.\n"
+            "PRIVATE: context cá nhân/chuyên gia — tự chép, không đưa GitHub.\n"
+            "Không sao lưu .env, DNSE, OpenAI, Telegram, token, lệnh, lịch sử hoặc cache."
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color="#B0BEC5",
+        wraplength=650,
+        justify="left",
+    ).pack(anchor="w", padx=14, pady=(0, 7))
+
+    def _active_transfer_account():
+        account_dir = os.path.abspath(str(getattr(storage_manager, "_active_account_dir", "data")))
+        if os.path.basename(account_dir).lower() in {"data", ""}:
+            raise RuntimeError("Chưa xác định tài khoản đang dùng.")
+        return account_dir
+
+    def _select_public_manifest(title):
+        from tkinter import filedialog
+        import settings_transfer
+
+        selected = filedialog.askopenfilename(
+            parent=top,
+            title=title,
+            initialdir=str(settings_transfer.PUBLIC_COPY_ROOT),
+            initialfile="manifest.json",
+            filetypes=[("Manifest setting", "manifest.json"), ("JSON", "*.json")],
+        )
+        return os.path.dirname(selected) if selected else ""
 
     def _export_settings():
         try:
-            from tkinter import filedialog
-            from core import config_bundle
-            dest = filedialog.asksaveasfilename(
-                parent=top,
-                title="Export Settings Bundle",
-                initialdir=config_bundle.default_export_dir(),
-                initialfile=config_bundle.default_bundle_name(),
-                defaultextension=".json",
-                filetypes=[("RAT-CKVN Settings", "*.json")],
-            )
-            if not dest:
-                return
-            result = config_bundle.export_bundle(dest)
-            lbl_msg.configure(
-                text=f"Đã export {result['files']} file settings + {result['env_keys']} env → {result['path']}",
+            import settings_transfer
+
+            result = settings_transfer.export_split_settings(_active_transfer_account())
+            lbl_transfer_msg.configure(
+                text=(
+                    f"Đã tạo bản sao: PUBLIC {len(result['public_files'])} file, "
+                    f"PRIVATE {len(result['private_files'])} file."
+                ),
                 text_color="#81C784",
             )
         except Exception as exc:  # noqa: BLE001
-            lbl_msg.configure(text=f"Lỗi export: {exc}", text_color="#E57373")
+            lbl_transfer_msg.configure(text=f"Không tạo được bản sao: {exc}", text_color="#E57373")
 
     def _import_settings():
         try:
-            from tkinter import filedialog, messagebox
-            from core import config_bundle
-            src = filedialog.askopenfilename(
-                parent=top,
-                title="Import Settings Bundle",
-                initialdir=config_bundle.default_export_dir(),
-                filetypes=[("RAT-CKVN Settings", "*.json")],
-            )
-            if not src:
+            import settings_transfer
+
+            package = _select_public_manifest("Chọn manifest PUBLIC cần khôi phục")
+            if not package:
                 return
             if not messagebox.askyesno(
-                "Import Settings",
-                "Ghi đè settings hiện tại bằng file bundle?\n(File cũ tự backup .bak_import trước khi đè)",
+                "Khôi phục setting",
+                (
+                    "Khôi phục PUBLIC và PRIVATE đi cùng (nếu có) vào tài khoản hiện tại?\n"
+                    "Setting cũ sẽ được sao lưu trước."
+                ),
                 parent=top,
             ):
                 return
-            result = config_bundle.import_bundle(src)
+            result = settings_transfer.import_split_settings(
+                package,
+                _active_transfer_account(),
+                include_private=True,
+            )
             try:
                 if hasattr(app, "reload_config_from_json"):
                     app.reload_config_from_json()
             except Exception:
                 pass
-            lbl_msg.configure(
-                text=(
-                    f"Đã import {len(result['restored'])} file (backup: {len(result['backups'])}). "
-                    "KHỞI ĐỘNG LẠI APP để env/watchlist mới có hiệu lực đầy đủ."
-                ),
+            lbl_transfer_msg.configure(
+                text=f"Đã khôi phục {result['restored']} file. Hãy mở lại app.",
                 text_color="#FFB74D",
             )
         except Exception as exc:  # noqa: BLE001
-            lbl_msg.configure(text=f"Lỗi import: {exc}", text_color="#E57373")
+            lbl_transfer_msg.configure(text=f"Không khôi phục được: {exc}", text_color="#E57373")
 
-    bundle_row = ctk.CTkFrame(frame, fg_color="transparent")
-    bundle_row.pack(anchor="w", padx=14, pady=(0, 12))
-    ctk.CTkButton(bundle_row, text="⬇ Export Settings", width=160, fg_color="#1565C0", hover_color="#0D47A1", command=_export_settings).pack(side="left")
-    ctk.CTkButton(bundle_row, text="⬆ Import Settings", width=160, fg_color="#6A1B9A", hover_color="#4A148C", command=_import_settings).pack(side="left", padx=(8, 0))
+    def _check_settings():
+        try:
+            import settings_transfer
+
+            package = _select_public_manifest("Chọn manifest PUBLIC cần kiểm tra")
+            if not package:
+                return
+            public = settings_transfer.validate_package(package)
+            private_dir = settings_transfer.PRIVATE_COPY_ROOT / public["package_id"]
+            private_count = 0
+            if (private_dir / "manifest.json").is_file():
+                private_count = len(settings_transfer.validate_package(private_dir)["files"])
+            lbl_transfer_msg.configure(
+                text=f"Gói hợp lệ: PUBLIC {len(public['files'])}, PRIVATE {private_count} file.",
+                text_color="#81C784",
+            )
+        except Exception as exc:  # noqa: BLE001
+            lbl_transfer_msg.configure(text=f"Gói không hợp lệ: {exc}", text_color="#E57373")
+
+    def _open_settings_folder():
+        try:
+            import settings_transfer
+
+            settings_transfer.open_copy_folder()
+            lbl_transfer_msg.configure(text="Đã mở thư mục sao lưu.", text_color="#81C784")
+        except Exception as exc:  # noqa: BLE001
+            lbl_transfer_msg.configure(text=f"Không mở được thư mục: {exc}", text_color="#E57373")
+
+    def _delete_settings():
+        try:
+            import settings_transfer
+
+            package = _select_public_manifest("Chọn gói cần xóa")
+            if not package:
+                return
+            check = settings_transfer.validate_package(package)
+            if not messagebox.askyesno(
+                "Xóa bản sao",
+                f"Xóa cả PUBLIC và PRIVATE của {check['package_id']}?",
+                parent=top,
+            ):
+                return
+            settings_transfer.delete_package(package)
+            lbl_transfer_msg.configure(text="Đã xóa bản sao.", text_color="#81C784")
+        except Exception as exc:  # noqa: BLE001
+            lbl_transfer_msg.configure(text=f"Không xóa được: {exc}", text_color="#E57373")
+
+    bundle_row = ctk.CTkFrame(transfer_panel, fg_color="transparent")
+    bundle_row.pack(fill="x", padx=14, pady=(0, 4))
+    ctk.CTkButton(bundle_row, text="TẠO BẢN SAO", width=135, fg_color="#1565C0", hover_color="#0D47A1", command=_export_settings).pack(side="left")
+    ctk.CTkButton(bundle_row, text="KHÔI PHỤC", width=125, fg_color="#6A1B9A", hover_color="#4A148C", command=_import_settings).pack(side="left", padx=(7, 0))
+    ctk.CTkButton(bundle_row, text="KIỂM TRA", width=110, fg_color="#455A64", hover_color="#37474F", command=_check_settings).pack(side="left", padx=(7, 0))
+    ctk.CTkButton(bundle_row, text="MỞ THƯ MỤC", width=120, fg_color="#455A64", hover_color="#37474F", command=_open_settings_folder).pack(side="left", padx=(7, 0))
+    ctk.CTkButton(bundle_row, text="XÓA", width=65, fg_color="#8E2424", hover_color="#641818", command=_delete_settings).pack(side="left", padx=(7, 0))
+    lbl_transfer_msg = ctk.CTkLabel(
+        transfer_panel,
+        text="",
+        font=("Roboto", 11),
+        text_color="#B0BEC5",
+        wraplength=650,
+        justify="left",
+    )
+    lbl_transfer_msg.pack(anchor="w", padx=14, pady=(3, 12))
 
 
 def build_manual_margin_tab(app, parent):

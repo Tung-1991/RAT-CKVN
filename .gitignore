@@ -53,3 +53,11 @@ data/logs/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Gói setting PUBLIC được phép commit; PRIVATE và backup luôn ở máy cục bộ.
+!data/copy/
+data/copy/*
+!data/copy/public/
+!data/copy/public/**
+data/copy/private/
+data/copy/_backups/
