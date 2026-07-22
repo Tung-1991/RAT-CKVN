@@ -639,7 +639,7 @@ def setup_left_panel(app, parent):
     f_sys = ctk.CTkFrame(parent, fg_color="#1a1a1a")
     f_sys.pack(fill="x", padx=5, pady=(5, 6))
     ctk.CTkLabel(
-        f_sys, text=" SYSTEM HEALTH", font=("Roboto", 11, "bold"), text_color="white"
+        f_sys, text=" TRẠNG THÁI HỆ THỐNG", font=("Roboto", 11, "bold"), text_color="white"
     ).pack(anchor="w", padx=5, pady=(5, 0))
 
     app.check_labels = {}
@@ -662,12 +662,29 @@ def setup_portfolio_tree(app, parent):
     f_port = ctk.CTkFrame(parent, fg_color="#2b2b2b")
     f_port.pack(fill="both", expand=True)
 
+    style = ttk.Style()
+    style.configure(
+        "Portfolio.Treeview",
+        background="#2b2b2b",
+        foreground="#ECEFF1",
+        fieldbackground="#2b2b2b",
+        rowheight=50,
+        font=("Consolas", 18),
+    )
+    style.configure(
+        "Portfolio.Treeview.Heading",
+        background="#1f1f1f",
+        foreground="#E0E0E0",
+        font=("Roboto", 20, "bold"),
+        relief="flat",
+    )
+
     cols = (
         "Symbol", "Qty", "Sellable", "Pending",
         "AvgCost", "Price", "Value", "PnL", "Note",
     )
     app.tree_portfolio = ttk.Treeview(
-        f_port, columns=cols, show="headings", style="Treeview", selectmode="browse",
+        f_port, columns=cols, show="headings", style="Portfolio.Treeview", selectmode="browse",
     )
     app.tree_portfolio.tag_configure("odd_lot", background="#5c3a17", foreground="#FFD7A0")
     app.tree_portfolio.tag_configure("profit_row", background="#234d20", foreground="#e0e0e0")
@@ -777,21 +794,21 @@ def setup_right_panel(app, parent):
     style = ttk.Style()
     style.theme_use("clam")
     style.configure(
-        "Treeview",
+        "Running.Treeview",
         background="#2b2b2b",
-        foreground="white",
+        foreground="#ECEFF1",
         fieldbackground="#2b2b2b",
         rowheight=50,
         font=("Consolas", 18),
     )
     style.configure(
-        "Treeview.Heading",
+        "Running.Treeview.Heading",
         background="#1f1f1f",
         foreground="#e0e0e0",
         font=("Roboto", 20, "bold"),
         relief="flat",
     )
-    style.map("Treeview", background=[("selected", "#3949ab")])
+    style.map("Running.Treeview", background=[("selected", "#3949ab")])
 
     cols = (
         "Ticket",
@@ -832,7 +849,7 @@ def setup_right_panel(app, parent):
         container = ctk.CTkFrame(frame, fg_color="#2b2b2b")
         container.pack(fill="both", expand=True)
         tree = ttk.Treeview(
-            container, columns=cols, show="headings", style="Treeview", selectmode="extended"
+            container, columns=cols, show="headings", style="Running.Treeview", selectmode="extended"
         )
         tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
         tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
@@ -927,8 +944,8 @@ def setup_right_panel(app, parent):
 
     ctk.CTkButton(
         f_log_head,
-        text="🗑 Clear",
-        width=70,
+        text="Xóa log",
+        width=74,
         height=22,
         fg_color="#444",
         hover_color="#c62828",
@@ -1027,7 +1044,7 @@ def setup_right_panel(app, parent):
 
     lbl_badge = ctk.CTkLabel(
         preview_head,
-        text="WAIT",
+        text="CHỜ",
         font=("Roboto", 13, "bold"),
         text_color="#FFB300",
         anchor="e",

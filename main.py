@@ -131,7 +131,14 @@ class BotUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("RAT6 CKVN - Master Control (Kaiser Edition)")
-        self.geometry("1650x950")
+        screen_w = max(1024, int(self.winfo_screenwidth() or 1024))
+        screen_h = max(720, int(self.winfo_screenheight() or 720))
+        window_w = min(1650, max(980, screen_w - 60))
+        window_h = min(950, max(680, screen_h - 90))
+        pos_x = max(0, (screen_w - window_w) // 2)
+        pos_y = max(0, (screen_h - window_h) // 3)
+        self.geometry(f"{window_w}x{window_h}+{pos_x}+{pos_y}")
+        self.minsize(min(980, window_w), min(680, window_h))
 
         self.var_auto_trade = tk.BooleanVar(value=False)  # Cờ TỔNG (legacy) = OR(CKPS, CKCS)
         # [2-BOT] Tách công tắc riêng: Phái sinh (VN30F/CKPS) và Cơ sở (CKCS).
@@ -899,7 +906,11 @@ class BotUI(ctk.CTk):
         if hasattr(self, "lbl_preview_symbol"):
             self.lbl_preview_symbol.configure(text=new_symbol)
         self._save_brain_live_config()
-        self.lbl_dashboard_price.configure(text="Đang nạp...", text_color="gray")
+        self.lbl_dashboard_price.configure(
+            text="ĐANG NẠP GIÁ...",
+            text_color="#9E9E9E",
+            font=("Roboto", 14, "bold"),
+        )
         self.on_direction_change(self.var_direction.get())
         # Grid preview removed
         self.refresh_manual_preview_tab()
@@ -4098,6 +4109,7 @@ class BotUI(ctk.CTk):
             self.lbl_dashboard_price.configure(
                 text=self._fmt_price(cur_price, sym),
                 text_color="#FFB300" if is_stale_price else (COL_GREEN if cur_price >= self.last_price_val else COL_RED),
+                font=("Roboto", 30, "bold"),
             )
             self.last_price_val = cur_price
             # Trần/TC/Sàn (nếu DNSE trả về) — hiện cho cả CKCS lẫn phái sinh.
@@ -4131,10 +4143,28 @@ class BotUI(ctk.CTk):
             if ctx_px > 0:
                 cur_price = ctx_px
                 self.lbl_dashboard_price.configure(
-                    text=self._fmt_price(cur_price, sym), text_color="#9E9E9E"
+                    text=self._fmt_price(cur_price, sym),
+                    text_color="#9E9E9E",
+                    font=("Roboto", 30, "bold"),
                 )
             else:
-                self.lbl_dashboard_price.configure(text="— chưa có giá", text_color="#757575")
+                from core.market_hours import market_session_phase
+
+                phase, phase_label = market_session_phase(sym)
+                if phase == "LUNCH":
+                    waiting_text = "CHỜ GIÁ · NGHỈ TRƯA"
+                    waiting_color = "#FFB300"
+                elif phase in {"WEEKEND", "HOLIDAY", "CLOSED"}:
+                    waiting_text = f"CHỜ GIÁ · {phase_label.upper()}"
+                    waiting_color = "#9E9E9E"
+                else:
+                    waiting_text = "CHỜ DỮ LIỆU GIÁ"
+                    waiting_color = "#FFB300"
+                self.lbl_dashboard_price.configure(
+                    text=waiting_text,
+                    text_color=waiting_color,
+                    font=("Roboto", 14, "bold"),
+                )
             if hasattr(self, "lbl_band_info"):
                 self.lbl_band_info.configure(text="")
 
@@ -6375,7 +6405,13 @@ class BotUI(ctk.CTk):
         setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
         top = ctk.CTkToplevel(self)
         top.title(f"Kích hoạt gợi ý {side} {symbol}")
-        top.geometry("620x750")
+        screen_w = max(800, int(top.winfo_screenwidth() or 800))
+        screen_h = max(600, int(top.winfo_screenheight() or 600))
+        width = min(620, max(560, screen_w - 60))
+        height = min(750, max(500, screen_h - 100))
+        top.geometry(
+            f"{width}x{height}+{max(0, (screen_w - width) // 2)}+{max(0, (screen_h - height) // 3)}"
+        )
         top.transient(self)
         top.grab_set()
 

@@ -167,8 +167,14 @@ class BotStrategyUI(ctk.CTkToplevel):
         if symbol:
             title_str += f" - CẤU HÌNH CON: {symbol}"
         self.title(title_str)
-        self.geometry("1400x850")
-        self.minsize(1180, 720)
+        screen_w = max(800, int(self.winfo_screenwidth() or 800))
+        screen_h = max(600, int(self.winfo_screenheight() or 600))
+        width = min(1400, max(760, screen_w - 60))
+        height = min(850, max(540, screen_h - 100))
+        self.geometry(
+            f"{width}x{height}+{max(0, (screen_w - width) // 2)}+{max(0, (screen_h - height) // 3)}"
+        )
+        self.minsize(min(1180, width), min(720, height))
         self.attributes("-topmost", True)
         self.resizable(True, True)  # Khôi phục tính năng co giãn/phóng to
         if symbol:

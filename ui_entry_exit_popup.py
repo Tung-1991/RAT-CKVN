@@ -221,8 +221,14 @@ def _field(frame, row, label, variable, values=None, width=130, col=0):
 def open_entry_exit_popup(app, override_symbol=None):
     top = ctk.CTkToplevel(app)
     top.title(f"Entry/Exit: {override_symbol}" if override_symbol else "Entry/Exit Configuration")
-    top.geometry("880x760")
-    top.minsize(760, 560)
+    screen_w = max(800, int(top.winfo_screenwidth() or 800))
+    screen_h = max(600, int(top.winfo_screenheight() or 600))
+    width = min(880, max(720, screen_w - 60))
+    height = min(760, max(500, screen_h - 100))
+    top.geometry(
+        f"{width}x{height}+{max(0, (screen_w - width) // 2)}+{max(0, (screen_h - height) // 3)}"
+    )
+    top.minsize(min(760, width), min(560, height))
     top.attributes("-topmost", True)
     top.focus_force()
     if override_symbol:
@@ -527,5 +533,4 @@ def open_entry_exit_popup(app, override_symbol=None):
         height=38,
         font=("Roboto", 13, "bold"),
     ).pack(fill="x", padx=20, pady=(4, 12))
-
 

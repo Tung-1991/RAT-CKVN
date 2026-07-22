@@ -27,6 +27,20 @@ from core.money import (
 )
 
 
+def _fit_popup(window, preferred_w, preferred_h, min_w=620, min_h=460):
+    """Keep popups inside the usable RDP/VPS screen and center them."""
+    screen_w = max(800, int(window.winfo_screenwidth() or 800))
+    screen_h = max(600, int(window.winfo_screenheight() or 600))
+    available_w = max(720, screen_w - 60)
+    available_h = max(500, screen_h - 100)
+    width = min(int(preferred_w), available_w)
+    height = min(int(preferred_h), available_h)
+    x = max(0, (screen_w - width) // 2)
+    y = max(0, (screen_h - height) // 3)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    window.minsize(min(int(min_w), width), min(int(min_h), height))
+
+
 def _build_watch_symbols():
     symbols = []
     for raw in list(getattr(config, "CKPS_SYMBOLS", []) or []) + list(getattr(config, "CKCS_WATCHLIST", []) or []):
@@ -327,8 +341,7 @@ def open_advisor_files_help(app, parent=None):
     parent = parent or app
     popup = ctk.CTkToplevel(parent)
     popup.title("Giải thích file BOT Advisor và CKCS Research")
-    popup.geometry("820x720")
-    popup.minsize(680, 560)
+    _fit_popup(popup, 820, 720, 680, 560)
     _bring_popup_to_front(popup)
 
     ctk.CTkLabel(
@@ -379,8 +392,7 @@ def open_advisor_files_help(app, parent=None):
 def open_advisor_popup(app):
     top = ctk.CTkToplevel(app)
     top.title("AI Advisor — BOT & CKCS Research")
-    top.geometry("1080x820")
-    top.minsize(820, 680)
+    _fit_popup(top, 1080, 820, 820, 680)
     _bring_popup_to_front(top)
 
     root = ctk.CTkFrame(top, fg_color="#1E1E1E", corner_radius=0)
@@ -1209,8 +1221,7 @@ def open_advisor_popup(app):
 
         sender = ctk.CTkToplevel(top)
         sender.title("RAT-report Sender")
-        sender.geometry("820x620")
-        sender.minsize(640, 460)
+        _fit_popup(sender, 820, 620, 640, 460)
         _bring_popup_to_front(sender)
 
         body = ctk.CTkFrame(sender, fg_color="#1E1E1E", corner_radius=0)
@@ -1306,8 +1317,7 @@ def open_advisor_popup(app):
     def open_telegram_help():
         helper = ctk.CTkToplevel(top)
         helper.title("RAT-control Help")
-        helper.geometry("760x560")
-        helper.minsize(620, 460)
+        _fit_popup(helper, 760, 560, 620, 460)
         _bring_popup_to_front(helper)
 
         body = ctk.CTkFrame(helper, fg_color="#1E1E1E", corner_radius=0)
@@ -1569,8 +1579,7 @@ def open_advisor_popup(app):
 def open_advisor_file_editor(app, path, title):
     top = ctk.CTkToplevel(app)
     top.title(f"Edit {title}")
-    top.geometry("760x620")
-    top.minsize(620, 460)
+    _fit_popup(top, 760, 620, 620, 460)
     _bring_popup_to_front(top)
 
     root = ctk.CTkFrame(top, fg_color="#1E1E1E", corner_radius=0)
@@ -1738,8 +1747,7 @@ def open_symbol_config_popup(app, symbol, on_change=None):
     has_symbol_override = symbol in symbol_configs and bool(sym_cfg)
     top = ctk.CTkToplevel(app)
     top.title(f"Cấu hình riêng: {symbol}")
-    top.geometry("720x720")
-    top.minsize(620, 520)
+    _fit_popup(top, 720, 720, 620, 520)
     _bring_popup_to_front(top)
     body = _speed_up_scroll(ctk.CTkScrollableFrame(top, fg_color="transparent"))
     body.pack(fill="both", expand=True, padx=12, pady=(10, 4))
@@ -1960,8 +1968,7 @@ def open_bot_setting_popup(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Cấu hình Lõi Hệ Thống (Core Settings)")
-    top.geometry("1050x720")
-    top.minsize(860, 560)
+    _fit_popup(top, 1050, 720, 860, 560)
     _bring_popup_to_front(top)
     # top.transient(app) # Khóa Z-index, luôn nổi trên App chính
     tab_core = _speed_up_scroll(ctk.CTkScrollableFrame(top, fg_color="transparent"))
@@ -3673,8 +3680,7 @@ def open_advanced_tools_popup(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Advanced — Cài đặt hệ thống")
-    top.geometry("680x760")
-    top.minsize(580, 560)
+    _fit_popup(top, 680, 760, 580, 560)
     _bring_popup_to_front(top)
 
     tabs = ctk.CTkTabview(top)
@@ -3963,8 +3969,7 @@ def open_preset_config_popup(app):
     data = config.PRESETS.get(p_name, {})
     top = ctk.CTkToplevel(app)
     top.title(f"Preset: {p_name}")
-    top.geometry("760x800")
-    top.minsize(720, 520)
+    _fit_popup(top, 760, 800, 720, 520)
     _bring_popup_to_front(top)
 
     # 2 tab: 'Cố định' (rule lệnh, 1 preset duy nhất) + 'Paper' (vốn ảo)
@@ -4287,8 +4292,7 @@ def open_tsl_popup(app, override_symbol=None):
     if override_symbol:
         title += f" - CẤU HÌNH CON: {override_symbol}"
     top.title(title)
-    top.geometry("980x780")
-    top.minsize(860, 600)
+    _fit_popup(top, 980, 780, 860, 600)
     _bring_popup_to_front(top)
     top.resizable(True, True)  # Khôi phục tính năng co giãn/phóng to
     if override_symbol:
@@ -5103,7 +5107,7 @@ def open_edit_popup(app, ticket):
         return
     top = ctk.CTkToplevel(app)
     top.title(f"Sửa lệnh #{ticket}")
-    top.geometry("450x830")
+    _fit_popup(top, 450, 830, 420, 560)
     _bring_popup_to_front(top)
     # top.transient(app)
     is_buy = pos.type == 0
@@ -5493,8 +5497,7 @@ def show_history_popup(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Lịch sử giao dịch theo chiến thuật")
-    top.geometry("1400x650")
-    top.minsize(1100, 550)
+    _fit_popup(top, 1400, 650, 1000, 550)
     _bring_popup_to_front(top)
 
     history_tabs = ctk.CTkTabview(top)
@@ -5514,7 +5517,7 @@ def show_history_popup(app):
     style.configure(
         "History.Treeview",
         background="#242424",
-        foreground="white",
+        foreground="#ECEFF1",
         fieldbackground="#242424",
         rowheight=50,
         font=("Consolas", 18),
@@ -5789,7 +5792,7 @@ def open_minibrain_popup(app, title, mb_cfg, on_save_callback):
     import config as _cfg
     top = ctk.CTkToplevel()
     top.title(title)
-    top.geometry("700x520")
+    _fit_popup(top, 700, 520, 620, 460)
     _bring_popup_to_front(top)
     top.grab_set()
     f_top = ctk.CTkFrame(top)
@@ -5907,8 +5910,7 @@ def _open_stock_portfolio_popup_legacy(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Danh mục cổ phiếu nắm giữ")
-    top.geometry("1500x620")
-    top.minsize(1100, 420)
+    _fit_popup(top, 1500, 620, 1000, 420)
     _bring_popup_to_front(top)
     app.portfolio_popup = top
 
@@ -5990,8 +5992,7 @@ def show_running_color_legend(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Chú thích bảng lệnh đang chạy")
-    top.geometry("720x610")
-    top.minsize(620, 470)
+    _fit_popup(top, 720, 610, 620, 470)
     _bring_popup_to_front(top)
     app.running_color_legend_popup = top
 
@@ -6072,8 +6073,7 @@ def open_portfolio_popup(app):
 
     top = ctk.CTkToplevel(app)
     top.title("Danh mục & sức mua")
-    top.geometry("1500x680")
-    top.minsize(1100, 460)
+    _fit_popup(top, 1500, 680, 1000, 460)
     _bring_popup_to_front(top)
     app.portfolio_popup = top
 
@@ -6100,6 +6100,23 @@ def open_portfolio_popup(app):
     app.portfolio_tabs = tabs
     app.portfolio_trees = {}
     app.portfolio_summary_labels = {}
+
+    style = ttk.Style()
+    style.configure(
+        "Portfolio.Treeview",
+        background="#2b2b2b",
+        foreground="#ECEFF1",
+        fieldbackground="#2b2b2b",
+        rowheight=50,
+        font=("Consolas", 18),
+    )
+    style.configure(
+        "Portfolio.Treeview.Heading",
+        background="#1f1f1f",
+        foreground="#E0E0E0",
+        font=("Roboto", 20, "bold"),
+        relief="flat",
+    )
 
     def make_summary(parent):
         bar = ctk.CTkFrame(parent, fg_color="#1a1a1a", corner_radius=6)
@@ -6132,7 +6149,7 @@ def open_portfolio_popup(app):
             holder,
             columns=cols,
             show="headings",
-            style="Treeview",
+            style="Portfolio.Treeview",
             selectmode="browse",
         )
         for tag, bg, fg in (
