@@ -44,9 +44,11 @@ def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
 
     assert (public / "brain_settings.json").is_file()
     assert (public / "symbol_overrides.json").is_file()
-    assert (public / "advisor" / "advisor_prompt.md").is_file()
-    assert (public / "templates" / "custom.json").is_file()
-    assert not (public / "advisor" / "expert_context.md").exists()
+    assert (public / "advisor_prompt.md").is_file()
+    assert json.loads((public / "templates_bundle.json").read_text(encoding="utf-8")) == {
+        "custom.json": {"x": 1}
+    }
+    assert not (public / "expert_context.md").exists()
     assert not (public / "advisor_api_settings.json").exists()
     assert not (public / "telegram_settings.json").exists()
     public_brain = json.loads((public / "brain_settings.json").read_text(encoding="utf-8"))
@@ -55,9 +57,9 @@ def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
     assert portable == {"DNSE_CKCS_WATCHLIST": "AAA,FPT"}
     assert "123456" not in (public / "manifest.json").read_text(encoding="utf-8")
 
-    assert (private / "advisor" / "expert_context.md").is_file()
-    assert (private / "advisor" / "user_context.md").is_file()
-    assert (private / "ckcs_research" / "private_context.md").is_file()
+    assert (private / "expert_context.md").is_file()
+    assert (private / "user_context.md").is_file()
+    assert (private / "private_context.md").is_file()
     assert not (private / ".env").exists()
     assert not (private / "advisor_api_settings.json").exists()
     assert not (private / "telegram_settings.json").exists()
@@ -132,9 +134,25 @@ def test_delete_removes_public_private_pair_only(tmp_path):
     )
     settings_transfer.delete_package(result["public_dir"], tmp_path / "data" / "copy")
 
-    assert not Path(result["public_dir"]).exists()
-    assert not Path(result["private_dir"]).exists()
+    assert Path(result["public_dir"]).is_dir()
+    assert Path(result["private_dir"]).is_dir()
+    assert list(Path(result["public_dir"]).iterdir()) == []
+    assert list(Path(result["private_dir"]).iterdir()) == []
     assert account.is_dir()
+
+
+def test_export_again_overwrites_in_place_without_more_folders(tmp_path):
+    account = tmp_path / "data" / "111"
+    copy_root = tmp_path / "data" / "copy"
+    _write(account / "brain_settings.json", '{"version": 1}')
+    first = settings_transfer.export_split_settings(account, copy_root, env_path=tmp_path / ".env")
+    _write(account / "brain_settings.json", '{"version": 2}')
+    second = settings_transfer.export_split_settings(account, copy_root, env_path=tmp_path / ".env")
+
+    assert first["public_dir"] == second["public_dir"] == copy_root / "public"
+    assert json.loads((copy_root / "public" / "brain_settings.json").read_text(encoding="utf-8")) == {"version": 2}
+    assert not any(path.is_dir() for path in (copy_root / "public").iterdir())
+    assert not any(path.is_dir() for path in (copy_root / "private").iterdir())
 
 
 def test_discover_accounts_excludes_runtime_directories(tmp_path):

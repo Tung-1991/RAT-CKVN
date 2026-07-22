@@ -3240,7 +3240,7 @@ def build_cache_and_symbols_tab(app, parent):
             if not package:
                 return
             public = settings_transfer.validate_package(package)
-            private_dir = settings_transfer.PRIVATE_COPY_ROOT / public["package_id"]
+            private_dir = settings_transfer.PRIVATE_COPY_ROOT
             private_count = 0
             if (private_dir / "manifest.json").is_file():
                 private_count = len(settings_transfer.validate_package(private_dir)["files"])
