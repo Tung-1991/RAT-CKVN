@@ -38,6 +38,14 @@ class EnvUtilsTests(unittest.TestCase):
         self.assertEqual(values["EXISTING"], "1")
         self.assertEqual(values["DNSE_WS_ENABLED"], "true")
 
+    def test_update_collapses_duplicate_keys_including_stale_blank(self):
+        self._write("DNSE_API_KEY=old\nDNSE_API_KEY=\nOTHER=keep\n")
+        env_utils.update_env({"DNSE_API_KEY": "new"}, path=self.path)
+        values = env_utils.load_env(self.path)
+        self.assertEqual(values["DNSE_API_KEY"], "new")
+        with open(self.path, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read().count("DNSE_API_KEY="), 1)
+
     def test_create_file_when_missing(self):
         os.remove(self.path)
         env_utils.update_env({"DNSE_STOCK_ACCOUNT_NO": "12345"}, path=self.path)

@@ -4323,8 +4323,11 @@ class BotUI(ctk.CTk):
                 spread = ask_v - bid_v
                 spread_cost = spread * f_lot * c_size  # quy ra VND: × khối lượng × giá trị 1 đơn vị giá
                 if settlement.is_cash_stock(sym):
+                    # Spread/CP thường chỉ vài chục VND. Dùng bộ hiển thị "bỏ 000"
+                    # ở đây sẽ làm tròn thành 0 dù tổng spread vẫn đúng.
+                    spread_per_share_vnd = spread * 1000.0
                     spread_part = (
-                        f"Spread: {self._fmt_money(spread * 1000.0)}/CP"
+                        f"Spread: {spread_per_share_vnd:,.0f} VND/CP"
                         f" ({self._fmt_money(spread_cost)})"
                     )
                 else:

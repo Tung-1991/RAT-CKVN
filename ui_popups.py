@@ -2700,6 +2700,24 @@ def build_dnse_account_picker(app, parent):
     # accounts_map: hiển thị -> dict tiểu khoản
     accounts_map = {}
 
+    # Mở lại popup vẫn phải thấy tiểu khoản đã lưu, không tạo cảm giác setting mất.
+    saved_account = str(env_utils.get_env_value("DNSE_ACCOUNT_NO", "") or "").strip()
+    if saved_account:
+        saved_label = f"{saved_account} [đã lưu]"
+        accounts_map[saved_label] = {
+            "id": saved_account,
+            "stock": str(env_utils.get_env_value("DNSE_STOCK_ACCOUNT_NO", "") or "").strip(),
+            "derivative": str(env_utils.get_env_value("DNSE_DERIVATIVE_ACCOUNT_NO", "") or "").strip(),
+            "status": "SAVED",
+            "custody": str(env_utils.get_env_value("DNSE_CUSTODY_CODE", "") or "").strip(),
+        }
+        cbo_account.configure(values=[saved_label])
+        cbo_account.set(saved_label)
+        lbl_status.configure(
+            text=f"Đã lưu tiểu khoản {saved_account}. Bấm 'Tải tài khoản' nếu muốn đổi.",
+            text_color="#81C784",
+        )
+
     def _set_status(text, color="#B0BEC5"):
         lbl_status.configure(text=text, text_color=color)
 
@@ -2767,9 +2785,14 @@ def build_dnse_account_picker(app, parent):
         if not info:
             _set_status("Hãy tải và chọn một tiểu khoản trước.", "#E57373")
             return
+        api_key = e_api_key.get().strip()
+        api_secret = e_api_secret.get().strip()
+        if not api_key or not api_secret:
+            _set_status("Không lưu: API key hoặc API secret đang trống.", "#E57373")
+            return
         updates = {
-            "DNSE_API_KEY": e_api_key.get().strip(),
-            "DNSE_API_SECRET": e_api_secret.get().strip(),
+            "DNSE_API_KEY": api_key,
+            "DNSE_API_SECRET": api_secret,
             "DNSE_ACCOUNT_NO": info["id"],
             "DNSE_STOCK_ACCOUNT_NO": info["stock"],
             "DNSE_DERIVATIVE_ACCOUNT_NO": info["derivative"],
@@ -2780,12 +2803,40 @@ def build_dnse_account_picker(app, parent):
         except Exception as exc:  # noqa: BLE001
             _set_status(f"Không ghi được .env: {exc}", "#E57373")
             return
+
+        # Áp dụng ngay cho connector đang chạy và khởi động lại riêng daemon.
+        # Không cần đóng/mở toàn bộ app chỉ để BRAIN nhận credential mới.
+        try:
+            connector = app.connector
+            connector.api_key = api_key
+            connector.api_secret = api_secret
+            connector.account_no = info["id"]
+            connector.stock_account_no = info["stock"]
+            connector.derivative_account_no = info["derivative"]
+            connector.custody_code = info["custody"]
+            connector.reset_session_caches()
+            connector.connect()
+
+            daemon_process = getattr(app, "daemon_process", None)
+            if daemon_process and getattr(daemon_process, "poll", lambda: None)() is None:
+                daemon_process.terminate()
+                daemon_process.wait(timeout=5)
+            daemon_output = getattr(app, "daemon_output_file", None)
+            if daemon_output and not daemon_output.closed:
+                daemon_output.close()
+            app.daemon_process = None
+            app.start_daemon_process()
+        except Exception as exc:  # noqa: BLE001
+            _set_status(
+                f"Đã lưu đủ .env nhưng kết nối lại chưa thành công: {exc}",
+                "#FFB74D",
+            )
+            return
         warn = ""
-        if str(info["status"]).upper() != "ACTIVE":
+        if str(info["status"]).upper() not in {"ACTIVE", "SAVED"}:
             warn = f" | CẢNH BÁO: phái sinh (CKPS) trạng thái '{info['status']}', chưa sẵn sàng."
         _set_status(
-            f"Đã lưu .env: TK {info['id']} (cơ sở={info['stock'] or '—'}, phái sinh={info['derivative'] or '—'}). "
-            f"Khởi động lại để áp dụng đầy đủ.{warn}",
+            f"Đã lưu đủ API key/secret và TK {info['id']}; đang kết nối lại BRAIN.{warn}",
             "#81C784" if not warn else "#FFB74D",
         )
 

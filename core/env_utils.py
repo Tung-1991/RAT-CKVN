@@ -9,9 +9,11 @@ The functions below preserve unrelated lines, comments and ordering.
 import os
 import re
 import threading
+import uuid
 from typing import Dict, Optional
 
-DEFAULT_ENV_PATH = ".env"
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_ENV_PATH = os.path.join(_PROJECT_ROOT, ".env")
 
 # Writing .env from the UI thread while the daemon may also read it: guard writes.
 _env_lock = threading.Lock()
@@ -62,20 +64,33 @@ def update_env(updates: Dict[str, str], path: str = DEFAULT_ENV_PATH) -> None:
     """
     if not updates:
         return
+    clean_updates = {str(key): str(value) for key, value in updates.items()}
+    for key, value in clean_updates.items():
+        if not _ENV_NAME_RE.fullmatch(key):
+            raise ValueError(f"Invalid environment variable name: {key}")
+        if "\x00" in value or "\r" in value or "\n" in value:
+            raise ValueError(f"Environment value for {key} contains a line break.")
+
     with _env_lock:
         lines = []
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
 
-        remaining = dict(updates)
+        remaining = dict(clean_updates)
+        written = set()
         out_lines = []
         for line in lines:
             stripped = line.strip()
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 key = stripped.split("=", 1)[0].strip()
-                if key in remaining:
-                    out_lines.append(f"{key}={remaining.pop(key)}\n")
+                if key in clean_updates:
+                    # Collapse duplicates: a stale blank duplicate below a newly
+                    # written secret otherwise wins on the next read.
+                    if key not in written:
+                        out_lines.append(f"{key}={clean_updates[key]}\n")
+                        written.add(key)
+                        remaining.pop(key, None)
                     continue
             out_lines.append(line if line.endswith("\n") else line + "\n")
 
@@ -85,10 +100,31 @@ def update_env(updates: Dict[str, str], path: str = DEFAULT_ENV_PATH) -> None:
             for key, val in remaining.items():
                 out_lines.append(f"{key}={val}\n")
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(out_lines)
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        temp_path = os.path.join(
+            parent,
+            f".{os.path.basename(path)}.{os.getpid()}.{uuid.uuid4().hex}.tmp",
+        )
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.writelines(out_lines)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
+        finally:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
 
-    for key, val in updates.items():
+        saved = load_env(path)
+        missing = [key for key, value in clean_updates.items() if saved.get(key) != value]
+        if missing:
+            raise OSError(f"Could not verify saved environment keys: {', '.join(missing)}")
+
+    for key, val in clean_updates.items():
         os.environ[key] = str(val)
 
 
