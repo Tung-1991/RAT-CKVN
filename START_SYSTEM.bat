@@ -1,20 +1,31 @@
 @echo off
 cd /d "%~dp0"
-title RAT6 CKVN - TOTAL RECOVERY
+title RAT6 CKVN
 color 0B
-echo ======================================================
-echo    RAT6 CKVN - TOTAL RECOVERY ACTIVE
-echo ======================================================
-echo.
+
+echo [UPDATE] Dang kiem tra source code moi...
+where git >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] Khong tim thay Git. Chay source hien tai.
+) else (
+    git pull --ff-only origin main
+    if errorlevel 1 echo [WARN] Khong cap nhat duoc. Giu nguyen source hien tai.
+)
+
+if not exist ".\ckvnvenv\Scripts\python.exe" (
+    echo [ERROR] Khong tim thay ckvnvenv\Scripts\python.exe
+    pause
+    exit /b 1
+)
+
+if not exist ".\data\logs" mkdir ".\data\logs"
 
 :loop
-echo [%date% %time%] Khoi chay Toan bo He thong (Venv)...
+echo [%date% %time%] Khoi chay RAT6 CKVN...
 .\ckvnvenv\Scripts\python.exe main.py
 
 echo.
-echo [CRITICAL] Toan bo He thong vua bi tat hoac bi Crash!
-echo [%date% %time%] Ghi log su co va khoi chay lai sau 10 giay...
-echo ------------------------------------------------------
+echo [WARN] App da dong. Tu khoi dong lai sau 10 giay...
 echo [%date% %time%] SYSTEM EXIT DETECTED >> data/logs/system_watchdog.log
-timeout /t 10
+timeout /t 10 /nobreak >nul
 goto loop
