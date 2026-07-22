@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -420,6 +421,9 @@ def main() -> int:
                 target = _choose("TÀI KHOẢN ĐÍCH", discover_accounts())
                 if target and input("Gõ YES để khôi phục: ").upper() == "YES":
                     print(f"Đã khôi phục {import_split_settings(PUBLIC_COPY_ROOT, target)['restored']} file.")
+                    if input("Mở app ngay? (Y/N): ").strip().upper() == "Y":
+                        subprocess.Popen([sys.executable, str(PROJECT_ROOT / "main.py")], cwd=str(PROJECT_ROOT))
+                        return 0
             elif choice == "3":
                 print(validate_package(PUBLIC_COPY_ROOT))
             elif choice == "4":

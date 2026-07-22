@@ -20,6 +20,8 @@ if not exist ".\ckvnvenv\Scripts\python.exe" (
 
 if not exist ".\data\logs" mkdir ".\data\logs"
 
+set "RAT_LAUNCHED_BY_WATCHDOG=1"
+
 :loop
 echo [%date% %time%] Khoi chay RAT6 CKVN...
 .\ckvnvenv\Scripts\python.exe main.py

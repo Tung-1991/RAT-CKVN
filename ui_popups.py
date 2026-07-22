@@ -3190,6 +3190,8 @@ def build_cache_and_symbols_tab(app, parent):
         try:
             import settings_transfer
 
+            if bool(getattr(getattr(app, "var_auto_trade", None), "get", lambda: False)()):
+                raise RuntimeError("Hãy tắt BOT trước khi khôi phục setting.")
             package = settings_transfer.PUBLIC_COPY_ROOT
             if not (package / "manifest.json").is_file():
                 raise FileNotFoundError("Chưa có bản sao. Hãy bấm TẠO BẢN SAO trước.")
@@ -3213,9 +3215,35 @@ def build_cache_and_symbols_tab(app, parent):
             except Exception:
                 pass
             lbl_transfer_msg.configure(
-                text=f"Đã khôi phục {result['restored']} file. Hãy mở lại app.",
+                text=f"Đã khôi phục {result['restored']} file.",
                 text_color="#FFB74D",
             )
+            if messagebox.askyesno(
+                "Khôi phục hoàn tất",
+                "Khởi động lại app ngay để áp dụng toàn bộ setting?",
+                parent=top,
+            ):
+                import subprocess
+                import sys
+
+                project_root = os.path.dirname(os.path.abspath(__file__))
+                main_script = os.path.join(project_root, "main.py")
+                helper = (
+                    "import subprocess,sys,time; "
+                    "time.sleep(3); "
+                    "subprocess.Popen([sys.argv[1], sys.argv[2]], cwd=sys.argv[3])"
+                )
+                if os.environ.get("RAT_LAUNCHED_BY_WATCHDOG") != "1":
+                    subprocess.Popen(
+                        [sys.executable, "-c", helper, sys.executable, main_script, project_root],
+                        cwd=project_root,
+                    )
+                app.on_closing()
+            else:
+                lbl_transfer_msg.configure(
+                    text="Đã khôi phục. Setting mới có hiệu lực đầy đủ ở lần mở app tiếp theo.",
+                    text_color="#FFB74D",
+                )
         except Exception as exc:  # noqa: BLE001
             lbl_transfer_msg.configure(text=f"Không khôi phục được: {exc}", text_color="#E57373")
 
