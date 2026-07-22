@@ -192,6 +192,8 @@ class BotUI(ctk.CTk):
         self.latest_market_context = {}
         self.market_data_health = {}
         self._last_market_health_state = ""
+        self._pending_market_health_state = ""
+        self._pending_market_health_since = 0.0
         # [SANDBOX-FETCH] Fetch context on-demand cho symbol dashboard (mirror ui_bot_strategy)
         self.ctx_fetch_lock = threading.Lock()
         self.ctx_fetch_inflight = set()
@@ -236,24 +238,64 @@ class BotUI(ctk.CTk):
         self._ckcs_auto_retry_after = {"morning": 0.0, "afternoon": 0.0}
         self._api_health_refresh_job = None
 
-        # [V6.9.5] Hiển thị cửa sổ ngay; kết nối DNSE ở luồng nền để không treo UI khi mở app.
+        # Hiển thị cửa sổ ngay và dựng UI từ cấu hình cục bộ. Không chờ DNSE
+        # và không yêu cầu .env phải có sẵn.
         self.connector = DNSEConnector()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self._loading_label = ctk.CTkLabel(
-            self, text="⏳ Đang kết nối DNSE...", font=("Roboto", 22, "bold")
+            self, text="⏳ Đang chuẩn bị giao diện...", font=("Roboto", 22, "bold")
         )
         self._loading_label.place(relx=0.5, rely=0.5, anchor="center")
-        threading.Thread(target=self._bootstrap_connection, daemon=True).start()
+        # Đợi Windows vẽ cửa sổ rồi mới dựng các panel nặng; tuyệt đối không
+        # gọi Tk từ worker thread.
+        self.after_idle(self._bootstrap_connection)
 
     def _bootstrap_connection(self):
-        """Luồng nền: kết nối DNSE và lấy thông tin tài khoản (I/O mạng, có thể chậm)."""
-        acc_info = None
-        try:
-            self.connector.connect()
-            acc_info = self.connector.get_account_info()
-        except Exception as exc:
-            self.log_message(f"⚠️ Lỗi kết nối DNSE: {exc}", error=True)
-        self.after(0, lambda: self._finish_init(acc_info))
+        """Dựng UI mà không gọi mạng DNSE.
+
+        Connector và daemon tự kết nối sau khi giao diện đã sẵn sàng. Bản cài
+        mới vì vậy vẫn vào được Advanced để nhập API key/secret và vẫn dùng
+        được PAPER khi DNSE chưa được cấu hình.
+        """
+        configured = bool(
+            getattr(self.connector, "api_key", "")
+            and getattr(self.connector, "api_secret", "")
+            and getattr(self.connector, "account_no", "")
+        )
+        paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+        account_no = str(getattr(self.connector, "account_no", "") or "PAPER")
+        initial_balance = (
+            float(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0) or 0.0)
+            if paper_mode
+            else 0.0
+        )
+        acc_info = {
+            "login": account_no,
+            "server": "DNSE_CONFIGURED_PENDING" if configured else "DNSE_NOT_CONFIGURED",
+            "status": "PAPER" if paper_mode else ("CONNECTING" if configured else "NOT_CONFIGURED"),
+            "balance": initial_balance,
+            "equity": initial_balance,
+            "margin": 0.0,
+            "free_margin": initial_balance,
+            "margin_free": initial_balance,
+            "cash_available": initial_balance,
+            "buying_power": initial_balance,
+            "stock_cash": initial_balance,
+            "deriv_avail": 0.0,
+        }
+        self._finish_init(acc_info)
+        if configured:
+            # connect() chỉ cập nhật connector cục bộ; request mạng thật chạy
+            # trong các luồng nền sau khi UI đã hiện.
+            try:
+                self.connector.connect()
+            except Exception as exc:
+                self.log_message(f"⚠️ DNSE chưa kết nối: {exc}", error=True)
+        else:
+            self.log_message(
+                "⚠️ DNSE chưa được cấu hình. PAPER vẫn chạy; vào Advanced để nhập API key/secret.",
+                target="manual",
+            )
 
     def _finish_init(self, acc_info):
         """UI thread: dựng workspace, panel và khởi động dịch vụ sau khi đã kết nối."""
@@ -511,6 +553,43 @@ class BotUI(ctk.CTk):
             except Exception as e:
                 self.log_message(f"Lỗi Reload JSON: {e}", error=True)
 
+    def _market_health_log_event(self, new_state, now=None):
+        """Gộp trạng thái WS thoáng qua lúc khởi động; trả về (nội dung, là_lỗi)."""
+        now = time.time() if now is None else float(now)
+        new_state = str(new_state or "RECOVERING").upper()
+        unavailable = new_state in ("RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN")
+        previous = str(getattr(self, "_last_market_health_state", "") or "").upper()
+
+        if unavailable:
+            pending = str(getattr(self, "_pending_market_health_state", "") or "").upper()
+            if pending != new_state:
+                self._pending_market_health_state = new_state
+                self._pending_market_health_since = now
+                return None
+            grace = max(
+                0.0,
+                float(getattr(config, "DNSE_MARKET_WARNING_GRACE_SECONDS", 5.0) or 0.0),
+            )
+            started = float(getattr(self, "_pending_market_health_since", now) or now)
+            if now - started < grace or previous == new_state:
+                return None
+            self._last_market_health_state = new_state
+            self._pending_market_health_state = ""
+            self._pending_market_health_since = 0.0
+            return (
+                f"[MARKET DATA] {new_state}: BOT không mở lệnh mới; giá cache được đánh dấu GIÁ CŨ.",
+                True,
+            )
+
+        self._pending_market_health_state = ""
+        self._pending_market_health_since = 0.0
+        if previous == new_state:
+            return None
+        self._last_market_health_state = new_state
+        if previous in ("RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"):
+            return (f"[MARKET DATA] Đã phục hồi: {new_state}.", False)
+        return None
+
     def update_brain_heartbeat(self, heartbeat: dict):
         self.brain_status = heartbeat.get("status", "UNKNOWN")
         self.brain_wakeup_time = heartbeat.get("wakeup_time", 0)
@@ -519,20 +598,14 @@ class BotUI(ctk.CTk):
         if isinstance(health, dict) and health:
             self.market_data_health = health
             new_state = str(health.get("market_state") or "RECOVERING").upper()
-            if new_state != self._last_market_health_state:
-                previous = self._last_market_health_state
-                self._last_market_health_state = new_state
-                if new_state in ("RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"):
-                    self.log_message(
-                        f"[MARKET DATA] {new_state}: BOT không mở lệnh mới; giá cache được đánh dấu GIÁ CŨ.",
-                        error=True,
-                        target="api-health",
-                    )
-                elif previous:
-                    self.log_message(
-                        f"[MARKET DATA] Đã phục hồi: {new_state}.",
-                        target="api-health",
-                    )
+            event = self._market_health_log_event(new_state)
+            if event:
+                message, is_error = event
+                self.log_message(
+                    message,
+                    error=is_error,
+                    target="api-health",
+                )
 
         contexts = heartbeat.get("contexts", {})
         if contexts:
@@ -4023,7 +4096,7 @@ class BotUI(ctk.CTk):
                 "RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"
             )
             self.lbl_dashboard_price.configure(
-                text=f"{self._fmt_price(cur_price, sym)}{' · GIÁ CŨ' if is_stale_price else ''}",
+                text=self._fmt_price(cur_price, sym),
                 text_color="#FFB300" if is_stale_price else (COL_GREEN if cur_price >= self.last_price_val else COL_RED),
             )
             self.last_price_val = cur_price

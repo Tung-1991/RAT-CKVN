@@ -121,6 +121,166 @@ class TradeManager:
                 pass
         return "LIVE"
 
+    def _market_pause_warning_due(self, market_state, now=None):
+        """Chỉ hiện cảnh báo khi mất giá kéo dài, tránh báo đỏ lúc WS vừa khởi động."""
+        now = time.time() if now is None else float(now)
+        unavailable = str(market_state or "").upper() in {
+            "RECOVERING",
+            "MARKET DATA DOWN",
+            "MARKET_DATA_DOWN",
+        }
+        if not unavailable:
+            self._market_pause_started_ts = 0.0
+            return False
+
+        started = float(getattr(self, "_market_pause_started_ts", 0.0) or 0.0)
+        if not started:
+            self._market_pause_started_ts = now
+            return False
+
+        grace = max(
+            0.0,
+            float(getattr(config, "DNSE_MARKET_WARNING_GRACE_SECONDS", 5.0) or 0.0),
+        )
+        if now - started < grace:
+            return False
+
+        last_log = float(getattr(self, "_market_pause_log_ts", 0.0) or 0.0)
+        if now - last_log < 60.0:
+            return False
+        self._market_pause_log_ts = now
+        return True
+
+    def _record_closed_trade_history(
+        self,
+        ticket,
+        symbol,
+        direction,
+        volume,
+        entry_price,
+        net_pnl,
+        reason,
+        closed_info,
+    ):
+        """Đưa biên nhận đóng PAPER vào lịch sử chi tiết và gói BOT Advisor."""
+        if not isinstance(closed_info, dict):
+            return False
+
+        s_ticket = str(ticket)
+        fee = abs(float(closed_info.get("fee", closed_info.get("commission", 0.0)) or 0.0))
+        # Lịch sử lưu lãi/lỗ trước phí và phí âm để tổng hai cột ra đúng tiền ròng.
+        gross_pnl = float(net_pnl or 0.0) + fee
+        excursion = self.state.get("trade_excursions", {}).get(s_ticket, {}) or {}
+        open_ts = float(closed_info.get("open_time", 0.0) or 0.0)
+        close_ts = float(closed_info.get("closed_at", 0.0) or 0.0)
+        open_time = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(open_ts))
+            if open_ts
+            else ""
+        )
+        close_time = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(close_ts))
+            if close_ts
+            else ""
+        )
+        mae = closed_info.get("mae", excursion.get("mae", excursion.get("mae_usd")))
+        mfe = closed_info.get("mfe", excursion.get("mfe", excursion.get("mfe_usd")))
+        mae = min(float(mae), float(net_pnl or 0.0)) if mae is not None else float(net_pnl or 0.0)
+        mfe = max(float(mfe), float(net_pnl or 0.0)) if mfe is not None else float(net_pnl or 0.0)
+        append_trade_log(
+            s_ticket,
+            str(symbol or closed_info.get("symbol", "")).upper(),
+            str(direction or "BUY").upper(),
+            float(volume or closed_info.get("volume", 0.0) or 0.0),
+            float(entry_price or closed_info.get("price_open", 0.0) or 0.0),
+            float(closed_info.get("sl", self.state.get("trade_sl", {}).get(s_ticket, 0.0)) or 0.0),
+            float(closed_info.get("tp", self.state.get("trade_tp", {}).get(s_ticket, 0.0)) or 0.0),
+            -fee,
+            gross_pnl,
+            str(reason or closed_info.get("reason", "CLOSED")),
+            market_mode=str(closed_info.get("market_mode", "PAPER") or "PAPER"),
+            trigger_signal=str(closed_info.get("history_source", "CLOSED_RECEIPT") or "CLOSED_RECEIPT"),
+            session_id=str(self.state.get("current_session_id", "LEGACY") or "LEGACY"),
+            open_time_str=open_time,
+            mae_usd=mae,
+            mfe_usd=mfe,
+            close_time_str=close_time,
+            exit_price=float(closed_info.get("price_close", 0.0) or 0.0),
+        )
+        return True
+
+    @staticmethod
+    def _dnse_datetime_timestamp(value):
+        if not value:
+            return 0.0
+        try:
+            from datetime import datetime
+
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed.timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _build_real_closed_receipt(self, ticket, symbol, direction, volume, entry_price, close_price=0.0):
+        detail = None
+        getter = getattr(self.connector, "get_position_detail", None)
+        if callable(getter):
+            try:
+                detail = getter(ticket, symbol)
+            except Exception:
+                detail = None
+        detail = detail if isinstance(detail, dict) else {}
+
+        exact_close = float(
+            detail.get("averageClosePrice", detail.get("closePrice", detail.get("priceClose", 0.0)))
+            or 0.0
+        )
+        exact_entry = float(
+            detail.get("averageCostPrice", detail.get("costPrice", detail.get("priceOpen", 0.0)))
+            or entry_price
+            or 0.0
+        )
+        exact_volume = float(
+            detail.get("closedQuantity", detail.get("accumulateQuantity", detail.get("quantity", 0.0)))
+            or volume
+            or 0.0
+        )
+        if exact_entry <= 0 or exact_close <= 0 or exact_volume <= 0:
+            return None
+
+        gross_pnl = float(
+            self.connector.calculate_profit(symbol, direction, exact_volume, exact_entry, exact_close)
+            or 0.0
+        )
+        open_side = str(direction or "BUY").upper()
+        close_side = "SELL" if open_side in ("BUY", "LONG", "NB", "0") else "BUY"
+        fee = 0.0
+        calculate_fee = getattr(self.connector, "calculate_trade_fee", None)
+        if callable(calculate_fee):
+            try:
+                fee += float(calculate_fee(symbol, exact_entry, exact_volume, side=open_side) or 0.0)
+                fee += float(calculate_fee(symbol, exact_close, exact_volume, side=close_side) or 0.0)
+            except Exception:
+                fee = 0.0
+
+        excursion = self.state.get("trade_excursions", {}).get(str(ticket), {}) or {}
+        net_pnl = gross_pnl - fee
+        return {
+            "ticket": str(ticket),
+            "symbol": str(symbol).upper(),
+            "volume": exact_volume,
+            "price_open": exact_entry,
+            "price_close": exact_close,
+            "fee": fee,
+            "profit": net_pnl,
+            "mae": min(float(excursion.get("mae", excursion.get("mae_usd", net_pnl)) or net_pnl), net_pnl),
+            "mfe": max(float(excursion.get("mfe", excursion.get("mfe_usd", net_pnl)) or net_pnl), net_pnl),
+            "open_time": self._dnse_datetime_timestamp(detail.get("createdDate")),
+            "closed_at": self._dnse_datetime_timestamp(detail.get("modifiedDate")) or time.time(),
+            "market_mode": "ANY",
+            "history_source": "DNSE_POSITION_DETAIL",
+        }
+
     def _estimate_round_trip_cost_per_unit(
         self, symbol, entry_price, stop_price, entry_side, sym_info=None
     ):
@@ -1893,11 +2053,11 @@ class TradeManager:
                     if isinstance(all_market_contexts, dict) and sym in all_market_contexts:
                         close_p = float(all_market_contexts[sym].get("current_price", open_p))
                     
+                    closed_info = None
                     if paper_mode:
                         # PAPER broker là nguồn duy nhất biết giá đóng và phí thật của lệnh.
                         # Không có biên nhận nghĩa là ticket theo dõi cũ/stale, không được
                         # tự bịa PNL từ giá hiện tại.
-                        closed_info = None
                         try:
                             closed_info = self.connector.get_paper_closed_trade(s_ticket)
                         except Exception:
@@ -1909,21 +2069,35 @@ class TradeManager:
                                 target="bot-log",
                             )
                     else:
-                        try:
-                            real_pnl = float(
-                                self.connector.calculate_profit(
-                                    sym, dir_str, vol, open_p, close_p
+                        retry_at = self.state.setdefault("closed_history_retry_at", {})
+                        now = time.time()
+                        if now < float(retry_at.get(s_ticket, 0.0) or 0.0):
+                            continue
+                        retry_at[s_ticket] = now + 10.0
+                        closed_info = self._build_real_closed_receipt(
+                            s_ticket,
+                            sym,
+                            dir_str,
+                            vol,
+                            open_p,
+                            close_p,
+                        )
+                        if closed_info:
+                            close_p = float(closed_info.get("price_close", close_p) or close_p)
+                            open_p = float(closed_info.get("price_open", open_p) or open_p)
+                            vol = float(closed_info.get("volume", vol) or vol)
+                            real_pnl = float(closed_info.get("profit", 0.0) or 0.0)
+                        else:
+                            retry_logs = self.state.setdefault("closed_history_retry_logs", {})
+                            if now - float(retry_logs.get(s_ticket, 0.0) or 0.0) >= 60.0:
+                                self.log(
+                                    f"[HISTORY] Đang chờ DNSE trả giá vốn/giá đóng lệnh REAL #{s_ticket}; chưa tự dựng PnL từ giá cache.",
+                                    error=True,
+                                    target="bot-log",
                                 )
-                                or 0.0
-                            )
-                        except Exception:
-                            point_value = (
-                                getattr(self.connector.get_symbol_info(sym), "trade_contract_size", 1.0)
-                                if self.connector
-                                else 1.0
-                            )
-                            diff = (close_p - open_p) if dir_str == "BUY" else (open_p - close_p)
-                            real_pnl = diff * float(point_value or 1.0) * vol
+                                retry_logs[s_ticket] = now
+                            save_state(self.state)
+                            continue
                     
                     # [FIX] Phân loại lệnh dựa trên magic number thay vì gán cứng
                     _magic = int(self.state.get("trade_magics", {}).get(s_ticket, 0))
@@ -1945,8 +2119,30 @@ class TradeManager:
                             self.state["bot_losing_streak"] = 0
                             symbol_streaks[sym] = 0
                             
-                    exit_reason = self.state.get("exit_reasons", {}).get(s_ticket, "Closed")
+                    exit_reason = self.state.get("exit_reasons", {}).get(s_ticket, "")
+                    if not exit_reason and closed_info:
+                        exit_reason = str(closed_info.get("reason", "") or "")
+                    exit_reason = exit_reason or "Closed"
                     self.state.setdefault("last_close_times", {})[sym] = time.time()
+
+                    if closed_info:
+                        try:
+                            self._record_closed_trade_history(
+                                s_ticket,
+                                sym,
+                                dir_str,
+                                vol,
+                                open_p,
+                                real_pnl,
+                                exit_reason,
+                                closed_info,
+                            )
+                        except Exception as exc:
+                            self.log(
+                                f"[HISTORY] Không ghi được lệnh PAPER #{s_ticket}: {exc}",
+                                error=True,
+                                target="bot-log",
+                            )
                     
                     pnl_sign = "+" if real_pnl >= 0 else ""
                     self.log(
@@ -1978,6 +2174,8 @@ class TradeManager:
                         "last_tsl_rules",
                         "trade_excursions",
                         "trade_margin_meta",
+                        "closed_history_retry_at",
+                        "closed_history_retry_logs",
                         "be_sl_arms",
                         "rev_confirmations",
                     ]:
@@ -2051,15 +2249,14 @@ class TradeManager:
             price_management_paused = market_state in {
                 "RECOVERING", "MARKET DATA DOWN", "MARKET_DATA_DOWN"
             }
-            if price_management_paused:
-                now = time.time()
-                if now - float(getattr(self, "_market_pause_log_ts", 0.0) or 0.0) >= 60.0:
-                    self.log(
-                        f"[MARKET DATA] {market_state}: tạm dừng TSL/REV/ANTI-CASH cần giá; vẫn đồng bộ lệnh và vị thế.",
-                        error=True,
-                        target="bot",
-                    )
-                    self._market_pause_log_ts = now
+            if price_management_paused and self._market_pause_warning_due(market_state):
+                self.log(
+                    f"[MARKET DATA] {market_state}: tạm dừng TSL/REV/ANTI-CASH cần giá; vẫn đồng bộ lệnh và vị thế.",
+                    error=True,
+                    target="bot",
+                )
+            elif not price_management_paused:
+                self._market_pause_warning_due(market_state)
 
             # ATC-exit: đóng vị thế BOT ở phiên ATC cuối ngày (nếu bật BOT_ATC_EXIT). 1 lần/ngày/ticket.
             try:

@@ -40,6 +40,15 @@ def test_paper_open_modify_close_buy(monkeypatch, tmp_path):
     closed = broker.get_closed_trade(result.position_id)
     assert closed["symbol"] == "VN30F1M"
     assert closed["profit"] > 0
+    assert closed["type"] == ORDER_TYPE_BUY
+    assert closed["fee"] > 0
+    assert closed["open_time"] > 0
+    assert closed["price_close"] == pos.price_current
+    assert closed["mae"] <= closed["profit"]
+    assert broker.get_closed_trades()[0]["ticket"] == result.position_id
+    day = __import__("datetime").datetime.fromtimestamp(closed["closed_at"]).strftime("%Y-%m-%d")
+    assert broker.delete_closed_trades_for_day(day) == 1
+    assert broker.get_closed_trades() == []
 
 
 def test_paper_sell_stop_take_profit(monkeypatch, tmp_path):

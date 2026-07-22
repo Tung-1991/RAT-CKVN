@@ -574,11 +574,11 @@ def release_expired_safeguard_brakes(state: Dict[str, Any], now=None) -> bool:
     state["active_brake"] = brake
     return changed
 
-def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee, pnl, close_reason, market_mode="ANY", trigger_signal="UNK", session_id="LEGACY", open_time_str="", mae_usd=0.0, mfe_usd=0.0):
+def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee, pnl, close_reason, market_mode="ANY", trigger_signal="UNK", session_id="LEGACY", open_time_str="", mae_usd=0.0, mfe_usd=0.0, close_time_str="", exit_price=0.0):
     _state_lock.acquire()
     try:
         file_exists = os.path.isfile(MASTER_LOG_FILE)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
+        now_str = close_time_str or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         time_display = f"{open_time_str[11:]} -> {now_str[11:]}" if open_time_str else now_str
         open_time_full, close_time_full = _derive_trade_times(
             time_display, session_id, open_time_str=open_time_str, close_time_str=now_str
@@ -586,21 +586,23 @@ def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee,
         header = [
             "Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP", "Fee",
             "PnL ($)", "Reason", "Market Mode", "Trigger", "Session_ID", "MAE ($)",
-            "MFE ($)", "Open Time", "Close Time",
+            "MFE ($)", "Open Time", "Close Time", "Exit Price",
         ]
         new_row = [
             time_display, ticket, symbol, type_str, volume,
             f"{entry_price:.5f}", f"{sl:.5f}", f"{tp:.5f}", f"{fee:.2f}",
             f"{pnl:.2f}", close_reason, market_mode, trigger_signal, session_id,
             f"{mae_usd:.2f}", f"{mfe_usd:.2f}", open_time_full, close_time_full,
+            f"{float(exit_price or 0.0):.5f}",
         ]
 
         def reason_rank(reason):
-            if reason in ("Manual_Close", "Watermark_Hit", "Basket_Drawdown_Hit"):
+            normalized = str(reason or "").strip().upper()
+            if normalized in ("MANUAL_CLOSE", "WATERMARK_HIT", "BASKET_DRAWDOWN_HIT"):
                 return 100
-            if reason.startswith("SL_") or reason in ("Hit_TP", "Basket_TP", "Basket_TP_Order_Loss", "Hit_SL", "Stop_Out"):
+            if normalized.startswith("SL_") or normalized in ("HIT_TP", "BASKET_TP", "BASKET_TP_ORDER_LOSS", "HIT_SL", "STOP_OUT", "SL", "TP"):
                 return 80
-            if reason in ("Bot_Close", "Closed"):
+            if normalized in ("BOT_CLOSE", "CLOSED"):
                 return 10
             return 50
 
@@ -612,7 +614,7 @@ def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee,
                 rows = [r for r in reader if r]
                 if existing_header:
                     header = existing_header
-                    for col in ["MAE ($)", "MFE ($)", "Open Time", "Close Time"]:
+                    for col in ["MAE ($)", "MFE ($)", "Open Time", "Close Time", "Exit Price"]:
                         if col not in header:
                             header.append(col)
                     idx = {name: i for i, name in enumerate(header)}
@@ -677,6 +679,8 @@ def append_trade_log(ticket, symbol, type_str, volume, entry_price, sl, tp, fee,
                 open_time_str=open_time_str,
                 mae_usd=mae_usd,
                 mfe_usd=mfe_usd,
+                exit_time=close_time_full,
+                exit_price=exit_price,
                 state=load_state(),
             )
         except Exception:
@@ -710,6 +714,60 @@ def delete_session_log(session_id: str):
             writer.writerows(rows)
     except:
         pass
+
+
+def _master_row_close_day(row, header):
+    index = {name: idx for idx, name in enumerate(header or [])}
+    close_idx = index.get("Close Time")
+    if close_idx is not None and close_idx < len(row) and row[close_idx]:
+        try:
+            return datetime.fromisoformat(str(row[close_idx]).replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    session_idx = index.get("Session_ID", 13)
+    session_id = str(row[session_idx] if session_idx < len(row) else "")
+    digits = "".join(ch for ch in session_id if ch.isdigit())[:8]
+    if len(digits) == 8:
+        try:
+            return datetime.strptime(digits, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    time_idx = index.get("Time", 0)
+    value = str(row[time_idx] if time_idx < len(row) else "")
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def delete_history_day(day: str) -> int:
+    """Xóa các dòng lịch sử chi tiết theo đúng ngày đóng lệnh."""
+    try:
+        target = datetime.strptime(str(day or "").strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return 0
+    if not os.path.exists(MASTER_LOG_FILE):
+        return 0
+    with _state_lock:
+        try:
+            with open(MASTER_LOG_FILE, mode="r", newline="", encoding="utf-8") as handle:
+                reader = csv.reader(handle)
+                header = next(reader, None)
+                if not header:
+                    return 0
+                rows = [row for row in reader if row]
+            kept = [row for row in rows if _master_row_close_day(row, header) != target]
+            removed = len(rows) - len(kept)
+            if removed:
+                tmp_path = f"{MASTER_LOG_FILE}.tmp"
+                with open(tmp_path, mode="w", newline="", encoding="utf-8") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(header)
+                    writer.writerows(kept)
+                os.replace(tmp_path, MASTER_LOG_FILE)
+            return removed
+        except (OSError, csv.Error):
+            return 0
 
 def save_daily_history_to_csv(prev_date, pnl, trades_count, win_streak, lose_streak):
     file_exists = os.path.isfile(HISTORY_FILE)

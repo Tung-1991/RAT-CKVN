@@ -348,6 +348,12 @@ class DNSEConnector:
             return None
         return self._paper().get_closed_trade(ticket)
 
+    def get_paper_closed_trades(self) -> List[Dict[str, Any]]:
+        return self._paper().get_closed_trades()
+
+    def delete_paper_closed_trades_for_day(self, day: str) -> int:
+        return self._paper().delete_closed_trades_for_day(day)
+
     def reset_session_caches(self):
         """Xoá cache tài khoản/vị thế — gọi khi đổi PAPER<->REAL để lần đọc sau lấy số liệu mới
         (không cần restart app). Token + market-data cache giữ nguyên."""
@@ -1171,6 +1177,21 @@ class DNSEConnector:
             return None
         payload = _unwrap_payload(data)
         return payload if isinstance(payload, dict) else {"raw": data}
+
+    def get_position_detail(self, position_id: Any, symbol: str = "") -> Optional[Dict[str, Any]]:
+        if self._is_paper_mode():
+            return None
+        market_type = self.market_type_for_symbol(symbol) if symbol else "DERIVATIVE"
+        ok, data, status_code, message = self._request(
+            "GET",
+            f"/accounts/positions/{position_id}",
+            params={"marketType": market_type},
+        )
+        if not ok:
+            logger.error("DNSE position detail failed [%s]: %s", status_code, message or data)
+            return None
+        payload = _unwrap_payload(data)
+        return payload if isinstance(payload, dict) else None
 
     def _position_from_raw(self, item: Dict[str, Any]) -> BrokerPosition:
         side = str(_first_value(item, ("side", "positionSide", "type", "positionType"), "")).upper()

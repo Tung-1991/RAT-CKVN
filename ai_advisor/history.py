@@ -426,6 +426,7 @@ def record_closed_trade(
     mae_usd=0.0,
     mfe_usd=0.0,
     exit_time=None,
+    exit_price=0.0,
     state=None,
     warn_missing_snapshot=True,
 ):
@@ -471,7 +472,7 @@ def record_closed_trade(
             exit_time,
             hold_seconds,
             entry_price,
-            "",
+            exit_price,
             sl,
             tp,
             fee,
@@ -550,6 +551,7 @@ def sync_from_master_csv():
                     mae_usd=row_map.get("MAE ($)", row[14] if len(row) > 14 else 0.0),
                     mfe_usd=row_map.get("MFE ($)", row[15] if len(row) > 15 else 0.0),
                     exit_time=close_time,
+                    exit_price=row_map.get("Exit Price", 0.0),
                     warn_missing_snapshot=False,
                 )
                 count += 1

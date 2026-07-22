@@ -201,14 +201,24 @@ class PaperBroker:
     def _record_closed_trade(self, position: BrokerPosition, reason: str) -> None:
         ticket = str(position.ticket)
         closed = self.state.setdefault("closed_trades", {})
+        raw = position.raw or {}
+        mae_value = raw.get("mae", position.profit)
+        mfe_value = raw.get("mfe", position.profit)
         closed[ticket] = {
             "ticket": ticket,
             "symbol": position.symbol,
+            "type": int(position.type),
             "volume": float(position.volume or 0.0),
             "price_open": float(position.price_open or 0.0),
             "price_close": float(position.price_current or 0.0),
+            "sl": float(position.sl or 0.0),
+            "tp": float(position.tp or 0.0),
+            "fee": float(position.commission or 0.0),
             "profit": float(position.profit or 0.0),
+            "mae": float(mae_value if mae_value is not None else position.profit or 0.0),
+            "mfe": float(mfe_value if mfe_value is not None else position.profit or 0.0),
             "reason": str(reason or "CLOSED"),
+            "open_time": float(position.time or 0.0),
             "closed_at": time.time(),
         }
         # Chỉ cần giữ lịch sử gần nhất để file PAPER không phình vô hạn.
@@ -219,6 +229,35 @@ class PaperBroker:
     def get_closed_trade(self, ticket: Any) -> Optional[Dict[str, Any]]:
         item = self.state.get("closed_trades", {}).get(str(ticket))
         return dict(item) if isinstance(item, dict) else None
+
+    def get_closed_trades(self) -> List[Dict[str, Any]]:
+        rows = [
+            dict(item)
+            for item in self.state.get("closed_trades", {}).values()
+            if isinstance(item, dict)
+        ]
+        return sorted(rows, key=lambda item: float(item.get("closed_at", 0.0) or 0.0), reverse=True)
+
+    def delete_closed_trades_for_day(self, day: str) -> int:
+        target = str(day or "").strip()
+        try:
+            target = datetime.strptime(target, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return 0
+        closed = self.state.get("closed_trades", {})
+        kept = {}
+        removed = 0
+        for ticket, item in closed.items():
+            closed_at = float((item or {}).get("closed_at", 0.0) or 0.0)
+            item_day = datetime.fromtimestamp(closed_at).strftime("%Y-%m-%d") if closed_at else ""
+            if item_day == target:
+                removed += 1
+            else:
+                kept[ticket] = item
+        if removed:
+            self.state["closed_trades"] = kept
+            self._save_state()
+        return removed
 
     def _get_tick(self, symbol: str) -> Optional[BrokerTick]:
         if self.tick_provider:

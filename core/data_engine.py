@@ -116,7 +116,11 @@ class DataEngine:
         row["source"] = str(source or row.get("source") or "CACHE").upper()
         row["market_state"] = str(state or row.get("market_state") or "RECOVERING").upper()
         row["age_seconds"] = max(0.0, now - row["timestamp"])
-        row["freshness"] = "LIVE" if row["market_state"] in ("LIVE", "REST FALLBACK", "REST_FALLBACK") else "STALE"
+        # Cache luôn là GIÁ CŨ, kể cả khi kết nối WebSocket toàn hệ thống
+        # vẫn LIVE nhờ các mã khác.
+        live_source = row["source"] in ("WS", "REST")
+        live_state = row["market_state"] in ("LIVE", "REST FALLBACK", "REST_FALLBACK")
+        row["freshness"] = "LIVE" if live_source and live_state else "STALE"
         row["stale"] = row["freshness"] != "LIVE"
         return row
 
@@ -717,6 +721,11 @@ class DataEngine:
         if ws_enabled:
             self._ensure_ws_symbol(symbol)
             ws_connected = bool(market_ws.is_connected())
+            if ws_connected:
+                # Trạng thái toàn hệ thống phản ánh sức khỏe kết nối, không phản
+                # ánh việc từng mã đã kịp có tick hay chưa.
+                self._ws_unavailable_since = 0.0
+                self._set_market_state("LIVE", "WebSocket connected")
             ws_tick = market_ws.latest_tick(symbol)
             try:
                 ws_generation = int((market_ws.snapshot() or {}).get("connection_generation", 0) or 0)
@@ -728,8 +737,6 @@ class DataEngine:
                 # nguồn sống, không phải tuổi của riêng tick đó.
                 tick = self._decorate_tick(ws_tick, "WS", "LIVE")
                 self._last_tick[symbol] = tick
-                self._ws_unavailable_since = 0.0
-                self._set_market_state("LIVE", "WebSocket healthy")
                 self.cache_stats["ws_hits"] += 1
                 return tick
 
@@ -743,7 +750,10 @@ class DataEngine:
                     self._ws_unavailable_since = now
                 waiting_since = self._ws_unavailable_since
             if (now - waiting_since) < fallback_delay:
-                self._set_market_state("RECOVERING", "waiting for WebSocket")
+                # Socket khỏe nhưng riêng mã này chưa có tick: chỉ đánh dấu
+                # tick của mã là RECOVERING, không hạ cả hệ thống.
+                if not ws_connected:
+                    self._set_market_state("RECOVERING", "waiting for WebSocket")
                 return self._decorate_tick(self._last_tick.get(symbol), "CACHE", "RECOVERING")
 
         # Warm-up chỉ dùng để thiết lập WebSocket. REST market data chỉ được gọi khi
@@ -757,7 +767,8 @@ class DataEngine:
             self.cache_stats["tick_hits"] += 1
             return self._decorate_tick(cached, cached.get("source", "CACHE"), self._market_state)
         if not self._claim_rest_symbol_budget():
-            return self._decorate_tick(cached, "CACHE", self._market_state)
+            symbol_state = "RECOVERING" if ws_connected else self._market_state
+            return self._decorate_tick(cached, "CACHE", symbol_state)
         self.cache_stats["tick_misses"] += 1
         tick_data = {"symbol": symbol}
         try:
@@ -801,7 +812,10 @@ class DataEngine:
             if "last" in tick_data or "bid" in tick_data:
                 tick_data = self._decorate_tick(tick_data, "REST", "REST FALLBACK")
                 self._last_tick[symbol] = tick_data
-                self._set_market_state("REST FALLBACK", "WebSocket unavailable")
+                # REST chỉ dự phòng cho riêng mã thiếu tick nếu socket vẫn khỏe.
+                # Chỉ đổi trạng thái toàn hệ thống khi WebSocket thực sự mất.
+                if not ws_connected:
+                    self._set_market_state("REST FALLBACK", "WebSocket unavailable")
                 self.cache_stats["rest_fallbacks"] += 1
                 return tick_data
                 

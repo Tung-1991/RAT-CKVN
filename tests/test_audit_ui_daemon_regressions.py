@@ -57,6 +57,30 @@ def test_botui_has_no_duplicate_method_definitions():
     assert duplicates == []
 
 
+def test_bootstrap_without_dnse_builds_ui_without_network(monkeypatch):
+    app = main.BotUI.__new__(main.BotUI)
+    app.connector = SimpleNamespace(
+        api_key="",
+        api_secret="",
+        account_no="",
+        connect=lambda: pytest.fail("bootstrap must not connect before UI"),
+        get_account_info=lambda: pytest.fail("bootstrap must not call DNSE before UI"),
+    )
+    initialized = []
+    logs = []
+    app._finish_init = lambda account: initialized.append(account)
+    app.log_message = lambda *args, **kwargs: logs.append((args, kwargs))
+    monkeypatch.setattr(main.config, "PAPER_TRADING", True)
+    monkeypatch.setattr(main.config, "PAPER_INITIAL_BALANCE", 100000000.0)
+
+    main.BotUI._bootstrap_connection(app)
+
+    assert initialized[0]["login"] == "PAPER"
+    assert initialized[0]["server"] == "DNSE_NOT_CONFIGURED"
+    assert initialized[0]["balance"] == 100000000.0
+    assert any("Advanced" in item[0][0] for item in logs)
+
+
 def test_manual_ato_is_rejected_outside_ato_session(monkeypatch):
     app, calls = _manual_mode_app()
     monkeypatch.setattr(market_hours, "market_session_phase", lambda _symbol: ("OPEN", "Mở"))
@@ -587,3 +611,29 @@ def test_header_pnl_includes_realized_and_open_positions():
     assert realized == 50000.0
     assert floating == -660937.0
     assert total == -610937.0
+
+
+def test_market_health_startup_recovery_is_not_logged(monkeypatch):
+    app = main.BotUI.__new__(main.BotUI)
+    app._last_market_health_state = ""
+    app._pending_market_health_state = ""
+    app._pending_market_health_since = 0.0
+    monkeypatch.setattr(config, "DNSE_MARKET_WARNING_GRACE_SECONDS", 5.0, raising=False)
+
+    assert app._market_health_log_event("RECOVERING", now=100.0) is None
+    assert app._market_health_log_event("LIVE", now=102.0) is None
+    assert app._last_market_health_state == "LIVE"
+
+
+def test_market_health_persistent_outage_and_recovery_are_logged(monkeypatch):
+    app = main.BotUI.__new__(main.BotUI)
+    app._last_market_health_state = "LIVE"
+    app._pending_market_health_state = ""
+    app._pending_market_health_since = 0.0
+    monkeypatch.setattr(config, "DNSE_MARKET_WARNING_GRACE_SECONDS", 5.0, raising=False)
+
+    assert app._market_health_log_event("RECOVERING", now=100.0) is None
+    event = app._market_health_log_event("RECOVERING", now=106.0)
+    assert event and event[1] is True
+    recovered = app._market_health_log_event("LIVE", now=107.0)
+    assert recovered and recovered[1] is False

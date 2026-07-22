@@ -121,6 +121,62 @@ def test_owner_waits_before_rest_fallback(monkeypatch):
     assert calls == ["trade", "quote"]
 
 
+def test_healthy_ws_missing_one_symbol_keeps_global_live(monkeypatch):
+    calls = []
+    ws = SimpleNamespace(
+        available=True,
+        is_running=lambda: True,
+        is_connected=lambda: True,
+        set_market_data_enabled=lambda _enabled: None,
+        start=lambda: True,
+        subscribe=lambda _symbols: None,
+        latest_tick=lambda _symbol: None,
+        snapshot=lambda: {"connection_generation": 1},
+    )
+    api = SimpleNamespace(
+        get_latest_trade=lambda _s: calls.append("trade") or {"matchPrice": 10.0},
+        get_latest_quote=lambda _s: calls.append("quote") or {
+            "bid": [{"price": 9.9}],
+            "offer": [{"price": 10.1}],
+        },
+    )
+    monkeypatch.setattr(data_engine_module, "market_ws", ws)
+    monkeypatch.setattr(data_engine_module, "dnse_api", api)
+    monkeypatch.setattr(data_engine_module, "is_symbol_network_window_open", lambda *_a, **_k: (True, "open"))
+    monkeypatch.setattr(data_engine_module, "is_symbol_trade_window_open", lambda *_a, **_k: (True, "open"))
+    monkeypatch.setattr(config, "DNSE_WS_ENABLED", True)
+    monkeypatch.setattr(config, "DNSE_WS_FALLBACK_DELAY_SECONDS", 0.0)
+    engine = DataEngine()
+
+    tick = engine.fetch_realtime_tick("FPT")
+
+    assert tick["source"] == "REST"
+    assert tick["market_state"] == "REST FALLBACK"  # trạng thái riêng của FPT
+    assert engine.market_data_state() == "LIVE"  # kết nối chung không bị hạ
+    assert calls == ["trade", "quote"]
+
+
+def test_cache_is_stale_even_when_global_connection_is_live():
+    tick = DataEngine._decorate_tick(
+        {"last": 10.0, "timestamp": time.time() - 30.0},
+        "CACHE",
+        "LIVE",
+    )
+    assert tick["freshness"] == "STALE"
+    assert tick["stale"] is True
+
+
+def test_recovering_warning_waits_for_grace_period(monkeypatch):
+    manager = TradeManager.__new__(TradeManager)
+    monkeypatch.setattr(config, "DNSE_MARKET_WARNING_GRACE_SECONDS", 5.0, raising=False)
+
+    assert manager._market_pause_warning_due("RECOVERING", now=100.0) is False
+    assert manager._market_pause_warning_due("RECOVERING", now=104.9) is False
+    assert manager._market_pause_warning_due("RECOVERING", now=105.1) is True
+    assert manager._market_pause_warning_due("LIVE", now=106.0) is False
+    assert manager._market_pause_warning_due("RECOVERING", now=107.0) is False
+
+
 def test_429_blocks_route_family_across_symbols(monkeypatch):
     calls = []
 
@@ -151,6 +207,22 @@ def test_connector_shared_provider_never_calls_latest_rest():
     tick = conn.get_tick("FPT")
     assert tick.last == 12.0
     assert tick.bid == 11.9
+
+
+def test_connector_reads_closed_position_detail(monkeypatch):
+    captured = {}
+
+    def request(method, url, **kwargs):
+        captured.update({"method": method, "url": url, "params": kwargs.get("params")})
+        return Response(200, {"data": {"id": "P1", "status": "CLOSED", "averageClosePrice": 1901.5}})
+
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    conn = DNSEConnector(api_key="k", api_secret="s", account_no="1", session=SimpleNamespace(request=request))
+    detail = conn.get_position_detail("P1", "VN30F1M")
+
+    assert detail["status"] == "CLOSED"
+    assert captured["url"].endswith("/accounts/positions/P1")
+    assert captured["params"] == {"marketType": "DERIVATIVE"}
 
 
 def test_bot_entry_stops_before_account_call_when_feed_is_recovering(monkeypatch):

@@ -40,6 +40,181 @@ def _build_watch_symbols():
     return symbols
 
 
+def _paper_closed_trade_history_row(item, fallback_state=None):
+    """Đổi biên nhận PAPER thành đúng cấu trúc một dòng lịch sử chi tiết."""
+    if not isinstance(item, dict) or not item.get("ticket"):
+        return None
+    ticket = str(item.get("ticket"))
+    symbol = str(item.get("symbol", "")).upper()
+    fallback_state = fallback_state if isinstance(fallback_state, dict) else {}
+    fallback_direction = fallback_state.get("trade_directions", {}).get(ticket, "BUY")
+    side = (
+        "BUY"
+        if int(item.get("type", 0) or 0) == 0 and str(fallback_direction).upper() != "SELL"
+        else "SELL"
+    )
+    volume = float(item.get("volume", 0.0) or 0.0)
+    entry = float(item.get("price_open", 0.0) or 0.0)
+    close = float(item.get("price_close", entry) or entry)
+    net_pnl = float(item.get("profit", 0.0) or 0.0)
+    fee = abs(float(item.get("fee", item.get("commission", 0.0)) or 0.0))
+    if fee <= 0 and entry and close and volume:
+        from core import settlement
+
+        point_value = (
+            float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0) or 1000.0)
+            if settlement.is_cash_stock(symbol)
+            else float(getattr(config, "DNSE_POINT_VALUE", 100000.0) or 100000.0)
+        )
+        direction = 1.0 if side == "BUY" else -1.0
+        gross = (close - entry) * direction * volume * point_value
+        fee = max(0.0, gross - net_pnl)
+    gross_pnl = net_pnl + fee
+    opened = float(
+        item.get("open_time", 0.0)
+        or fallback_state.get("bot_last_entry_times", {}).get(symbol, 0.0)
+        or 0.0
+    )
+    closed = float(item.get("closed_at", 0.0) or 0.0)
+    sl = float(item.get("sl", 0.0) or fallback_state.get("trade_sl", {}).get(ticket, 0.0) or 0.0)
+    tp = float(item.get("tp", 0.0) or fallback_state.get("trade_tp", {}).get(ticket, 0.0) or 0.0)
+    excursion = fallback_state.get("trade_excursions", {}).get(ticket, {}) or {}
+    mae_raw = item.get("mae")
+    if mae_raw is None:
+        mae_raw = excursion.get("mae", excursion.get("mae_usd"))
+    mfe_raw = item.get("mfe")
+    if mfe_raw is None:
+        mfe_raw = excursion.get("mfe", excursion.get("mfe_usd"))
+    mae = min(float(mae_raw), net_pnl) if mae_raw is not None else None
+    mfe = max(float(mfe_raw), net_pnl) if mfe_raw is not None else None
+    opened_dt = datetime.fromtimestamp(opened) if opened else None
+    closed_dt = datetime.fromtimestamp(closed) if closed else None
+    if opened_dt and closed_dt and opened_dt.date() == closed_dt.date():
+        time_display = f"{opened_dt:%H:%M:%S} → {closed_dt:%H:%M:%S}"
+    elif opened_dt and closed_dt:
+        time_display = f"{opened_dt:%d/%m %H:%M} → {closed_dt:%d/%m %H:%M}"
+    elif closed_dt:
+        time_display = f"{closed_dt:%Y-%m-%d %H:%M:%S}"
+    else:
+        time_display = ""
+    session_day = (closed_dt or opened_dt or datetime.now()).strftime("%Y%m%d")
+    return [
+        time_display,
+        ticket,
+        symbol,
+        side,
+        f"{volume:g}",
+        f"{entry:.5f}",
+        f"{sl:.5f}",
+        f"{tp:.5f}",
+        f"{-fee:.2f}",
+        f"{gross_pnl:.2f}",
+        str(item.get("reason", "CLOSED")),
+        "PAPER",
+        " | ".join(
+            part
+            for part in ("CLOSED_RECEIPT", str(fallback_state.get("trade_tactics", {}).get(ticket, "") or ""))
+            if part
+        ),
+        f"PAPER_{session_day}",
+        f"{mae:.2f}" if mae is not None else "",
+        f"{mfe:.2f}" if mfe is not None else "",
+        opened_dt.isoformat(timespec="seconds") if opened_dt else "",
+        closed_dt.isoformat(timespec="seconds") if closed_dt else "",
+        f"{close:.5f}",
+    ]
+
+
+def _history_float(value, default=0.0):
+    try:
+        return float(str(value).replace("$", "").replace("VND", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _history_row_net_pnl(row):
+    return _history_float(row[9] if len(row) > 9 else 0.0) + _history_float(row[8] if len(row) > 8 else 0.0)
+
+
+def _history_row_close_datetime(row):
+    candidates = []
+    if len(row) > 17 and row[17]:
+        candidates.append(str(row[17]))
+    if row:
+        candidates.append(str(row[0]))
+    for value in candidates:
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(normalized, fmt)
+            except ValueError:
+                pass
+    session_id = str(row[13] if len(row) > 13 else "")
+    digits = "".join(ch for ch in session_id if ch.isdigit())[:8]
+    if len(digits) == 8:
+        try:
+            return datetime.strptime(digits, "%Y%m%d")
+        except ValueError:
+            pass
+    return None
+
+
+def _history_row_close_day(row):
+    closed = _history_row_close_datetime(row)
+    return closed.strftime("%Y-%m-%d") if closed else "Không rõ ngày"
+
+
+def _history_row_scope(row, derivative_symbols=None):
+    derivative_symbols = {str(symbol).upper() for symbol in (derivative_symbols or [])}
+    ticket = str(row[1] if len(row) > 1 else "").upper()
+    symbol = str(row[2] if len(row) > 2 else "").upper()
+    is_paper = ticket.startswith("PAPER") or ticket.startswith("#PAPER")
+    is_derivative = symbol.startswith("VN30F") or symbol in derivative_symbols
+    if is_paper:
+        return "Paper-PS" if is_derivative else "Paper-CKCS"
+    return "Phái sinh" if is_derivative else "CKCS"
+
+
+def _history_session_summary(rows):
+    summary = {
+        "trades": 0,
+        "buys": 0,
+        "sells": 0,
+        "wins": 0,
+        "gross_pnl": 0.0,
+        "fee": 0.0,
+        "net_pnl": 0.0,
+        "worst_mae": None,
+        "best_mfe": None,
+    }
+    for row in rows:
+        gross = _history_float(row[9] if len(row) > 9 else 0.0)
+        fee = _history_float(row[8] if len(row) > 8 else 0.0)
+        net = gross + fee
+        summary["trades"] += 1
+        summary["buys"] += int(str(row[3] if len(row) > 3 else "").upper() == "BUY")
+        summary["sells"] += int(str(row[3] if len(row) > 3 else "").upper() == "SELL")
+        summary["wins"] += int(net > 0)
+        summary["gross_pnl"] += gross
+        summary["fee"] += fee
+        summary["net_pnl"] += net
+        if len(row) > 14 and str(row[14]).strip():
+            mae = min(_history_float(row[14]), net)
+            summary["worst_mae"] = mae if summary["worst_mae"] is None else min(summary["worst_mae"], mae)
+        if len(row) > 15 and str(row[15]).strip():
+            mfe = max(_history_float(row[15]), net)
+            summary["best_mfe"] = mfe if summary["best_mfe"] is None else max(summary["best_mfe"], mfe)
+    summary["winrate"] = (summary["wins"] / summary["trades"] * 100.0) if summary["trades"] else 0.0
+    return summary
+
+
 def _bring_popup_to_front(window, delay_ms=150):
     try:
         window.attributes("-topmost", True)
@@ -5279,10 +5454,10 @@ def show_history_popup(app):
     opportunity_tab = history_tabs.add("Gợi ý BOT")
 
     cols = (
-        "Time", "Ticket", "Symbol", "Type", "Vol", "Entry", "SL", "TP",
-        "Fee", "PnL", "MAE", "MFE", "Trigger", "Reason",
+        "Thời gian", "Ticket", "Mã", "Chiều", "KL", "Giá vào", "Giá đóng", "SL", "TP",
+        "Phí", "Lãi/Lỗ ròng", "MAE", "MFE", "Lý do đóng", "Chiến thuật/Nguồn",
     )
-    widths = [300, 150, 130, 130, 130, 145, 145, 145, 110, 120, 120, 120, 330, 360]
+    widths = [300, 150, 130, 110, 110, 140, 140, 140, 140, 120, 175, 140, 140, 260, 360]
 
     style = ttk.Style()
     style.configure(
@@ -5314,7 +5489,7 @@ def show_history_popup(app):
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
         tree.column("#0", width=325, minwidth=325, anchor="w", stretch=False)
-        tree.heading("#0", text="Session")
+        tree.heading("#0", text="Ngày đóng")
         for col, width in zip(cols, widths):
             tree.heading(col, text=col)
             tree.column(col, width=width, minwidth=width, anchor="center", stretch=False)
@@ -5351,19 +5526,10 @@ def show_history_popup(app):
     _deriv_reals = {str(s).upper() for s in getattr(config, "DERIVATIVE_REAL_SYMBOLS", []) or []}
 
     def to_float(val, default=0.0):
-        try:
-            return float(str(val).replace("$", "").replace("VND", "").replace(",", "").strip())
-        except (TypeError, ValueError):
-            return default
+        return _history_float(val, default)
 
     def row_scope(row):
-        ticket = str(row[1] if len(row) > 1 else "").upper()
-        symbol = str(row[2] if len(row) > 2 else "").upper()
-        is_paper = ticket.startswith("PAPER") or ticket.startswith("#PAPER")
-        is_ps = symbol.startswith("VN30F") or symbol in _derivatives or symbol in _deriv_reals
-        if is_paper:
-            return "Paper-PS" if is_ps else "Paper-CKCS"
-        return "Phái sinh" if is_ps else "CKCS"
+        return _history_row_scope(row, _derivatives | _deriv_reals)
 
     def clear_trees():
         for tree in trees.values():
@@ -5376,73 +5542,62 @@ def show_history_popup(app):
     def fmt_money(val):
         return format_vnd_full(val, signed=True)
 
-    def insert_sessions(tree, sessions, current_balance):
+    def insert_sessions(tree, sessions):
         sorted_sessions = sorted(sessions.keys(), reverse=True)
-        balance_map = {}
-        if current_balance is not None:
-            running_end = current_balance
-            for sid in sorted_sessions:
-                net = sum(to_float(r[9]) + to_float(r[8]) for r in sessions[sid] if len(r) >= 14)
-                start = running_end - net
-                balance_map[sid] = (start, running_end)
-                running_end = start
-
         for sid in sorted_sessions:
-            rows = sessions[sid]
-            wins = buys = sells = total = 0
-            total_pnl = total_fee = total_mae = total_mfe = 0.0
-            for row in rows:
-                pnl = to_float(row[9])
-                fee = to_float(row[8])
-                mae = to_float(row[14]) if len(row) > 14 else 0.0
-                mfe = to_float(row[15]) if len(row) > 15 else 0.0
-                total_pnl += pnl
-                total_fee += fee
-                total_mae += mae
-                total_mfe += mfe
-                wins += 1 if pnl > 0 else 0
-                total += 1
-                buys += 1 if row[3] == "BUY" else 0
-                sells += 1 if row[3] == "SELL" else 0
-
-            winrate = (wins / total * 100) if total else 0.0
-            if sid in balance_map:
-                start, end = balance_map[sid]
-                arrow = "▲" if end - start >= 0 else "▼"
-                balance_text = f"{format_vnd_full(start)} {arrow} {format_vnd_full(end)}"
-            else:
-                balance_text = ""
-
+            rows = sorted(
+                sessions[sid],
+                key=lambda row: _history_row_close_datetime(row) or datetime.min,
+                reverse=True,
+            )
+            summary = _history_session_summary(rows)
             parent_id = tree.insert(
-                "", "end", text=(f"Phiên: {sid}" if sid != "LEGACY" else "Phiên cũ (Legacy)"),
+                "", "end", text=f"Ngày: {sid}",
                 values=(
-                    balance_text, "", "", f"B:{buys} | S:{sells}", f"W: {winrate:.1f}%", "", "", "",
-                    fmt_money(total_fee), fmt_money(total_pnl), fmt_money(total_mae), fmt_money(total_mfe), "", "",
+                    f"Ròng ngày: {fmt_money(summary['net_pnl'])}",
+                    "",
+                    "",
+                    f"Mua:{summary['buys']} | Bán:{summary['sells']}",
+                    f"Thắng: {summary['winrate']:.1f}%",
+                    "",
+                    "",
+                    "",
+                    "",
+                    fmt_money(summary["fee"]),
+                    fmt_money(summary["net_pnl"]),
+                    fmt_money(summary["worst_mae"]) if summary["worst_mae"] is not None else "--",
+                    fmt_money(summary["best_mfe"]) if summary["best_mfe"] is not None else "--",
+                    "",
+                    "",
                 ),
             )
-            for row in reversed(rows):
+            for row in rows:
                 reason = row[10]
                 if reason == "Basket_TP" and to_float(row[9]) < 0:
                     reason = "Basket_TP_Order_Loss"
+                net_pnl = _history_row_net_pnl(row)
+                mae = ""
+                if len(row) > 14 and str(row[14]).strip():
+                    mae = f"{min(to_float(row[14]), net_pnl):.2f}"
+                mfe = ""
+                if len(row) > 15 and str(row[15]).strip():
+                    mfe = f"{max(to_float(row[15]), net_pnl):.2f}"
                 tree.insert(
                     parent_id, "end", text="",
                     values=(
-                        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9],
-                        row[14] if len(row) > 14 else "",
-                        row[15] if len(row) > 15 else "",
-                        row[12] if len(row) > 12 else "",
+                        row[0], row[1], row[2], row[3], row[4], row[5],
+                        row[18] if len(row) > 18 and str(row[18]).strip() else "--",
+                        row[6], row[7], row[8], f"{net_pnl:.2f}",
+                        mae,
+                        mfe,
                         reason,
+                        row[12] if len(row) > 12 else "",
                     ),
                 )
             if sid == sorted_sessions[0]:
                 tree.item(parent_id, open=True)
 
     def load_data():
-        try:
-            acc = app.connector.get_account_info()
-            current_balance = acc["balance"] if acc else None
-        except Exception:
-            current_balance = None
         clear_trees()
         try:
             from core import signal_opportunities
@@ -5492,25 +5647,51 @@ def show_history_popup(app):
         except Exception as exc:
             if hasattr(app, "log_message"):
                 app.log_message(f"[HISTORY] Load gợi ý BOT lỗi: {exc}", target="manual")
-        if not os.path.exists(csv_path):
-            return
         try:
             scope_sessions = {name: {} for name in SCOPES}
-            with open(csv_path, mode="r", encoding="utf-8") as file_obj:
-                reader = csv.reader(file_obj)
-                header = next(reader, None)
-                if not header:
-                    return
-                records_by_ticket = {}
-                for row in reader:
-                    if len(row) >= 14:
+            records_by_ticket = {}
+            paper_history_state = {}
+            try:
+                from core import storage_manager
+
+                legacy_state_path = storage_manager.STATE_FILE
+                if os.path.exists(legacy_state_path):
+                    with open(legacy_state_path, "r", encoding="utf-8") as state_file:
+                        loaded_state = json.load(state_file)
+                        if isinstance(loaded_state, dict):
+                            paper_history_state.update(loaded_state)
+                live_state = getattr(getattr(app, "trade_mgr", None), "state", {})
+                if isinstance(live_state, dict):
+                    for key, value in live_state.items():
+                        if isinstance(value, dict) and isinstance(paper_history_state.get(key), dict):
+                            paper_history_state[key].update(value)
+                        else:
+                            paper_history_state[key] = value
+            except Exception:
+                paper_history_state = getattr(getattr(app, "trade_mgr", None), "state", {}) or {}
+            if os.path.exists(csv_path):
+                with open(csv_path, mode="r", encoding="utf-8") as file_obj:
+                    reader = csv.reader(file_obj)
+                    next(reader, None)
+                    for row in reader:
+                        if len(row) >= 14:
+                            records_by_ticket[row[1]] = row
+            try:
+                getter = getattr(app.connector, "get_paper_closed_trades", None)
+                for item in getter() if callable(getter) else []:
+                    row = _paper_closed_trade_history_row(item, paper_history_state)
+                    if row and row[1] not in records_by_ticket:
                         records_by_ticket[row[1]] = row
-                for row in records_by_ticket.values():
-                    scope = row_scope(row)
-                    session_id = row[13] or "LEGACY"
-                    scope_sessions[scope].setdefault(session_id, []).append(row)
+            except Exception as exc:
+                if hasattr(app, "log_message"):
+                    app.log_message(f"[HISTORY] Load biên nhận PAPER lỗi: {exc}", target="manual")
+
+            for row in records_by_ticket.values():
+                scope = row_scope(row)
+                close_day = _history_row_close_day(row)
+                scope_sessions[scope].setdefault(close_day, []).append(row)
             for scope, tree in trees.items():
-                insert_sessions(tree, scope_sessions[scope], current_balance)
+                insert_sessions(tree, scope_sessions[scope])
         except Exception as exc:
             if hasattr(app, "log_message"):
                 app.log_message(f"[HISTORY] Load failed: {exc}", target="manual")
@@ -5518,13 +5699,16 @@ def show_history_popup(app):
     def delete_session(session_id):
         if messagebox.askyesno(
             "Cảnh báo",
-            f"Bạn có chắc muốn xóa vĩnh viễn toàn bộ nhật ký của phiên [{session_id}] không?",
+            f"Bạn có chắc muốn xóa lịch sử các lệnh đã đóng ngày [{session_id}] không?",
             parent=top,
         ):
-            from core.storage_manager import delete_session_log
-            delete_session_log(session_id)
+            from core.storage_manager import delete_history_day
+            delete_history_day(session_id)
+            paper_delete = getattr(app.connector, "delete_paper_closed_trades_for_day", None)
+            if callable(paper_delete):
+                paper_delete(session_id)
             if hasattr(app, "log_message"):
-                app.log_message(f"Đã dọn dẹp log của phiên {session_id}.", target="manual")
+                app.log_message(f"Đã xóa lịch sử lệnh đóng ngày {session_id}.", target="manual")
             load_data()
 
     def bind_tree_menu(tree):
@@ -5536,9 +5720,9 @@ def show_history_popup(app):
             if tree.parent(row_id) != "":
                 return
             session_text = tree.item(row_id, "text")
-            session_id = session_text.replace("Phiên: ", "").replace("Phiên cũ (Legacy)", "LEGACY")
+            session_id = session_text.replace("Ngày: ", "")
             menu = tk.Menu(top, tearoff=0, font=("Roboto", 11))
-            menu.add_command(label=f"Xóa log phiên [{session_id}]", command=lambda: delete_session(session_id))
+            menu.add_command(label=f"Xóa lịch sử ngày [{session_id}]", command=lambda: delete_session(session_id))
             menu.post(event.x_root, event.y_root)
         tree.bind("<Button-3>", on_right_click)
 

@@ -60,6 +60,73 @@ def test_stale_paper_ticket_does_not_create_fake_pnl(monkeypatch):
     assert manager.state["active_trades"] == []
 
 
+def test_paper_closed_receipt_is_written_to_detailed_history(monkeypatch):
+    calls = []
+    manager = TradeManager.__new__(TradeManager)
+    manager.state = {
+        "current_session_id": "20260722_090000",
+        "trade_sl": {"PAPER-3": 17.3},
+        "trade_tp": {"PAPER-3": 31.1},
+        "trade_excursions": {"PAPER-3": {"mae": -320000.0, "mfe": 10000.0}},
+    }
+    monkeypatch.setattr(trade_manager_module, "append_trade_log", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    ok = manager._record_closed_trade_history(
+        "PAPER-3",
+        "MBS",
+        "BUY",
+        100,
+        21.9,
+        -313711.5,
+        "MANUAL_CLOSE",
+        {
+            "price_open": 21.9,
+            "price_close": 18.8,
+            "profit": -313711.5,
+            "fee": 3711.5,
+            "open_time": 1783562478.0,
+        },
+    )
+
+    assert ok is True
+    args, kwargs = calls[0]
+    assert args[0:5] == ("PAPER-3", "MBS", "BUY", 100.0, 21.9)
+    assert args[7] == -3711.5
+    assert args[8] == -310000.0
+    assert kwargs["market_mode"] == "PAPER"
+    assert kwargs["mae_usd"] == -320000.0
+    assert kwargs["mfe_usd"] == 10000.0
+    assert kwargs["exit_price"] == 18.8
+
+
+def test_real_closed_receipt_uses_dnse_position_prices_and_fee_profile():
+    manager = TradeManager.__new__(TradeManager)
+    manager.state = {"trade_excursions": {"R1": {"mae_usd": -50000.0, "mfe_usd": 30000.0}}}
+    manager.connector = SimpleNamespace(
+        get_position_detail=lambda ticket, symbol: {
+            "id": ticket,
+            "status": "CLOSED",
+            "averageCostPrice": 1900.0,
+            "averageClosePrice": 1902.0,
+            "closedQuantity": 1,
+            "createdDate": "2026-07-22T02:00:00Z",
+            "modifiedDate": "2026-07-22T03:00:00Z",
+        },
+        calculate_profit=lambda *_args: 200000.0,
+        calculate_trade_fee=lambda _symbol, _price, _volume, side=None: 1000.0 if side == "BUY" else 1500.0,
+    )
+
+    receipt = manager._build_real_closed_receipt("R1", "VN30F1M", "BUY", 1, 1900.0)
+
+    assert receipt["price_open"] == 1900.0
+    assert receipt["price_close"] == 1902.0
+    assert receipt["fee"] == 2500.0
+    assert receipt["profit"] == 197500.0
+    assert receipt["history_source"] == "DNSE_POSITION_DETAIL"
+    assert receipt["mae"] == -50000.0
+    assert receipt["mfe"] == 197500.0
+
+
 def _position(**updates):
     values = {
         "ticket": 7,
