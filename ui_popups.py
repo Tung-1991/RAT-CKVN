@@ -3171,19 +3171,6 @@ def build_cache_and_symbols_tab(app, parent):
             raise RuntimeError("Chưa xác định tài khoản đang dùng.")
         return account_dir
 
-    def _select_public_manifest(title):
-        from tkinter import filedialog
-        import settings_transfer
-
-        selected = filedialog.askopenfilename(
-            parent=top,
-            title=title,
-            initialdir=str(settings_transfer.PUBLIC_COPY_ROOT),
-            initialfile="manifest.json",
-            filetypes=[("Manifest setting", "manifest.json"), ("JSON", "*.json")],
-        )
-        return os.path.dirname(selected) if selected else ""
-
     def _export_settings():
         try:
             import settings_transfer
@@ -3203,9 +3190,9 @@ def build_cache_and_symbols_tab(app, parent):
         try:
             import settings_transfer
 
-            package = _select_public_manifest("Chọn manifest PUBLIC cần khôi phục")
-            if not package:
-                return
+            package = settings_transfer.PUBLIC_COPY_ROOT
+            if not (package / "manifest.json").is_file():
+                raise FileNotFoundError("Chưa có bản sao. Hãy bấm TẠO BẢN SAO trước.")
             if not messagebox.askyesno(
                 "Khôi phục setting",
                 (
@@ -3236,9 +3223,9 @@ def build_cache_and_symbols_tab(app, parent):
         try:
             import settings_transfer
 
-            package = _select_public_manifest("Chọn manifest PUBLIC cần kiểm tra")
-            if not package:
-                return
+            package = settings_transfer.PUBLIC_COPY_ROOT
+            if not (package / "manifest.json").is_file():
+                raise FileNotFoundError("Chưa có bản sao để kiểm tra.")
             public = settings_transfer.validate_package(package)
             private_dir = settings_transfer.PRIVATE_COPY_ROOT
             private_count = 0
@@ -3264,13 +3251,13 @@ def build_cache_and_symbols_tab(app, parent):
         try:
             import settings_transfer
 
-            package = _select_public_manifest("Chọn gói cần xóa")
-            if not package:
-                return
-            check = settings_transfer.validate_package(package)
+            package = settings_transfer.PUBLIC_COPY_ROOT
+            if not (package / "manifest.json").is_file():
+                raise FileNotFoundError("Chưa có bản sao để xóa.")
+            settings_transfer.validate_package(package)
             if not messagebox.askyesno(
                 "Xóa bản sao",
-                f"Xóa cả PUBLIC và PRIVATE của {check['package_id']}?",
+                "Xóa toàn bộ file trong PUBLIC và PRIVATE?",
                 parent=top,
             ):
                 return
