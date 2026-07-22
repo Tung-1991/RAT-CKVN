@@ -21,6 +21,7 @@ htmlcov/
 
 # Runtime data: ignore everything by default
 data/*
+data/copy/
 
 # Keep strategy templates only
 !data/templates/
