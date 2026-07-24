@@ -1,7 +1,7 @@
 {
-  "version": 3,
+  "version": 4,
   "category": "public",
-  "created_at": "2026-07-22 15:05:32",
+  "created_at": "2026-07-24 14:44:06",
   "files": [
     "brain_settings.json",
     "symbol_overrides.json",
@@ -9,6 +9,7 @@
     "presets_config.json",
     "advisor_prompt.md",
     "advisor_flow.md",
+    "advisor_api_settings.json",
     "portable_settings.json",
     "templates_bundle.json"
   ],
@@ -18,15 +19,17 @@
     "tsl_settings.json": "tsl_settings.json",
     "presets_config.json": "presets_config.json",
     "advisor_prompt.md": "advisor/advisor_prompt.md",
-    "advisor_flow.md": "advisor/advisor_flow.md"
+    "advisor_flow.md": "advisor/advisor_flow.md",
+    "advisor_api_settings.json": "advisor_api_settings.json"
   },
   "sha256": {
-    "brain_settings.json": "18b61dcee5754184fd018f9ec6c923eba38e0e76defe1d9bde6504055b5fa46e",
+    "brain_settings.json": "f50a42220d7677ee6393be10ca1909cbf6e4a60788ed027225463e9900160394",
     "symbol_overrides.json": "2c4c48d46f088d6c8fafacf3d811af8d4f5f98d1d70e48eddc9d9ffd11a0affc",
     "tsl_settings.json": "8f463b54ba56704ebd93c7ed09b34058ae1ef9edb1e5552d5639f1f2ecf8717a",
     "presets_config.json": "3e93a2d071db60f075c9b770be6619bbd9cf3cc2f044d9208508590303d5263d",
-    "advisor_prompt.md": "4966c864ee6ff0016f495600f386ef1e037cf40b21d345af37fdaa2e9d9bb774",
-    "advisor_flow.md": "111247864da627c7e2f5713d9a4345ab423573a34212f3a1226ade1551f49c31",
+    "advisor_prompt.md": "afc7076b190dce45f6505958d662bae29e5bc3fe5db762a84ed97585573a9edc",
+    "advisor_flow.md": "5ae1722cf2341030f62c80ba246ebc37a163ad5c53af24b5be02272cf86b421d",
+    "advisor_api_settings.json": "479d4e4843e66091479db424eb80d8e1dbc02d65eacf2f6fb211031778690c54",
     "portable_settings.json": "290cf9bd57e3dcd061a5ff6838165be384ba5824ae87994b9b4ea895fd40fb77",
     "templates_bundle.json": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f"
   }

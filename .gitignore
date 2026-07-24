@@ -60,4 +60,4 @@ data/copy/*
 !data/copy/public/
 !data/copy/public/**
 data/copy/private/
-data/copy/_backups/
+data/copy/rollback/

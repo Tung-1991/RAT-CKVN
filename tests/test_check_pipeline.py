@@ -101,6 +101,25 @@ def test_check_only_returns_enabled_check_modules_and_does_not_mutate_trade():
     assert context == before_context
 
 
+def test_check_volume_exports_compact_numeric_metrics():
+    frame = _frame()
+    settings = {
+        "check_indicators": {
+            "volume": {
+                "active": True,
+                "groups": ["G0"],
+                "params": {"period": 20, "multiplier": 1.1},
+            }
+        }
+    }
+    result = check_engine.evaluate({"G0": frame}, {}, "FPT", settings=settings)
+    metrics = result["groups"]["G0"]["volume"]["metrics"]
+    assert metrics["volume"] == float(frame["volume"].iloc[-1])
+    assert metrics["volume_sma_20"] == float(frame["volume"].tail(20).mean())
+    assert metrics["volume_ratio_20"] > 0
+    assert metrics["candle_direction"] == "UP"
+
+
 def test_check_evaluation_cannot_change_trade_signal(monkeypatch):
     generator = SignalGenerator()
     generator.indicator_map = {"probe": lambda _df, _params: 1}

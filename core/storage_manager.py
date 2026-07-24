@@ -410,6 +410,7 @@ def apply_state_defaults(state: Dict[str, Any]) -> Dict[str, Any]:
     if "current_session_id" not in state: state["current_session_id"] = _new_session_id()
     if "cooldown_until" not in state: state["cooldown_until"] = 0.0
     if "active_brake" not in state: state["active_brake"] = {"global": None, "symbols": {}}
+    if "volatility_events" not in state: state["volatility_events"] = []
     return state
 
 def rollover_daily_session(state: Dict[str, Any], now=None) -> bool:
@@ -993,6 +994,7 @@ def load_brain_settings() -> Dict[str, Any]:
         "G2_TIMEFRAME": getattr(config, "G2_TIMEFRAME", "15m"),
         "G3_TIMEFRAME": getattr(config, "G3_TIMEFRAME", "15m"),
         "BOT_ACTIVE_SYMBOLS": copy.deepcopy(getattr(config, "BOT_ACTIVE_SYMBOLS", [])),
+        "PRIORITY_SYMBOLS": copy.deepcopy(getattr(config, "PRIORITY_SYMBOLS", [])),
         "SCAN_SNAPSHOT_ENABLED": bool(getattr(config, "SCAN_SNAPSHOT_ENABLED", True)),
         "SCAN_SNAPSHOT_INTERVAL_MINUTES": float(
             getattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15)
@@ -1074,6 +1076,7 @@ def load_brain_settings() -> Dict[str, Any]:
                 "G2_TIMEFRAME",
                 "G3_TIMEFRAME",
                 "BOT_ACTIVE_SYMBOLS",
+                "PRIORITY_SYMBOLS",
                 "TSL_LOGIC_MODE",
                 # [SCAN SNAPSHOT] Phải nằm trong whitelist, không thì mỗi lần app save
                 # brain_settings sẽ strip mất -> toggle live của daemon chết, chỉ còn fallback env.

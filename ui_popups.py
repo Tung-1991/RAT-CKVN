@@ -274,66 +274,48 @@ def _speed_up_scroll(frame, factor=5):
     return frame
 
 
-ADVISOR_FILES_HELP_TEXT = """HAI CHỨC NĂNG HOÀN TOÀN TÁCH BIỆT
+ADVISOR_FILES_HELP_TEXT = """AI ADVISOR GỒM HAI PHẦN
 
-1) BOT ADVISOR — đánh giá BOT, lịch sử lệnh và setting
+1) ĐÁNH GIÁ BOT — data/<tài khoản>/advisor/
 
-Thư mục làm việc: data/<tài khoản>/advisor/
+Tự tạo nếu thiếu:
+- advisor_prompt.md: luật giao việc cho AI.
+- advisor_flow.md: giải thích nghiệp vụ BOT.
+- user_context.md: mục tiêu/câu hỏi của người dùng.
+- expert_context.md: ghi chú chuyên gia dùng để đối chiếu.
 
-Tự tạo nếu thiếu ngay khi mở cửa sổ AI Advisor:
-- advisor_prompt.md: yêu cầu/luật giao việc cho LLM.
-- advisor_flow.md: giải thích luồng nghiệp vụ của BOT.
-- user_context.md: câu hỏi và mục tiêu Ngài muốn LLM đánh giá.
-- expert_context.md: nhận định hoặc tài liệu chuyên gia về BOT/thị trường.
-- advisor_response.md: chỗ lưu câu trả lời API gần nhất; lúc chưa gọi API chỉ là mẫu trống.
+Tạo hoặc ghi đè khi bấm LÀM MỚI DỮ LIỆU BOT:
+- technical_settings.json: setting BOT tại thời điểm tạo.
+- advisor_export.xlsx: lệnh, PnL, phí và thống kê BOT.
 
-Chỉ tạo hoặc làm mới khi bấm TẠO GÓI BOT ADVISOR:
-- technical_settings.json: toàn bộ setting BOT tại đúng thời điểm tạo gói.
-- advisor_export.xlsx: lệnh đã đóng, lệnh đang mở, phí, PnL và thống kê trong số ngày chọn.
-- external_package/package_manifest.json: danh sách file, model và thời điểm đóng gói.
-- external_package/*: các bản sao đã lọc thông tin nhạy cảm để gửi LLM thủ công.
+Chỉ có sau khi gọi API thành công:
+- advisor_response.md: kết quả AI gần nhất.
 
-Tự tạo khi API Trigger chạy:
-- App tự làm mới toàn bộ gói như nút TẠO GÓI, sau đó mới gọi API.
-- API thành công sẽ ghi đè advisor_response.md và lưu thêm
-  history/advisor_response_<thời gian>.md.
+Khi gửi qua trình duyệt, mở thẳng thư mục advisor và chọn các file cần dùng.
 
-File nội bộ, không cần gửi LLM:
-- data/<tài khoản>/advisor_api_settings.json: provider, model, reasoning và giới hạn API.
-- data/<tài khoản>/history/advisor_history.xlsx: kho lịch sử đầy đủ dùng để dựng advisor_export.xlsx.
-- .template_versions.json hoặc *.latest.md: app quản lý phiên bản mẫu.
+2) DỮ LIỆU THỊ TRƯỜNG CKCS — data/<tài khoản>/ckcs_research/
 
-Nếu tự gửi BOT Advisor qua trình duyệt: chỉ mở thư mục external_package và gửi các file trong đó.
-Nút Send API dùng gói đang có; nó không tự làm mới gói. API Trigger thì có tự làm mới.
+App tự cập nhật trong phiên:
+- scan_snapshot_cache.json: kho nội bộ theo mã/ngày, giữ mặc định 250 ngày.
 
-2A) CKCS RESEARCH / KHO DỮ LIỆU — chỉ thu thập dữ liệu các mã đã chọn
+App tạo/ghi đè báo cáo:
+- 11:35: scan_report_morning.md.
+- 14:50: scan_report_afternoon.md.
+- Làm mới thủ công cập nhật đúng file sáng hoặc chiều theo thời điểm hiện tại.
+- Nếu đã có file chiều cùng ngày, chỉ cần gửi file chiều.
 
-Thư mục: data/<tài khoản>/ckcs_research/
+Người dùng tự điền:
+- private_context.md: tin chuyên gia, nhận định cá nhân, vốn và thời gian nắm giữ.
 
-Tự tạo/cập nhật trong phiên:
-- scan_snapshot_cache.json: kho tổng hợp theo mã/ngày. Lần quét thành công đầu tiên ghi ngay;
-  sau đó mỗi chu kỳ mặc định 15 phút cập nhật cùng bản ghi ngày, không tạo file mới mỗi lần.
+Chỉ có khi bật/gọi API:
+- ckcs_response_morning.md hoặc ckcs_response_afternoon.md.
 
-Tạo thủ công khi Ngài bấm nút:
-- scan_report.md: bấm TẠO / LÀM MỚI BÁO CÁO. File lấy đúng số ngày giao dịch Ngài chọn.
-- private_context.md: bấm MỞ / ĐIỀN PRIVATE CONTEXT lần đầu; nội dung do Ngài tự nhập.
+RAW chỉ bổ sung bối cảnh thị trường/nghiên cứu CKCS; không sửa BOT và không đặt lệnh.
+Khi gửi qua trình duyệt, chọn một báo cáo sáng/chiều + private_context.md và tài liệu/ảnh chuyên gia.
+Không cần gửi scan_snapshot_cache.json vì đây là kho nội bộ dài.
 
-2B) CKCS RESEARCH / BÁO CÁO & API — tạo báo cáo và tùy chọn gửi LLM
-
-Mặc định vào ngày giao dịch:
-- 11:35 tạo/làm mới scan_report_morning.md.
-- 14:50 tạo/làm mới scan_report_afternoon.md.
-- Hai công tắc tự gửi API mặc định tắt, nên không tự phát sinh phí.
-
-Khi bật gửi API của một phiên:
-- App gửi đúng báo cáo phiên đó + private_context.md.
-- Dùng chung provider, model, reasoning, web search và API key của BOT Advisor.
-- Kết quả được lưu vào ckcs_response_morning.md hoặc ckcs_response_afternoon.md.
-- Nếu Telegram Report đang bật, kết quả API được gửi sang Telegram; lỗi gửi chỉ ghi log.
-
-CKCS RAW/API không chọn mã bằng Python, không sửa BOT và không đặt lệnh.
-Nếu gửi qua trình duyệt: dùng SAO CHÉP CHO LLM hoặc gửi đúng scan_report.md + private_context.md.
-Không gửi scan_snapshot_cache.json vì đó là kho nội bộ, dài và khó đọc.
+API là phần nâng cao và mặc định tắt; tắt API không phát sinh request hoặc phí.
+Không còn external_package, scan_report.md, scan_summary.md, file latest hoặc file version phụ.
 """
 
 
@@ -421,14 +403,14 @@ def open_advisor_popup(app):
 
     tabs = ctk.CTkTabview(root)
     tabs.pack(fill="both", expand=True, padx=6, pady=(2, 6))
-    tab_run = tabs.add("BOT ADVISOR")
-    tab_ckcs_root = tabs.add("CKCS RESEARCH")
-    tab_edit = tabs.add("KẾT NỐI AI")
+    tab_run = tabs.add("ĐÁNH GIÁ BOT")
+    tab_ckcs_root = tabs.add("DỮ LIỆU THỊ TRƯỜNG CKCS")
+    tab_edit = tabs.add("API NÂNG CAO")
     tab_telegram = tabs.add("TELEGRAM")
     ckcs_tabs = ctk.CTkTabview(tab_ckcs_root, fg_color="#1E1E1E")
     ckcs_tabs.pack(fill="both", expand=True, padx=2, pady=2)
     tab_ckcs = ckcs_tabs.add("1 · KHO DỮ LIỆU")
-    tab_ckcs_api = ckcs_tabs.add("2 · BÁO CÁO & API")
+    tab_ckcs_api = ckcs_tabs.add("2 · BÁO CÁO")
     edit_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_edit, fg_color="transparent"))
     edit_body.pack(fill="both", expand=True, padx=0, pady=0)
 
@@ -695,8 +677,8 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_api_warning,
         text=(
-            "Python chỉ tạo báo cáo và tùy chọn gửi ra LLM. Phần này không tự chọn mã, "
-            "không sửa setting và không đặt lệnh."
+            "Phần này chỉ tạo hai báo cáo sáng/chiều để Ngài tự chọn gửi qua trình duyệt. "
+            "Không tự chọn mã, không sửa setting và không đặt lệnh."
         ),
         font=("Roboto", 11, "bold"),
         text_color="#FFD54F",
@@ -744,8 +726,9 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_common,
         text=(
-            "Báo cáo thủ công dùng scan_report.md. Báo cáo tự động dùng hai file sáng/chiều bên dưới. "
-            "API dùng chung cấu hình tại tab KẾT NỐI AI."
+            "Làm mới thủ công cập nhật đúng file sáng hoặc chiều theo giờ hiện tại. "
+            "Nếu đã có file chiều cùng ngày thì không cần gửi kèm file sáng. "
+            "API dùng chung cấu hình tại tab API NÂNG CAO và mặc định tắt."
         ),
         font=("Roboto", 10, "bold"),
         text_color="#90CAF9",
@@ -754,7 +737,7 @@ def open_advisor_popup(app):
     ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
     common_actions = ctk.CTkFrame(ckcs_common, fg_color="transparent")
     common_actions.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
-    for index in range(3):
+    for index in range(2):
         common_actions.grid_columnconfigure(index, weight=1)
     ctk.CTkButton(
         common_actions,
@@ -766,43 +749,26 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
     ctk.CTkButton(
         common_actions,
-        text="TẠO BÁO CÁO THỦ CÔNG",
+        text="LÀM MỚI BÁO CÁO HIỆN TẠI",
         height=30,
         fg_color="#00695C",
         hover_color="#004D40",
-        command=app.generate_ckcs_report_ui,
+        command=app.refresh_current_ckcs_report_ui,
     ).grid(row=0, column=1, sticky="ew", padx=4)
     ctk.CTkButton(
-        common_actions,
-        text="SAO CHÉP CHO LLM",
-        height=30,
-        command=app.copy_ckcs_report_ui,
-    ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
-    common_files = ctk.CTkFrame(ckcs_common, fg_color="transparent")
-    common_files.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
-    for index in range(2):
-        common_files.grid_columnconfigure(index, weight=1)
-    ctk.CTkButton(
-        common_files,
-        text="MỞ scan_report.md",
-        height=28,
-        fg_color="#424242",
-        command=app.open_ckcs_report_file,
-    ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-    ctk.CTkButton(
-        common_files,
+        ckcs_common,
         text="MỞ THƯ MỤC CKCS",
         height=28,
         fg_color="#424242",
         command=app.open_ckcs_research_folder,
-    ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+    ).grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
 
     sessions_grid = ctk.CTkFrame(ckcs_api_body, fg_color="transparent")
     sessions_grid.pack(fill="x", padx=6, pady=(0, 10))
     sessions_grid.grid_columnconfigure(0, weight=1, uniform="ckcs_sessions")
     sessions_grid.grid_columnconfigure(1, weight=1, uniform="ckcs_sessions")
 
-    def _add_ckcs_session_box(parent, column, session, title, report_var, api_var, time_var):
+    def _add_ckcs_session_box(parent, column, session, title, report_var, time_var):
         box = ctk.CTkFrame(parent, fg_color="#252526", corner_radius=6)
         box.grid(row=0, column=column, sticky="nsew", padx=(0, 5) if column == 0 else (5, 0))
         box.grid_columnconfigure(1, weight=1)
@@ -828,28 +794,17 @@ def open_advisor_popup(app):
             checkbox_width=18,
             checkbox_height=18,
         ).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=5)
-        ctk.CTkCheckBox(
-            box,
-            text="Tự gửi API sau khi tạo báo cáo (có thể phát sinh phí)",
-            variable=api_var,
-            command=lambda: _save_advisor_schedule(silent=True),
-            font=("Roboto", 11, "bold"),
-            checkbox_width=18,
-            checkbox_height=18,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         report_name = f"scan_report_{session}.md"
-        response_name = f"ckcs_response_{session}.md"
         ctk.CTkLabel(
             box,
-            text=f"Báo cáo: {report_name}\nKết quả: {response_name}",
+            text=f"Báo cáo: {report_name}\nAPI tùy chọn nằm tại tab API NÂNG CAO",
             font=("Consolas", 10, "bold"),
             text_color="#FFD54F",
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 7))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 7))
         actions = ctk.CTkFrame(box, fg_color="transparent")
-        actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
-        for index in range(2):
-            actions.grid_columnconfigure(index, weight=1)
+        actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 5))
+        actions.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(
             actions,
             text="TẠO FILE",
@@ -857,31 +812,17 @@ def open_advisor_popup(app):
             fg_color="#00695C",
             hover_color="#004D40",
             command=lambda s=session: app.run_ckcs_session_ui(s, send_api=False),
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            actions,
-            text="TẠO + GỬI API",
-            height=30,
-            command=lambda s=session: app.run_ckcs_session_ui(s, send_api=True),
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ).grid(row=0, column=0, sticky="ew")
         file_actions = ctk.CTkFrame(box, fg_color="transparent")
-        file_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
-        for index in range(2):
-            file_actions.grid_columnconfigure(index, weight=1)
+        file_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        file_actions.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(
             file_actions,
             text="MỞ BÁO CÁO",
             height=28,
             fg_color="#424242",
             command=lambda s=session: app.open_ckcs_session_file(s, response=False),
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            file_actions,
-            text="MỞ KẾT QUẢ API",
-            height=28,
-            fg_color="#424242",
-            command=lambda s=session: app.open_ckcs_session_file(s, response=True),
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ).grid(row=0, column=0, sticky="ew")
 
     _add_ckcs_session_box(
         sessions_grid,
@@ -889,7 +830,6 @@ def open_advisor_popup(app):
         "morning",
         "PHIÊN SÁNG",
         app.var_ckcs_auto_report_morning,
-        app.var_ckcs_send_api_morning,
         app.var_ckcs_morning_time,
     )
     _add_ckcs_session_box(
@@ -898,7 +838,6 @@ def open_advisor_popup(app):
         "afternoon",
         "CUỐI NGÀY",
         app.var_ckcs_auto_report_afternoon,
-        app.var_ckcs_send_api_afternoon,
         app.var_ckcs_afternoon_time,
     )
     ctk.CTkButton(
@@ -1001,21 +940,98 @@ def open_advisor_popup(app):
 
     buttons = ctk.CTkFrame(tab_run, fg_color="transparent")
     buttons.pack(fill="x", padx=10, pady=(10, 8))
-    ctk.CTkButton(buttons, text="TẠO / LÀM MỚI GÓI", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
+    ctk.CTkButton(buttons, text="LÀM MỚI DỮ LIỆU BOT", height=34, fg_color="#00695C", hover_color="#004D40", command=app.generate_advisor_package_ui).pack(side="left", fill="x", expand=True, padx=(0, 5))
     ctk.CTkButton(buttons, text="MỞ THƯ MỤC", width=125, height=34, fg_color="#424242", hover_color="#616161", command=app.open_advisor_folder).pack(side="left", padx=5)
-    ctk.CTkButton(buttons, text="GỬI GÓI HIỆN TẠI QUA API", width=210, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
+    ctk.CTkButton(buttons, text="GỬI DỮ LIỆU BOT QUA API", width=210, height=34, fg_color="#1f538d", hover_color="#14375e", command=app.send_advisor_api_now).pack(side="left", padx=(5, 0))
 
     from ai_advisor import api_client
-    from ai_advisor.exporter import ensure_advisor_flow, ensure_advisor_response_template, ensure_expert_context, ensure_user_context
+    from ai_advisor.exporter import (
+        cleanup_legacy_advisor_artifacts,
+        ensure_advisor_flow,
+        ensure_expert_context,
+        ensure_user_context,
+    )
 
     api_client.ensure_advisor_prompt()
     ensure_advisor_flow()
     ensure_user_context()
     ensure_expert_context()
-    ensure_advisor_response_template()
+    cleanup_legacy_advisor_artifacts()
     if not os.path.exists(api_client.paths.advisor_api_settings_path()):
         api_client.save_api_settings(api_client.DEFAULT_API_SETTINGS)
     api_settings = api_client.load_api_settings()
+
+    ckcs_api_advanced = ctk.CTkFrame(edit_body, fg_color="#2D260F", corner_radius=6)
+    ckcs_api_advanced.pack(fill="x", padx=10, pady=(8, 8))
+    ctk.CTkLabel(
+        ckcs_api_advanced,
+        text="CKCS API — TÙY CHỌN NÂNG CAO",
+        font=("Roboto", 12, "bold"),
+        text_color="#FFD54F",
+    ).pack(anchor="w", padx=10, pady=(8, 2))
+    ctk.CTkLabel(
+        ckcs_api_advanced,
+        text=(
+            "Mặc định tắt. Khi bật, app gửi báo cáo phiên + private_context.md; "
+            "chỉ lưu kết quả, không tạo lệnh CKCS."
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color="#D7CCC8",
+        wraplength=820,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=(0, 7))
+    ckcs_api_options = ctk.CTkFrame(ckcs_api_advanced, fg_color="transparent")
+    ckcs_api_options.pack(fill="x", padx=10, pady=(0, 6))
+    for idx in range(2):
+        ckcs_api_options.grid_columnconfigure(idx, weight=1)
+    ctk.CTkCheckBox(
+        ckcs_api_options,
+        text="Tự gửi API sau báo cáo sáng",
+        variable=app.var_ckcs_send_api_morning,
+        command=lambda: _save_advisor_schedule(silent=True),
+        font=("Roboto", 11, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
+    ctk.CTkCheckBox(
+        ckcs_api_options,
+        text="Tự gửi API sau báo cáo chiều",
+        variable=app.var_ckcs_send_api_afternoon,
+        command=lambda: _save_advisor_schedule(silent=True),
+        font=("Roboto", 11, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=0, column=1, sticky="w", padx=(6, 0), pady=4)
+    ckcs_api_actions = ctk.CTkFrame(ckcs_api_advanced, fg_color="transparent")
+    ckcs_api_actions.pack(fill="x", padx=10, pady=(0, 10))
+    for idx in range(4):
+        ckcs_api_actions.grid_columnconfigure(idx, weight=1)
+    ctk.CTkButton(
+        ckcs_api_actions,
+        text="GỬI API SÁNG",
+        height=29,
+        command=lambda: app.run_ckcs_session_ui("morning", send_api=True),
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    ctk.CTkButton(
+        ckcs_api_actions,
+        text="MỞ KẾT QUẢ SÁNG",
+        height=29,
+        fg_color="#424242",
+        command=lambda: app.open_ckcs_session_file("morning", response=True),
+    ).grid(row=0, column=1, sticky="ew", padx=3)
+    ctk.CTkButton(
+        ckcs_api_actions,
+        text="GỬI API CHIỀU",
+        height=29,
+        command=lambda: app.run_ckcs_session_ui("afternoon", send_api=True),
+    ).grid(row=0, column=2, sticky="ew", padx=3)
+    ctk.CTkButton(
+        ckcs_api_actions,
+        text="MỞ KẾT QUẢ CHIỀU",
+        height=29,
+        fg_color="#424242",
+        command=lambda: app.open_ckcs_session_file("afternoon", response=True),
+    ).grid(row=0, column=3, sticky="ew", padx=(3, 0))
 
     from telegram_notify import reporter as telegram_reporter
     from telegram_notify import settings as telegram_settings
@@ -1408,6 +1424,17 @@ def open_advisor_popup(app):
     for idx in range(5):
         file_buttons.grid_columnconfigure(idx, weight=1)
 
+    def _open_latest_advisor_response():
+        response_path = api_client.paths.advisor_response_path()
+        if not os.path.isfile(response_path):
+            messagebox.showinfo(
+                "Chưa có kết quả API",
+                "advisor_response.md chỉ được tạo sau khi gọi API thành công.",
+                parent=top,
+            )
+            return
+        open_advisor_file_editor(app, response_path, "advisor_response.md")
+
     ctk.CTkButton(
         file_buttons,
         text="PROMPT",
@@ -1446,7 +1473,7 @@ def open_advisor_popup(app):
         height=30,
         fg_color="#424242",
         hover_color="#616161",
-        command=lambda: open_advisor_file_editor(app, api_client.paths.advisor_response_path(), "advisor_response.md"),
+        command=_open_latest_advisor_response,
     ).grid(row=0, column=4, sticky="ew", padx=(4, 0))
 
     edit_top = ctk.CTkFrame(edit_body, fg_color="#252526", corner_radius=6)
@@ -2302,6 +2329,57 @@ def open_bot_setting_popup(app):
         font=("Arial", 11, "italic"),
     )
     chk_gl_on_sg.grid(row=1, column=2, columnspan=2, sticky="w", padx=10, pady=5)
+    var_volatility_brake = ctk.BooleanVar(
+        value=bool(safe_cfg.get("VOLATILITY_BRAKE_ENABLED", False))
+    )
+    ctk.CTkCheckBox(
+        f_gl_content,
+        text="Bật phanh biến động: trigger → đóng hết + Global Cooldown + Telegram",
+        variable=var_volatility_brake,
+        text_color="#FF5252",
+        font=("Roboto", 11, "bold"),
+    ).grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 4))
+    ctk.CTkLabel(f_gl_content, text="Cửa sổ (giây):").grid(
+        row=3, column=0, sticky="w", padx=10, pady=5
+    )
+    e_volatility_window = ctk.CTkEntry(f_gl_content, width=70, justify="center")
+    e_volatility_window.insert(
+        0, str(safe_cfg.get("VOLATILITY_BRAKE_WINDOW_SECONDS", 60.0))
+    )
+    e_volatility_window.grid(row=3, column=1, sticky="w", padx=10, pady=5)
+    ctk.CTkLabel(f_gl_content, text="CKCS biến động (%):").grid(
+        row=3, column=2, sticky="w", padx=10, pady=5
+    )
+    e_volatility_stock_pct = ctk.CTkEntry(
+        f_gl_content, width=70, justify="center"
+    )
+    e_volatility_stock_pct.insert(
+        0, str(safe_cfg.get("VOLATILITY_BRAKE_STOCK_PCT", 1.5))
+    )
+    e_volatility_stock_pct.grid(row=3, column=3, sticky="w", padx=10, pady=5)
+    ctk.CTkLabel(f_gl_content, text="CKPS biến động (điểm):").grid(
+        row=4, column=0, sticky="w", padx=10, pady=5
+    )
+    e_volatility_derivative_points = ctk.CTkEntry(
+        f_gl_content, width=70, justify="center"
+    )
+    e_volatility_derivative_points.insert(
+        0, str(safe_cfg.get("VOLATILITY_BRAKE_DERIVATIVE_POINTS", 5.0))
+    )
+    e_volatility_derivative_points.grid(
+        row=4, column=1, sticky="w", padx=10, pady=5
+    )
+    ctk.CTkLabel(
+        f_gl_content,
+        text=(
+            "Áp dụng cho cả tăng và giảm. Đóng toàn bộ vị thế của chế độ hiện tại, "
+            "kể cả lệnh tay; báo cáo MD hiện có được ghi nối, không sinh file mới."
+        ),
+        text_color="#FFB74D",
+        font=("Arial", 10, "italic"),
+        wraplength=520,
+        justify="left",
+    ).grid(row=4, column=2, columnspan=2, sticky="w", padx=10, pady=5)
 
     # --- [GROUP 2: 📉 SAFEGUARD & PROFIT (PROTECTION)] ---
     f_sg = ctk.CTkFrame(f_safety, border_width=1, border_color="#00C853")
@@ -2618,6 +2696,17 @@ def open_bot_setting_popup(app):
                     "POST_CLOSE_COOLDOWN": int(e_post_close.get()),
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
+                    "VOLATILITY_BRAKE_ENABLED": var_volatility_brake.get(),
+                    "VOLATILITY_BRAKE_WINDOW_SECONDS": max(
+                        5.0, float(e_volatility_window.get())
+                    ),
+                    "VOLATILITY_BRAKE_STOCK_PCT": max(
+                        0.01, float(e_volatility_stock_pct.get())
+                    ),
+                    "VOLATILITY_BRAKE_DERIVATIVE_POINTS": max(
+                        0.01, float(e_volatility_derivative_points.get())
+                    ),
+                    "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
                     "WATERMARK_TRIGGER": money_input_from_display(e_gl_wm_trigger.get(), cbo_gl_wm_trigger_unit.get()),
                     "WATERMARK_TRIGGER_UNIT": unit_from_display(cbo_gl_wm_trigger_unit.get()),
                     "WATERMARK_DRAWDOWN": money_input_from_display(e_gl_wm_drawdown.get(), cbo_gl_wm_drawdown_unit.get()),
@@ -2895,10 +2984,74 @@ def build_cache_and_symbols_tab(app, parent):
     e_ckcs.insert(0, env_utils.get_env_value("DNSE_CKCS_WATCHLIST", "") or "")
     e_ckcs.pack(fill="x", padx=18, pady=(0, 10))
 
-    # --- Danh sách mã RAW DATA độc lập với quyền trade của BOT ---
+    # --- Mã CKCS ưu tiên: được quét trước và chỉ vượt giới hạn tổng vị thế mở. ---
     import core.storage_manager as storage_manager
 
     brain_now = storage_manager.load_brain_settings()
+    initial_priority = {
+        str(item).strip().upper()
+        for item in (brain_now.get("PRIORITY_SYMBOLS", []) or [])
+        if str(item).strip()
+    }
+    priority_vars = {}
+    f_priority = ctk.CTkFrame(cache_panel, fg_color="#302B1F", corner_radius=8)
+    f_priority.pack(fill="x", padx=12, pady=(0, 10))
+    ctk.CTkLabel(
+        f_priority,
+        text="⭐ MÃ CKCS PRIORITY",
+        font=("Roboto", 12, "bold"),
+        text_color="#FFD54F",
+    ).pack(anchor="w", padx=10, pady=(8, 2))
+    ctk.CTkLabel(
+        f_priority,
+        text=(
+            "Được kiểm tra trước và được vượt đúng giới hạn Max Lệnh Mở. "
+            "Vẫn phải có tín hiệu tốt và vẫn chịu mọi rule rủi ro/cooldown khác."
+        ),
+        font=("Roboto", 10, "bold"),
+        text_color="#B0BEC5",
+        wraplength=620,
+        justify="left",
+    ).pack(anchor="w", padx=10, pady=(0, 6))
+    priority_grid = ctk.CTkFrame(f_priority, fg_color="transparent")
+    priority_grid.pack(fill="x", padx=8, pady=(0, 4))
+
+    def _priority_available_symbols():
+        return list(dict.fromkeys(
+            str(item).strip().upper()
+            for item in e_ckcs.get().split(",")
+            if str(item).strip()
+        ))
+
+    def _rebuild_priority_buttons():
+        previous = {symbol: bool(var.get()) for symbol, var in priority_vars.items()}
+        for child in priority_grid.winfo_children():
+            child.destroy()
+        priority_vars.clear()
+        for index, symbol in enumerate(_priority_available_symbols()):
+            selected = previous.get(symbol, symbol in initial_priority)
+            var = ctk.BooleanVar(value=selected)
+            priority_vars[symbol] = var
+            ctk.CTkCheckBox(
+                priority_grid,
+                text=symbol,
+                variable=var,
+                width=120,
+                checkbox_width=18,
+                checkbox_height=18,
+            ).grid(row=index // 4, column=index % 4, sticky="w", padx=6, pady=4)
+
+    _rebuild_priority_buttons()
+    ctk.CTkButton(
+        f_priority,
+        text="CẬP NHẬT TỪ Ô WATCHLIST",
+        width=190,
+        height=27,
+        fg_color="#6D5D20",
+        command=_rebuild_priority_buttons,
+    ).pack(anchor="w", padx=10, pady=(2, 8))
+
+    # --- Danh sách mã RAW DATA độc lập với quyền trade của BOT ---
     raw_setting = brain_now.get("SCAN_SNAPSHOT_SYMBOLS", _build_watch_symbols())
     initial_raw = {
         str(item).strip().upper()
@@ -3097,11 +3250,16 @@ def build_cache_and_symbols_tab(app, parent):
             config.DNSE_WS_BOARD_ID = ws_board
             config.CKCS_WATCHLIST = ckcs_list
             raw_symbols = [symbol for symbol, var in raw_vars.items() if var.get()]
+            priority_symbols = [
+                symbol for symbol, var in priority_vars.items() if var.get()
+            ]
             config.SCAN_SNAPSHOT_SYMBOLS = raw_symbols
+            config.PRIORITY_SYMBOLS = priority_symbols
             brain = storage_manager.load_brain_settings()
             brain["SCAN_SNAPSHOT_SYMBOLS"] = raw_symbols
+            brain["PRIORITY_SYMBOLS"] = priority_symbols
             if not storage_manager.save_brain_settings(brain):
-                raise OSError("Không lưu được danh sách mã RAW DATA")
+                raise OSError("Không lưu được danh sách mã RAW DATA/PRIORITY")
             try:
                 if hasattr(app, "on_market_type_change") and hasattr(app, "cbo_market_type"):
                     app.on_market_type_change(app.cbo_market_type.get())
@@ -3126,7 +3284,8 @@ def build_cache_and_symbols_tab(app, parent):
             lbl_msg.configure(
                 text=(
                     f"Đã lưu watchlist {len(ckcs_list)} mã; RAW DATA chọn "
-                    f"{len(raw_symbols)}/{len(raw_vars)} mã."
+                    f"{len(raw_symbols)}/{len(raw_vars)} mã; "
+                    f"PRIORITY {len(priority_symbols)} mã."
                 ),
                 text_color="#81C784",
             )
@@ -3155,9 +3314,10 @@ def build_cache_and_symbols_tab(app, parent):
     ctk.CTkLabel(
         transfer_panel,
         text=(
-            "PUBLIC: rule, risk, watchlist, indicator, preset — có thể đưa GitHub.\n"
-            "PRIVATE: context cá nhân/chuyên gia — tự chép, không đưa GitHub.\n"
-            "Không sao lưu .env, DNSE, OpenAI, Telegram, token, lệnh, lịch sử hoặc cache."
+            "PUBLIC: rule, risk, watchlist, indicator, preset, lịch Advisor — có thể đưa GitHub.\n"
+            "PRIVATE: context cá nhân/chuyên gia và lịch sử RAW — tự chép, không đưa GitHub.\n"
+            "ROLLBACK: chỉ giữ một bản setting trước lần khôi phục gần nhất.\n"
+            "Không sao lưu .env, DNSE/OpenAI/Telegram key, chat ID, token, lệnh, PnL hoặc lịch sử giao dịch."
         ),
         font=("Roboto", 10, "bold"),
         text_color="#B0BEC5",
@@ -3199,7 +3359,7 @@ def build_cache_and_symbols_tab(app, parent):
                 "Khôi phục setting",
                 (
                     "Khôi phục PUBLIC và PRIVATE đi cùng (nếu có) vào tài khoản hiện tại?\n"
-                    "Setting cũ sẽ được sao lưu trước."
+                    "Setting cũ sẽ được giữ trong một thư mục ROLLBACK và ghi đè bản rollback cũ."
                 ),
                 parent=top,
             ):
@@ -3259,8 +3419,11 @@ def build_cache_and_symbols_tab(app, parent):
             private_count = 0
             if (private_dir / "manifest.json").is_file():
                 private_count = len(settings_transfer.validate_package(private_dir)["files"])
+            raw_note = ""
+            if private_count and "scan_snapshot_cache.json" in settings_transfer.validate_package(private_dir)["files"]:
+                raw_note = " (có RAW)"
             lbl_transfer_msg.configure(
-                text=f"Gói hợp lệ: PUBLIC {len(public['files'])}, PRIVATE {private_count} file.",
+                text=f"Gói hợp lệ: PUBLIC {len(public['files'])}, PRIVATE {private_count} file{raw_note}.",
                 text_color="#81C784",
             )
         except Exception as exc:  # noqa: BLE001

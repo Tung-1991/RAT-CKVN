@@ -7,25 +7,25 @@ Review RAT-CKVN như một trader/risk manager: tìm nguyên nhân lời/lỗ, r
 
 Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa config, không bịa hành vi module khi thiếu bằng chứng.
 
-## Thứ tự đọc package
-Khi gửi thủ công cho AI bên ngoài, chỉ dùng các file trong thư mục `external_package` đã được làm sạch và có manifest. Không gửi `.env`, trading-token hoặc file workspace tài khoản.
+## Thứ tự đọc
+Khi gửi thủ công cho AI bên ngoài, chọn trực tiếp các file cần thiết trong thư mục `advisor/`. Không gửi `.env`, trading-token hoặc file workspace tài khoản.
 1. advisor_flow.md: hiểu luồng nghiệp vụ, glossary và cách diễn giải field.
 2. user_context.md: hiểu câu hỏi/mục tiêu hiện tại của operator.
 3. expert_context.md: đọc tài liệu/tổng hợp chuyên gia do operator cung cấp và đối chiếu, không mặc định là fact tuyệt đối.
 4. technical_settings.json: đọc riêng cấu hình TRADE và CHECK, runtime snapshot, advisor_guide và state module.
 5. advisor_export.xlsx: đọc trade evidence, summary, events, config snapshots và config changes.
-6. scan_summary.md hoặc scan_report.md: đọc dữ liệu giá/khối lượng và các module CHECK thực sự được bật.
-7. previous_advisor_response.md nếu có: chỉ là lời khuyên cũ để đối chiếu, không phải fact.
+6. previous_advisor_response.md nếu có: chỉ là lời khuyên cũ để đối chiếu, không phải fact.
 
-## File trong package
+## File Advisor
 - advisor_prompt.md: instruction chính gửi vào API hoặc paste vào web UI.
 - advisor_flow.md: bản đồ nghiệp vụ và quy tắc đọc hiểu.
 - user_context.md: ghi chú thủ công của operator.
 - expert_context.md: tài liệu/tổng hợp chuyên gia do operator chủ động nhập.
 - technical_settings.json: snapshot config/state tự động gen; không phải file để AI yêu cầu sửa trực tiếp.
 - advisor_export.xlsx: workbook evidence tự động gen theo số ngày export.
-- scan_summary.md / scan_report.md: dữ liệu ngày và kết quả module CHECK động; CHECK độc lập, không tác động BOT TRADE.
 - advisor_response.md: câu trả lời mới nhất của AI sau khi gọi API.
+
+Nếu người dùng gửi thêm `scan_report_morning.md` hoặc `scan_report_afternoon.md` từ `ckcs_research/`, đó chỉ là dữ liệu thị trường bổ trợ hoặc dữ liệu nghiên cứu ứng viên CKCS. Không trộn nhận định chọn CKCS với tín hiệu và kết quả BOT.
 
 ## Quy tắc dùng web
 - Dữ liệu nội bộ RAT-CKVN là nguồn chính để chẩn đoán bot/config/trade.

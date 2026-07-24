@@ -238,6 +238,20 @@ def _normalize_day_statuses(cache, now=None):
     return cache
 
 
+def _remove_empty_check_segments(cache):
+    for node in (cache.get("symbols", {}) or {}).values():
+        for entry in (node.get("days", {}) or {}).values():
+            entry["check_segments"] = [
+                segment
+                for segment in (entry.get("check_segments") or [])
+                if any(
+                    isinstance(modules, dict) and modules
+                    for modules in (segment.get("groups") or {}).values()
+                )
+            ]
+    return cache
+
+
 def _research_cache(data):
     migrated = dict(data or empty_cache())
     migrated["schema_version"] = SCHEMA_VERSION
@@ -246,7 +260,7 @@ def _research_cache(data):
         for symbol, node in ((data or {}).get("symbols", {}) or {}).items()
         if is_research_symbol(symbol)
     }
-    return _normalize_day_statuses(migrated)
+    return _remove_empty_check_segments(_normalize_day_statuses(migrated))
 
 
 def _merge_legacy_cache(current, legacy):
@@ -331,6 +345,15 @@ def _aggregate_metric(current, value, hhmm):
 def _merge_check(entry, check, hhmm):
     if not isinstance(check, dict):
         return
+    groups = {
+        group: modules
+        for group, modules in (check.get("groups") or {}).items()
+        if isinstance(modules, dict) and modules
+    }
+    # CHECK là tùy chọn. Khi không bật module nào thì không tạo segment rỗng,
+    # tránh làm cache và báo cáo trông như có dữ liệu kỹ thuật nhưng thực tế không có.
+    if not groups:
+        return
     config_id = str(check.get("config_id") or "unknown")
     segments = entry.setdefault("check_segments", [])
     segment = segments[-1] if segments and segments[-1].get("config_id") == config_id else None
@@ -340,7 +363,7 @@ def _merge_check(entry, check, hhmm):
         segments.append(segment)
     segment["samples"] += 1
     segment["last_scan"] = hhmm
-    for group, modules in (check.get("groups") or {}).items():
+    for group, modules in groups.items():
         group_node = segment["groups"].setdefault(group, {})
         for name, result in (modules or {}).items():
             module = group_node.setdefault(name, {

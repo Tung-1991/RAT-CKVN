@@ -137,7 +137,6 @@ def research_private_context_path():
 
 def ensure_advisor_dirs():
     os.makedirs(advisor_root(), exist_ok=True)
-    os.makedirs(external_package_root(), exist_ok=True)
     os.makedirs(history_root(), exist_ok=True)
     return advisor_root()
 

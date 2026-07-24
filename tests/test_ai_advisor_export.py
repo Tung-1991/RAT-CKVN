@@ -14,9 +14,7 @@ def test_file_help_separates_advisor_and_raw_data_outputs():
     for name in (
         "technical_settings.json",
         "advisor_export.xlsx",
-        "package_manifest.json",
         "scan_snapshot_cache.json",
-        "scan_report.md",
         "scan_report_morning.md",
         "scan_report_afternoon.md",
         "ckcs_response_morning.md",
@@ -24,7 +22,8 @@ def test_file_help_separates_advisor_and_raw_data_outputs():
         "private_context.md",
     ):
         assert name in text
-    assert "CKCS RAW/API không chọn mã bằng Python" in text
+    assert "RAW chỉ bổ sung bối cảnh" in text
+    assert "Không còn external_package" in text
 
 
 def _patch_account_dir(monkeypatch, tmp_path):
@@ -79,8 +78,6 @@ def test_advisor_paths_split_history_and_export(monkeypatch, tmp_path):
     assert paths.legacy_scan_cache_path().replace("\\", "/").endswith(
         "scan_snapshot_cache.json"
     )
-    assert paths.advisor_response_history_path().replace("\\", "/").endswith(".md")
-    assert "/history/advisor_response_" in paths.advisor_response_history_path().replace("\\", "/")
     assert "/history/user_context_" in paths.user_context_history_path().replace("\\", "/")
 
 
@@ -155,7 +152,7 @@ def test_storage_master_csv_keeps_unknown_legacy_close_time_blank(monkeypatch, t
     assert row[header.index("Close Time")] == ""
 
 
-def test_advisor_folder_only_has_sanitized_external_package_dir_after_export(monkeypatch, tmp_path):
+def test_advisor_folder_does_not_create_intermediate_package_dir(monkeypatch, tmp_path):
     _patch_account_dir(monkeypatch, tmp_path)
     wb = _new_history_workbook()
     wb.save(paths.history_path())
@@ -163,7 +160,7 @@ def test_advisor_folder_only_has_sanitized_external_package_dir_after_export(mon
     result = history.build_export_workbook(export_days=7)
 
     assert result["ok"] is True
-    assert [p.name for p in (tmp_path / "advisor").iterdir() if p.is_dir()] == ["external_package"]
+    assert [p.name for p in (tmp_path / "advisor").iterdir() if p.is_dir()] == []
 
 
 def test_export_workbook_filters_closed_trades_without_touching_full_history(monkeypatch, tmp_path):
@@ -372,16 +369,12 @@ def test_api_client_saves_latest_response_and_history_snapshot(monkeypatch, tmp_
 
     assert result["ok"] is True
     assert result["response"].replace("\\", "/").endswith("advisor/advisor_response.md")
-    assert result["response_history"].replace("\\", "/").endswith(".md")
-    assert "/history/advisor_response_" in result["response_history"].replace("\\", "/")
-    assert "advisor_responses" not in result["response_history"].replace("\\", "/")
+    assert "response_history" not in result
     with open(paths.advisor_response_path(), "r", encoding="utf-8") as f:
         assert f.read() == "advisor answer"
-    with open(result["response_history"], "r", encoding="utf-8") as f:
-        assert f.read() == "advisor answer"
 
 
-def test_generate_package_creates_advisor_response_template(monkeypatch, tmp_path):
+def test_generate_package_only_creates_response_after_api(monkeypatch, tmp_path):
     _patch_account_dir(monkeypatch, tmp_path)
 
     result = exporter.generate_advisor_package()
@@ -390,9 +383,7 @@ def test_generate_package_creates_advisor_response_template(monkeypatch, tmp_pat
     with open(paths.advisor_flow_path(), "r", encoding="utf-8") as f:
         flow = f.read()
     assert "RAT-CKVN AI Advisor Flow" in flow
-    with open(paths.advisor_response_path(), "r", encoding="utf-8") as f:
-        text = f.read()
-    assert "No API response has been saved yet." in text
+    assert not os.path.exists(paths.advisor_response_path())
     assert paths.expert_context_path().replace("\\", "/").endswith("advisor/expert_context.md")
     assert "Expert Context" in open(paths.expert_context_path(), "r", encoding="utf-8").read()
     assert "AI Advisor cho RAT-CKVN" in api_client.load_advisor_prompt()
@@ -404,7 +395,7 @@ def test_generate_package_clones_editable_files_from_global_templates(monkeypatc
     template_root = tmp_path / "templates"
     template_root.mkdir(parents=True)
     monkeypatch.setattr(paths, "template_root", lambda: str(template_root))
-    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "expert_context.md", "advisor_response.md"):
+    for name in ("advisor_prompt.md", "advisor_flow.md", "user_context.md", "expert_context.md"):
         with open(template_root / name, "w", encoding="utf-8") as f:
             f.write(f"template::{name}")
 
@@ -416,10 +407,14 @@ def test_generate_package_clones_editable_files_from_global_templates(monkeypatc
         (paths.advisor_flow_path, "advisor_flow.md"),
         (paths.user_context_path, "user_context.md"),
         (paths.expert_context_path, "expert_context.md"),
-        (paths.advisor_response_path, "advisor_response.md"),
     ):
         with open(path_func(), "r", encoding="utf-8") as f:
-            assert f.read() == f"template::{name}"
+            text = f.read()
+        if name in {"advisor_prompt.md", "advisor_flow.md"}:
+            assert text.startswith(f"template::{name}")
+            assert "Phạm vi Advisor và CKCS Research" in text
+        else:
+            assert text == f"template::{name}"
 
 
 def test_generate_package_does_not_overwrite_existing_editable_files(monkeypatch, tmp_path):

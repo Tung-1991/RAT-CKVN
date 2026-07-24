@@ -31,6 +31,29 @@ def test_ckcs_input_uses_only_session_report_and_private_context(monkeypatch, tm
     assert "RAW AFTERNOON" not in text
 
 
+def test_ckcs_input_includes_previous_analysis_for_change_reason(monkeypatch, tmp_path):
+    _patch_account(monkeypatch, tmp_path)
+    with open(paths.scan_session_report_path("afternoon"), "w", encoding="utf-8") as handle:
+        handle.write("RAW AFTERNOON")
+    with open(paths.ckcs_response_path("morning"), "w", encoding="utf-8") as handle:
+        handle.write("MORNING VIEW")
+    monkeypatch.setattr(
+        api_client,
+        "load_api_settings",
+        lambda: {
+            "technical_settings_limit": 100000,
+            "user_context_limit": 100000,
+            "previous_response_limit": 100000,
+        },
+    )
+
+    text = ckcs_api.build_input("afternoon")
+
+    assert "MORNING VIEW" in text
+    assert "NHẬN ĐỊNH CKCS TRƯỚC ĐÓ" in text
+    assert "WATCH, CHỜ MUA, MUA, HOLD, GIẢM, EXIT hoặc LOẠI" in ckcs_api.CKCS_API_PROMPT
+
+
 def test_ckcs_api_reuses_advisor_model_and_saves_response(monkeypatch, tmp_path):
     _patch_account(monkeypatch, tmp_path)
     with open(paths.scan_session_report_path("afternoon"), "w", encoding="utf-8") as handle:

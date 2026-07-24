@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
-import hashlib
 import os
 import shutil
-from datetime import datetime
 
 from . import config_snapshot, history, paths
 
@@ -49,7 +47,7 @@ This document is the business-flow map for RAT-CKVN. It describes the DNSE OpenA
 Review trading performance, risk controls, signal behavior, T+2 settlement, config drift, and missed/poor exits. Do not propose direct automatic order placement and do not ask the bot to edit config by itself.
 
 ## Package reading order
-For manual upload, use only the generated `external_package` folder; it contains sanitized copies and a manifest. Never upload `.env`, trading-token cache, or account workspace files.
+For manual upload, open the account `advisor` folder and select only the files listed below. Never upload `.env`, trading-token cache, account workspace files, logs, or runtime state.
 1. Read advisor_flow.md first.
 2. Read user_context.md for the operator goal and focus symbols.
 3. Read technical_settings.json for current config/runtime snapshots.
@@ -101,7 +99,14 @@ ADVISOR_RESPONSE_TEMPLATE = """# RAT-CKVN AI Advisor Response
 No API response has been saved yet.
 
 When Send API succeeds, this file will be replaced with the latest LLM response.
-Historical copies are stored in the account history folder as advisor_response_*.md.
+"""
+
+ADVISOR_SCOPE_NOTE = """## Phạm vi Advisor và CKCS Research
+
+- Các file trong `advisor/` dùng để đánh giá BOT, setting và lịch sử giao dịch.
+- Đọc `user_context.md` để hiểu mục tiêu và `expert_context.md` để đối chiếu nhận định chuyên gia với dữ liệu BOT hiện tại.
+- `scan_report_morning.md` hoặc `scan_report_afternoon.md` trong `ckcs_research/` chỉ là dữ liệu thị trường bổ trợ/nghiên cứu CKCS.
+- Không trộn tín hiệu BOT với nhận định chọn CKCS. AI chỉ đề xuất; app không tự chuyển kết quả thành lệnh.
 """
 
 
@@ -124,48 +129,106 @@ def _ensure_editable_file(filename, target_path, default_text):
     return target_path
 
 
-def _template_state_path():
-    return os.path.join(paths.advisor_root(), ".template_versions.json")
-
-
-def _text_hash(text):
-    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
-
-
 def _sync_versioned_template(filename, target_path, default_text):
-    """Update pristine templates; preserve unknown/custom files as *.latest.md."""
-    paths.ensure_advisor_dirs()
-    latest = _read_template_or_default(filename, default_text)
-    latest_hash = _text_hash(latest)
-    try:
-        with open(_template_state_path(), "r", encoding="utf-8") as f:
-            state = json.load(f)
-        if not isinstance(state, dict):
-            state = {}
-    except Exception:
-        state = {}
-    previous_hash = str((state.get(filename) or {}).get("deployed_hash") or "")
-    current = ""
-    if os.path.exists(target_path):
-        with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-            current = f.read()
-    current_hash = _text_hash(current) if current else ""
-    if not current or current_hash == previous_hash:
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(latest)
-        state[filename] = {"deployed_hash": latest_hash, "version": 2}
-    elif current_hash == latest_hash:
-        state[filename] = {"deployed_hash": latest_hash, "version": 2}
-    else:
-        latest_path = os.path.splitext(target_path)[0] + ".latest.md"
-        with open(latest_path, "w", encoding="utf-8") as f:
-            f.write(latest)
-        state[filename] = {"custom_hash": current_hash, "latest_hash": latest_hash, "version": 2}
-    tmp = _template_state_path() + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, _template_state_path())
-    return target_path
+    """Tạo file editable đúng một lần; không sinh file version/latest phụ."""
+    return _ensure_editable_file(filename, target_path, default_text)
+
+
+def _migrate_advisor_text(path):
+    """Bỏ chỉ dẫn legacy nhưng giữ phần người dùng đã tự chỉnh."""
+    if not os.path.isfile(path):
+        return False
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        source_original = handle.read()
+    original = source_original
+    original = (
+        original
+        .replace("Thứ tự đọc package:", "Thứ tự đọc file:")
+        .replace("## Thứ tự đọc package", "## Thứ tự đọc file")
+        .replace("## File trong package", "## File Advisor")
+        .replace("## Package reading order", "## File reading order")
+    )
+    lines = original.splitlines()
+    output = []
+    skip_watchlist = False
+    for line in lines:
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if stripped.startswith("## Watchlist xếp hạng"):
+            skip_watchlist = True
+            continue
+        if skip_watchlist:
+            if stripped.startswith("## "):
+                skip_watchlist = False
+            else:
+                continue
+        if any(token in lowered for token in (
+            "external_package",
+            "package_manifest.json",
+            "scan_summary.md",
+            "scan_report.md",
+            ".template_versions.json",
+            "*.latest.md",
+        )):
+            continue
+        output.append(line)
+    migrated = "\n".join(output).strip()
+    if "## Phạm vi Advisor và CKCS Research" not in migrated:
+        migrated = f"{migrated}\n\n{ADVISOR_SCOPE_NOTE.strip()}"
+    migrated += "\n"
+    if migrated == source_original:
+        return False
+    temp = f"{path}.{os.getpid()}.tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write(migrated)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp, path)
+    return True
+
+
+def cleanup_legacy_advisor_artifacts():
+    """Dọn các bản sao/version cũ; không đụng file người dùng đang sử dụng."""
+    removed = []
+    candidates = [
+        os.path.join(paths.advisor_root(), ".template_versions.json"),
+        os.path.join(paths.advisor_root(), "advisor_flow.latest.md"),
+        os.path.join(paths.advisor_root(), "advisor_prompt.latest.md"),
+        os.path.join(paths.advisor_root(), "scan_report.md"),
+        os.path.join(paths.advisor_root(), "scan_summary.md"),
+        paths.legacy_scan_cache_path(),
+        paths.scan_report_path(),
+    ]
+    external = paths.external_package_root()
+    if os.path.isdir(external):
+        try:
+            shutil.rmtree(external)
+            removed.append(external)
+        except OSError:
+            pass
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            try:
+                os.remove(candidate)
+                removed.append(candidate)
+            except OSError:
+                pass
+    _migrate_advisor_text(paths.advisor_prompt_path())
+    _migrate_advisor_text(paths.advisor_flow_path())
+    response_path = paths.advisor_response_path()
+    if os.path.isfile(response_path):
+        with open(response_path, "r", encoding="utf-8", errors="replace") as handle:
+            response_text = handle.read()
+            if (
+                response_text.strip() == ADVISOR_RESPONSE_TEMPLATE.strip()
+                or "No API response has been saved yet." in response_text
+            ):
+                try:
+                    os.remove(response_path)
+                    removed.append(response_path)
+                except OSError:
+                    pass
+    return removed
 
 
 def ensure_user_context():
@@ -185,25 +248,20 @@ def ensure_expert_context():
 
 
 def ensure_advisor_flow():
-    return _sync_versioned_template(
+    path = _sync_versioned_template(
         "advisor_flow.md",
         paths.advisor_flow_path(),
         ADVISOR_FLOW_TEMPLATE,
     )
-
-
-def ensure_advisor_response_template():
-    return _ensure_editable_file(
-        "advisor_response.md",
-        paths.advisor_response_path(),
-        ADVISOR_RESPONSE_TEMPLATE,
-    )
+    _migrate_advisor_text(path)
+    return path
 
 
 def ensure_advisor_api_files():
     from . import api_client
 
-    _sync_versioned_template("advisor_prompt.md", paths.advisor_prompt_path(), api_client.DEFAULT_PROMPT)
+    prompt_path = _sync_versioned_template("advisor_prompt.md", paths.advisor_prompt_path(), api_client.DEFAULT_PROMPT)
+    _migrate_advisor_text(prompt_path)
     if not os.path.exists(paths.advisor_api_settings_path()):
         api_client.save_api_settings(api_client.DEFAULT_API_SETTINGS)
     return paths.advisor_api_settings_path()
@@ -218,52 +276,20 @@ def write_technical_settings(reason="manual_export"):
 
 
 def write_external_package():
-    """Build the only folder intended for manual upload to third-party AI."""
-    from . import api_client
-
-    root = paths.external_package_root()
-    os.makedirs(root, exist_ok=True)
-    text_sources = [
-        ("advisor_prompt.md", paths.advisor_prompt_path()),
-        ("advisor_flow.md", paths.advisor_flow_path()),
-        ("technical_settings.json", paths.technical_settings_path()),
-        ("user_context.md", paths.user_context_path()),
-        ("expert_context.md", paths.expert_context_path()),
-    ]
-    # CKCS RAW DATA is separate from BOT Advisor. Delete leftovers created by
-    # older versions so a stale market scan cannot be uploaded by mistake.
-    for stale_name in ("scan_summary.md", "scan_report.md"):
-        stale_path = os.path.join(root, stale_name)
-        if os.path.isfile(stale_path):
-            os.remove(stale_path)
+    """Tương thích tên hàm cũ: trả danh sách file trực tiếp, không tạo bản sao."""
+    cleanup_legacy_advisor_artifacts()
     files = []
-    for name, source in text_sources:
-        if not os.path.isfile(source):
-            continue
-        with open(source, "r", encoding="utf-8", errors="replace") as f:
-            clean = api_client._sanitize_external_text(f.read())
-        target = os.path.join(root, name)
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(clean)
-        files.append({"name": name, "bytes": os.path.getsize(target)})
-    if os.path.isfile(paths.export_path()):
-        target = os.path.join(root, "advisor_export.xlsx")
-        shutil.copy2(paths.export_path(), target)
-        files.append({"name": "advisor_export.xlsx", "bytes": os.path.getsize(target)})
-    estimate = api_client.estimate_api_payload()
-    manifest = {
-        "version": 2,
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "model": estimate.get("model"),
-        "reasoning_effort": (estimate.get("settings") or {}).get("reasoning_effort"),
-        "estimated_input_tokens": estimate.get("tokens"),
-        "privacy": "known secrets, account identifiers and absolute paths redacted",
-        "files": files,
-    }
-    manifest_path = os.path.join(root, "package_manifest.json")
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
-    return {"root": root, "manifest": manifest_path, "files": files}
+    for path in (
+        paths.advisor_prompt_path(),
+        paths.advisor_flow_path(),
+        paths.technical_settings_path(),
+        paths.export_path(),
+        paths.user_context_path(),
+        paths.expert_context_path(),
+    ):
+        if os.path.isfile(path):
+            files.append({"name": os.path.basename(path), "bytes": os.path.getsize(path)})
+    return {"root": paths.advisor_root(), "manifest": None, "files": files}
 
 
 def generate_advisor_package(
@@ -292,8 +318,8 @@ def generate_advisor_package(
         ensure_user_context()
         ensure_expert_context()
         ensure_advisor_flow()
-        ensure_advisor_response_template()
         ensure_advisor_api_files()
+        cleanup_legacy_advisor_artifacts()
         tech_path, snapshot_id = write_technical_settings(reason=reason)
         history.ensure_config_snapshot(reason=reason)
         synced = history.sync_from_master_csv()
@@ -302,7 +328,6 @@ def generate_advisor_package(
         export_result = history.build_export_workbook(export_days=export_days)
         from .api_client import validate_advisor_package
         package_validation = validate_advisor_package()
-        external_package = write_external_package()
         if not export_result.get("ok"):
             result["warnings"].append(export_result.get("error", "advisor export build failed"))
         result.update(
@@ -316,7 +341,7 @@ def generate_advisor_package(
                 "open_trades": open_count,
                 "export_days": export_days,
                 "package_validation": package_validation,
-                "external_package": external_package,
+                "advisor_files": write_external_package(),
             }
         )
         history.record_event("advisor_package_exported", "Advisor package generated", payload=result)

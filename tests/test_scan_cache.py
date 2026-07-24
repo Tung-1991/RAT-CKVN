@@ -161,6 +161,13 @@ def test_merge_sample_and_signal_dedup(dfs):
     assert scan_cache.derive_weekly(cache["symbols"]["HPG"]) == {"buy": 2, "sell": 1}
 
 
+def test_empty_check_does_not_create_empty_segment(dfs):
+    cache = scan_cache.empty_cache()
+    snap = scan_cache.compute_snapshot(dfs, make_context(), 0, now=NOW)
+    entry = scan_cache.merge_sample(cache, "HPG", snap, now=NOW)
+    assert entry["check_segments"] == []
+
+
 def test_prune_retention(dfs):
     cache = scan_cache.empty_cache()
     snap = scan_cache.compute_snapshot(dfs, make_context(), 0, now=NOW)
@@ -329,6 +336,24 @@ def test_full_report_render(dfs):
     assert "### Biến động toàn khoảng" in text
     assert "## HPG — 2 ngày giao dịch" in text
     assert "BOT signal" in text
+    assert "## TÓM TẮT TOÀN BỘ DANH SÁCH" in text
+    assert "WATCH/CHỜ MUA/MUA/HOLD/GIẢM/EXIT/LOẠI" in text
+    assert "vùng mua" in text
+    assert "app không tự biến kết quả AI thành lệnh CKCS" in text
+    assert "- CHECK segment" not in text
+    assert "Không có số liệu CHECK" not in text
+
+
+def test_period_summary_uses_observed_price_when_legacy_high_low_are_missing():
+    from ai_advisor import scan_report
+
+    days = [
+        ("2026-07-01", {"price": {"current": 10.0, "high": None, "low": None}}),
+        ("2026-07-02", {"price": {"current": 12.0, "high": 11.0, "low": 10.5}}),
+    ]
+    text = "\n".join(scan_report._period_summary(days))
+    assert "cao nhất 12" in text
+    assert "thấp nhất 10" in text
 
 
 def test_export_ckcs_report_is_separate_from_advisor_api(tmp_account, dfs, monkeypatch):
@@ -345,56 +370,33 @@ def test_export_ckcs_report_is_separate_from_advisor_api(tmp_account, dfs, monke
     snap = scan_cache.compute_snapshot(dfs, make_context(), 1, now=NOW)
     scan_cache.merge_sample(cache, "VN30F1M", snap, now=NOW)
     scan_cache.save_cache(cache)
-    result = scan_report.export_ckcs_report(report_days=15)
+    morning = paths.scan_session_report_path("morning")
+    result = scan_report.export_ckcs_report(report_days=15, output_path=morning)
     assert result is not None and result["symbols"] == 1
     import os
-    assert os.path.exists(paths.scan_report_path())
+    assert os.path.exists(morning)
+    assert not os.path.exists(paths.scan_report_path())
     assert not os.path.exists(os.path.join(paths.advisor_root(), "scan_summary.md"))
-    report_text = open(paths.scan_report_path(), encoding="utf-8").read()
+    report_text = open(morning, encoding="utf-8").read()
     assert "## HPG" in report_text
     assert "## VN30F1M" not in report_text
 
     monkeypatch.setattr(scan_cache, "selected_research_symbols", lambda: ["HPG", "VN30F1M"])
-    result = scan_report.export_ckcs_report(report_days=15)
+    result = scan_report.export_ckcs_report(report_days=15, output_path=morning)
     assert result["symbols"] == 2
-    assert "## VN30F1M" in open(paths.scan_report_path(), encoding="utf-8").read()
+    assert "## VN30F1M" in open(morning, encoding="utf-8").read()
 
     sections = dict(api_client.build_api_sections())
     assert "scan_summary.md" not in sections
     assert "scan_report.md" not in sections
 
 
-def test_copy_for_llm_combines_private_context_and_raw_report(tmp_account):
+def test_copy_for_llm_button_and_legacy_manual_report_are_removed(tmp_account):
     import main
 
-    paths.ensure_ckcs_research_dir()
-    with open(paths.scan_report_path(), "w", encoding="utf-8") as handle:
-        handle.write("RAW MARKET DATA")
-    with open(paths.research_private_context_path(), "w", encoding="utf-8") as handle:
-        handle.write("PRIVATE OPINION")
-
-    class FakeApp:
-        clipboard = ""
-        status = ""
-
-        def clipboard_clear(self):
-            self.clipboard = ""
-
-        def clipboard_append(self, text):
-            self.clipboard += text
-
-        def update(self):
-            return None
-
-        def _set_ckcs_raw_status(self, text, error=""):
-            self.status = text
-
-    app = FakeApp()
-    main.BotUI.copy_ckcs_report_ui(app)
-    assert "PRIVATE OPINION" in app.clipboard
-    assert "RAW MARKET DATA" in app.clipboard
-    assert app.clipboard.index("PRIVATE OPINION") < app.clipboard.index("RAW MARKET DATA")
-    assert "private context" in app.status
+    assert not hasattr(main.BotUI, "copy_ckcs_report_ui")
+    assert not hasattr(main.BotUI, "generate_ckcs_report_ui")
+    assert hasattr(main.BotUI, "refresh_current_ckcs_report_ui")
 
 def test_recorder_skips_non_trading_day(tmp_account, monkeypatch):
     """Cuối tuần: nến ngày cuối KHÔNG phải hôm nay -> không tạo entry rác."""

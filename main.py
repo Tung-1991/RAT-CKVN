@@ -235,7 +235,6 @@ class BotUI(ctk.CTk):
         self.advisor_last_export_status = "Never"
         self.advisor_last_error = ""
         self._advisor_worker_active = False
-        self._ckcs_report_worker_active = False
         self._ckcs_api_worker_active = False
         self._advisor_last_trigger_check = 0.0
         self._advisor_last_trigger_fire = {}
@@ -5237,81 +5236,10 @@ class BotUI(ctk.CTk):
         except Exception as exc:
             self._set_ckcs_api_status("Mở file lỗi", str(exc))
 
-    def _ckcs_report_worker(self):
-        try:
-            from ai_advisor.scan_report import export_ckcs_report
-
-            try:
-                days = max(1, int(self.var_ckcs_report_days.get() or 15))
-            except (TypeError, ValueError):
-                days = 15
-            result = export_ckcs_report(report_days=days)
-            if not result:
-                self.after(0, lambda: self._set_ckcs_raw_status(
-                    "Kho CKCS trống",
-                    "Bật lưu dữ liệu và để daemon chạy trong phiên trước.",
-                ))
-                return
-            message = (
-                f"Báo cáo OK | {result.get('symbols', 0)} mã | "
-                f"{result.get('days', days)} ngày | scan_report.md"
-            )
-            self.after(0, lambda m=message: self._set_ckcs_raw_status(m))
-        except Exception as exc:
-            self.after(0, lambda e=str(exc): self._set_ckcs_raw_status("Tạo báo cáo lỗi", e))
-        finally:
-            self._ckcs_report_worker_active = False
-
-    def generate_ckcs_report_ui(self):
-        if self._ckcs_report_worker_active:
-            self._set_ckcs_raw_status("Đang tạo báo cáo...")
-            return
-        self._ckcs_report_worker_active = True
-        self._set_ckcs_raw_status("Đang tạo báo cáo...")
-        threading.Thread(target=self._ckcs_report_worker, daemon=True).start()
-
-    def copy_ckcs_report_ui(self):
-        try:
-            from ai_advisor import paths as advisor_paths
-
-            path = advisor_paths.scan_report_path()
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                content = handle.read()
-            if not content.strip():
-                raise ValueError("scan_report.md đang trống")
-            private_content = ""
-            private_path = advisor_paths.research_private_context_path()
-            if os.path.isfile(private_path):
-                with open(private_path, "r", encoding="utf-8", errors="replace") as handle:
-                    private_content = handle.read().strip()
-            clipboard_content = content
-            if private_content:
-                clipboard_content = (
-                    "# PRIVATE CONTEXT DO NGƯỜI DÙNG CUNG CẤP\n\n"
-                    f"{private_content}\n\n"
-                    "# RAW DATA DO HỆ THỐNG TỔNG HỢP\n\n"
-                    f"{content}"
-                )
-            self.clipboard_clear()
-            self.clipboard_append(clipboard_content)
-            self.update()
-            self._set_ckcs_raw_status(
-                "Đã sao chép RAW + private context" if private_content else "Đã sao chép scan_report.md"
-            )
-        except Exception as exc:
-            self._set_ckcs_raw_status("Sao chép lỗi", str(exc))
-
-    def open_ckcs_report_file(self):
-        try:
-            from ai_advisor import paths as advisor_paths
-
-            path = advisor_paths.scan_report_path()
-            if not os.path.isfile(path):
-                raise FileNotFoundError("Chưa có scan_report.md — hãy tạo báo cáo trước")
-            os.startfile(path)
-            self._set_ckcs_raw_status("Đã mở scan_report.md")
-        except Exception as exc:
-            self._set_ckcs_raw_status("Mở file lỗi", str(exc))
+    def refresh_current_ckcs_report_ui(self):
+        """Làm mới đúng file phiên hiện tại; không tạo report legacy."""
+        session = "morning" if datetime.now().hour < 13 else "afternoon"
+        self.run_ckcs_session_ui(session, send_api=False)
 
     def open_ckcs_research_folder(self):
         try:
@@ -5514,7 +5442,7 @@ class BotUI(ctk.CTk):
             ]
             missing = [name for name, path in required_files if not os.path.exists(path)]
             if missing:
-                msg = "Missing advisor package file(s): " + ", ".join(missing) + ". Generate Advisor Package first."
+                msg = "Thiếu file Advisor: " + ", ".join(missing) + ". Hãy bấm LÀM MỚI DỮ LIỆU BOT trước."
                 self.after(0, lambda m=msg: self._set_advisor_status("Advisor API ERR", m))
                 self._advisor_stdout_log(msg)
                 self.log_message(f"[AI ADVISOR] API skipped: {msg}", error=True, target="manual")
@@ -5537,7 +5465,7 @@ class BotUI(ctk.CTk):
                 )
                 self.after(0, lambda m=status_msg: self._set_advisor_status(m))
                 self._advisor_stdout_log(
-                    "API sending existing package "
+                    "API sending current Advisor files "
                     f"reason={reason} "
                     f"model={estimate.get('model')} "
                     f"chars={estimate.get('chars')} "
@@ -5546,7 +5474,7 @@ class BotUI(ctk.CTk):
                     f"include_response={include_response_file}"
                 )
                 self.log_message(
-                    "[AI ADVISOR] API sending existing package "
+                    "[AI ADVISOR] API sending current Advisor files "
                     f"model={estimate.get('model')} "
                     f"chars={estimate.get('chars')} "
                     f"tokens~{estimate.get('tokens')} "
@@ -5701,12 +5629,10 @@ class BotUI(ctk.CTk):
 
     def open_advisor_folder(self):
         try:
-            from ai_advisor.paths import advisor_root, ensure_advisor_dirs, external_package_root
+            from ai_advisor.paths import advisor_root, ensure_advisor_dirs
 
             ensure_advisor_dirs()
-            external_root = external_package_root()
-            target = external_root if os.path.isfile(os.path.join(external_root, "package_manifest.json")) else advisor_root()
-            os.startfile(target)
+            os.startfile(advisor_root())
             self.log_message("[AI ADVISOR] Opened Advisor folder.", target="manual")
         except Exception as exc:
             self._set_advisor_status("Advisor folder ERR", str(exc))

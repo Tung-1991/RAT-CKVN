@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Chuyển setting bằng đúng hai thư mục phẳng: data/copy/public và private."""
+"""Chuyển setting bằng ba thư mục cố định: public, private và rollback."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,7 @@ DATA_ROOT = PROJECT_ROOT / "data"
 COPY_ROOT = DATA_ROOT / "copy"
 PUBLIC_COPY_ROOT = COPY_ROOT / "public"
 PRIVATE_COPY_ROOT = COPY_ROOT / "private"
-BACKUP_ROOT = COPY_ROOT / "_backups"
+ROLLBACK_ROOT = COPY_ROOT / "rollback"
 
 PUBLIC_SOURCE_MAP = {
     "brain_settings.json": Path("brain_settings.json"),
@@ -28,12 +29,13 @@ PUBLIC_SOURCE_MAP = {
     "presets_config.json": Path("presets_config.json"),
     "advisor_prompt.md": Path("advisor/advisor_prompt.md"),
     "advisor_flow.md": Path("advisor/advisor_flow.md"),
+    "advisor_api_settings.json": Path("advisor_api_settings.json"),
 }
 PRIVATE_SOURCE_MAP = {
     "user_context.md": Path("advisor/user_context.md"),
     "expert_context.md": Path("advisor/expert_context.md"),
-    "advisor_response.md": Path("advisor/advisor_response.md"),
     "private_context.md": Path("ckcs_research/private_context.md"),
+    "scan_snapshot_cache.json": Path("ckcs_research/scan_snapshot_cache.json"),
 }
 PUBLIC_SPECIAL_FILES = {"portable_settings.json", "templates_bundle.json"}
 MANIFEST_FILE = "manifest.json"
@@ -52,13 +54,10 @@ PUBLIC_ENV_KEYS = (
 )
 SENSITIVE_KEY_PARTS = (
     "api_key", "api_secret", "access_token", "refresh_token", "trading_token",
-    "bot_token", "password", "passcode", "otp", "chat_id", "account_no", "custody",
+    "bot_token", "password", "passcode", "otp", "chat_id", "account_no", "account_id",
+    "active_account", "customer_id", "custody",
 )
-IGNORED_ACCOUNT_DIRS = {"copy", "logs", "paper", "templates"}
-
-
-def _timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+IGNORED_ACCOUNT_DIRS = {"copy", "logs", "paper", "templates", "rollback"}
 
 
 def _sha256(path: Path) -> str:
@@ -80,6 +79,18 @@ def _sanitize_json(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_json(item) for item in value]
     return value
+
+
+def _sanitize_public_text(text: str, env_values: dict[str, str]) -> str:
+    clean = str(text or "")
+    for key, value in env_values.items():
+        if _is_sensitive_key(key) and value:
+            clean = clean.replace(str(value), "[REDACTED]")
+    clean = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", clean)
+    clean = re.sub(r"\b\d{8,12}:[A-Za-z0-9_-]{20,}\b", "[REDACTED]", clean)
+    clean = re.sub(r"(?<![\d.-])\d{9,14}(?![\d.-])", "[ACCOUNT]", clean)
+    clean = re.sub(r"[A-Za-z]:\\[^\r\n`\"']+", "[LOCAL_PATH]", clean)
+    return clean
 
 
 def _safe_target(path: Path) -> Path:
@@ -129,6 +140,7 @@ def _write_safe_env_values(env_path: Path, values: dict[str, object]) -> None:
 def ensure_copy_layout(copy_root: Path = COPY_ROOT) -> None:
     (Path(copy_root) / "public").mkdir(parents=True, exist_ok=True)
     (Path(copy_root) / "private").mkdir(parents=True, exist_ok=True)
+    (Path(copy_root) / "rollback").mkdir(parents=True, exist_ok=True)
 
 
 def clear_generated_packages(copy_root: Path = COPY_ROOT) -> list[Path]:
@@ -171,6 +183,7 @@ def _write_json(path: Path, value: Any) -> None:
 def _export_flat_files(account_dir: Path, folder: Path, category: str, env_path: Path) -> list[str]:
     mapping = PUBLIC_SOURCE_MAP if category == "public" else PRIVATE_SOURCE_MAP
     files: list[str] = []
+    env_values = _read_env_values(env_path)
     for output_name, source_relative in mapping.items():
         source = account_dir / source_relative
         if not source.is_file():
@@ -179,12 +192,16 @@ def _export_flat_files(account_dir: Path, folder: Path, category: str, env_path:
         if category == "public" and source.suffix.lower() == ".json":
             with source.open("r", encoding="utf-8-sig") as handle:
                 _write_json(target, _sanitize_json(json.load(handle)))
+        elif category == "public" and source.suffix.lower() == ".md":
+            target.write_text(
+                _sanitize_public_text(source.read_text(encoding="utf-8-sig"), env_values),
+                encoding="utf-8",
+            )
         else:
             shutil.copy2(source, target)
         files.append(output_name)
 
     if category == "public":
-        env_values = _read_env_values(env_path)
         portable = {key: env_values[key] for key in PUBLIC_ENV_KEYS if key in env_values and not _is_sensitive_key(key)}
         _write_json(folder / "portable_settings.json", portable)
         files.append("portable_settings.json")
@@ -208,7 +225,7 @@ def _write_manifest(folder: Path, category: str, files: list[str]) -> None:
     targets = {name: target.as_posix() for name, target in mapping.items() if name in files}
     hashes = {name: _sha256(folder / name) for name in files}
     _write_json(folder / MANIFEST_FILE, {
-        "version": 3,
+        "version": 4,
         "category": category,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "files": files,
@@ -258,6 +275,8 @@ def load_manifest(package_dir: Path) -> dict[str, Any]:
         manifest = json.load(handle)
     if not isinstance(manifest, dict) or manifest.get("category") not in {"public", "private"}:
         raise ValueError("Manifest không hợp lệ.")
+    if int(manifest.get("version", 0) or 0) not in {3, 4}:
+        raise ValueError("Phiên bản manifest không được hỗ trợ.")
     if not isinstance(manifest.get("files"), list) or not isinstance(manifest.get("sha256"), dict):
         raise ValueError("Manifest thiếu danh sách kiểm tra.")
     return manifest
@@ -291,7 +310,114 @@ def _backup_file(source: Path, backup: Path, backed_up: list[str]) -> None:
     if source.is_file():
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, backup)
-        backed_up.append(source.name)
+        backed_up.append(backup.as_posix())
+
+
+def _prepare_rollback(copy_root: Path) -> Path:
+    root = Path(copy_root).resolve()
+    rollback = (root / "rollback").resolve()
+    if rollback.parent != root:
+        raise ValueError("Thư mục rollback không hợp lệ.")
+    rollback.mkdir(parents=True, exist_ok=True)
+    for child in list(rollback.iterdir()):
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    return rollback
+
+
+def _entry_is_eod(entry: Any) -> bool:
+    return isinstance(entry, dict) and (
+        bool(entry.get("eod_final")) or str(entry.get("day_status", "")).upper() == "EOD"
+    )
+
+
+def _entry_freshness(entry: Any) -> tuple[str, int]:
+    if not isinstance(entry, dict):
+        return ("", 0)
+    return (
+        str(entry.get("last_scan") or ""),
+        int(entry.get("samples", 0) or 0),
+    )
+
+
+def _merge_raw_cache(target_value: Any, source_value: Any, retention_days: int = 250) -> dict[str, Any]:
+    """Gộp đúng một bản ghi cho mỗi mã/ngày: EOD thắng, sau đó bản mới hơn."""
+    target = target_value if isinstance(target_value, dict) else {}
+    source = source_value if isinstance(source_value, dict) else {}
+    merged: dict[str, Any] = dict(target)
+    merged.update({key: value for key, value in source.items() if key != "symbols"})
+    target_symbols = target.get("symbols", {}) if isinstance(target.get("symbols"), dict) else {}
+    source_symbols = source.get("symbols", {}) if isinstance(source.get("symbols"), dict) else {}
+    merged_symbols: dict[str, Any] = {}
+    for symbol in sorted(set(target_symbols) | set(source_symbols)):
+        target_node = target_symbols.get(symbol, {})
+        source_node = source_symbols.get(symbol, {})
+        node = dict(target_node) if isinstance(target_node, dict) else {}
+        if isinstance(source_node, dict):
+            node.update({key: value for key, value in source_node.items() if key != "days"})
+        target_days = target_node.get("days", {}) if isinstance(target_node, dict) else {}
+        source_days = source_node.get("days", {}) if isinstance(source_node, dict) else {}
+        if not isinstance(target_days, dict):
+            target_days = {}
+        if not isinstance(source_days, dict):
+            source_days = {}
+        days: dict[str, Any] = {}
+        for day in sorted(set(target_days) | set(source_days)):
+            old = target_days.get(day)
+            new = source_days.get(day)
+            if old is None:
+                chosen = new
+            elif new is None:
+                chosen = old
+            elif _entry_is_eod(new) != _entry_is_eod(old):
+                chosen = new if _entry_is_eod(new) else old
+            else:
+                chosen = new if _entry_freshness(new) >= _entry_freshness(old) else old
+            days[str(day)] = chosen
+        keep = max(1, int(retention_days or 250))
+        if len(days) > keep:
+            days = {day: days[day] for day in sorted(days)[-keep:]}
+        node["days"] = days
+        merged_symbols[str(symbol).upper()] = node
+    merged["symbols"] = merged_symbols
+    merged["schema_version"] = max(
+        int(target.get("schema_version", 0) or 0),
+        int(source.get("schema_version", 0) or 0),
+        2,
+    )
+    merged["updated_at"] = max(
+        str(target.get("updated_at") or ""),
+        str(source.get("updated_at") or ""),
+    ) or None
+    return merged
+
+
+def _raw_retention_days(target_account_dir: Path) -> int:
+    path = target_account_dir / "brain_settings.json"
+    if path.is_file():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+            return max(1, int(value.get("SCAN_SNAPSHOT_RETENTION_DAYS", 250) or 250))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    return 250
+
+
+def _restore_raw_cache(source: Path, target: Path, retention_days: int) -> None:
+    with source.open("r", encoding="utf-8-sig") as handle:
+        source_value = json.load(handle)
+    if target.is_file():
+        with target.open("r", encoding="utf-8-sig") as handle:
+            target_value = json.load(handle)
+        value = _merge_raw_cache(target_value, source_value, retention_days)
+    else:
+        value = _merge_raw_cache({}, source_value, retention_days)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_name(f".{target.name}.import.tmp")
+    _write_json(temp, value)
+    os.replace(temp, target)
 
 
 def import_settings(
@@ -300,13 +426,15 @@ def import_settings(
     copy_root: Path = COPY_ROOT,
     stamp: str | None = None,
     env_path: Path | None = None,
+    _rollback_dir: Path | None = None,
 ) -> dict[str, Any]:
+    del stamp
     folder = Path(package_dir).resolve()
     check = validate_package(folder)
     manifest = load_manifest(folder)
     target_account_dir = Path(target_account_dir).resolve()
     env_path = Path(env_path) if env_path is not None else PROJECT_ROOT / ".env"
-    backup_dir = Path(copy_root) / "_backups" / f"{target_account_dir.name}_{stamp or _timestamp()}"
+    backup_dir = Path(_rollback_dir) if _rollback_dir is not None else _prepare_rollback(copy_root)
     restored: list[str] = []
     backed_up: list[str] = []
     targets = manifest.get("targets", {}) if isinstance(manifest.get("targets"), dict) else {}
@@ -314,7 +442,14 @@ def import_settings(
     for name in manifest["files"]:
         source = folder / name
         if name == "portable_settings.json":
-            _backup_file(env_path, backup_dir / ".env", backed_up)
+            current_public_env = {
+                key: value
+                for key, value in _read_env_values(env_path).items()
+                if key in PUBLIC_ENV_KEYS and not _is_sensitive_key(key)
+            }
+            if current_public_env:
+                _write_json(backup_dir / "portable_settings.json", current_public_env)
+                backed_up.append("portable_settings.json")
             with source.open("r", encoding="utf-8-sig") as handle:
                 values = json.load(handle)
             _write_safe_env_values(env_path, values if isinstance(values, dict) else {})
@@ -341,10 +476,13 @@ def import_settings(
             raise ValueError(f"Đích khôi phục không hợp lệ: {name}")
         target = target_account_dir / target_relative
         _backup_file(target, backup_dir / check["category"] / target_relative, backed_up)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name(f".{target.name}.import.tmp")
-        shutil.copy2(source, temp)
-        os.replace(temp, target)
+        if name == "scan_snapshot_cache.json":
+            _restore_raw_cache(source, target, _raw_retention_days(target_account_dir))
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_name(f".{target.name}.import.tmp")
+            shutil.copy2(source, temp)
+            os.replace(temp, target)
         restored.append(target_relative.as_posix())
     return {
         "restored": restored,
@@ -357,11 +495,34 @@ def import_settings(
 
 
 def import_split_settings(public_package_dir: Path, target_account_dir: Path, copy_root: Path = COPY_ROOT, include_private: bool = True, env_path: Path | None = None) -> dict[str, Any]:
-    public_result = import_settings(public_package_dir, target_account_dir, copy_root, _timestamp(), env_path)
+    public_check = validate_package(public_package_dir)
+    if public_check["category"] != "public":
+        raise ValueError("Gói chính phải là PUBLIC.")
     private_result = None
     private_dir = Path(copy_root) / "private"
     if include_private and (private_dir / MANIFEST_FILE).is_file():
-        private_result = import_settings(private_dir, target_account_dir, copy_root, _timestamp(), env_path)
+        private_check = validate_package(private_dir)
+        if private_check["category"] != "private":
+            raise ValueError("Gói PRIVATE không hợp lệ.")
+    rollback_dir = _prepare_rollback(copy_root)
+    public_result = import_settings(
+        public_package_dir,
+        target_account_dir,
+        copy_root,
+        env_path=env_path,
+        _rollback_dir=rollback_dir,
+    )
+    if include_private and (private_dir / MANIFEST_FILE).is_file():
+        private_result = import_settings(
+            private_dir,
+            target_account_dir,
+            copy_root,
+            env_path=env_path,
+            _rollback_dir=rollback_dir,
+        )
+    legacy_backups = Path(copy_root) / "_backups"
+    if legacy_backups.is_dir():
+        shutil.rmtree(legacy_backups)
     return {
         "package_id": "current",
         "public": public_result,

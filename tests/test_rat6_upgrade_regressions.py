@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -478,7 +479,7 @@ def test_external_ai_redaction_removes_secrets_accounts_and_paths(monkeypatch):
     assert "ACCOUNT#" in clean
 
 
-def test_external_package_contains_only_sanitized_copies(monkeypatch, tmp_path):
+def test_external_package_legacy_is_removed_and_direct_files_are_returned(monkeypatch, tmp_path):
     from openpyxl import Workbook
 
     _patch_advisor_account(monkeypatch, tmp_path)
@@ -497,17 +498,10 @@ def test_external_package_contains_only_sanitized_copies(monkeypatch, tmp_path):
     (external_root / "scan_summary.md").write_text("stale", encoding="utf-8")
     (external_root / "scan_report.md").write_text("stale", encoding="utf-8")
     result = exporter.write_external_package()
-    external_context = (tmp_path / "account" / "advisor" / "external_package" / "user_context.md").read_text(encoding="utf-8")
-    manifest = json.loads((tmp_path / "account" / "advisor" / "external_package" / "package_manifest.json").read_text(encoding="utf-8"))
-    assert "package-secret" not in external_context
-    assert "C:\\Users" not in external_context
-    assert manifest["model"] == "gpt-5.6"
     assert result["files"]
-    assert not (external_root / "scan_summary.md").exists()
-    assert not (external_root / "scan_report.md").exists()
-    assert not {"scan_summary.md", "scan_report.md"} & {
-        item["name"] for item in manifest["files"]
-    }
+    assert result["root"] == paths.advisor_root()
+    assert result["manifest"] is None
+    assert not external_root.exists()
 
 
 def test_config_snapshot_redacts_recursive_sensitive_values():
@@ -533,7 +527,7 @@ def test_telegram_tls_is_secure_by_default_and_errors_hide_token(monkeypatch):
     assert "[REDACTED]" in result["error"]
 
 
-def test_custom_template_is_preserved_and_latest_is_created(monkeypatch, tmp_path):
+def test_custom_template_is_preserved_without_latest_file(monkeypatch, tmp_path):
     _patch_advisor_account(monkeypatch, tmp_path)
     template_root = tmp_path / "templates"
     template_root.mkdir()
@@ -544,23 +538,26 @@ def test_custom_template_is_preserved_and_latest_is_created(monkeypatch, tmp_pat
         f.write("custom operator flow")
     exporter.ensure_advisor_flow()
     with open(paths.advisor_flow_path(), encoding="utf-8") as f:
-        assert f.read() == "custom operator flow"
+        text = f.read()
+    assert text.startswith("custom operator flow")
+    assert "Phạm vi Advisor và CKCS Research" in text
     latest = paths.advisor_flow_path().replace(".md", ".latest.md")
-    with open(latest, encoding="utf-8") as f:
-        assert f.read() == "new shipped flow"
+    assert not os.path.exists(latest)
 
 
-def test_pristine_versioned_template_is_auto_upgraded(monkeypatch, tmp_path):
+def test_legacy_template_references_are_migrated_without_version_files(monkeypatch, tmp_path):
     _patch_advisor_account(monkeypatch, tmp_path)
     template_root = tmp_path / "templates"
     template_root.mkdir()
     monkeypatch.setattr(paths, "template_root", lambda: str(template_root))
     (template_root / "advisor_flow.md").write_text("new shipped flow", encoding="utf-8")
-    old = "old pristine flow"
+    old = "old flow\nexternal_package\nscan_summary.md\n"
     with open(paths.advisor_flow_path(), "w", encoding="utf-8") as f:
         f.write(old)
-    with open(exporter._template_state_path(), "w", encoding="utf-8") as f:
-        json.dump({"advisor_flow.md": {"deployed_hash": exporter._text_hash(old)}}, f)
     exporter.ensure_advisor_flow()
     with open(paths.advisor_flow_path(), encoding="utf-8") as f:
-        assert f.read() == "new shipped flow"
+        text = f.read()
+    assert "external_package" not in text
+    assert "scan_summary.md" not in text
+    assert "Phạm vi Advisor và CKCS Research" in text
+    assert not os.path.exists(os.path.join(paths.advisor_root(), ".template_versions.json"))

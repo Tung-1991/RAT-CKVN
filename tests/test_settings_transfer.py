@@ -26,7 +26,7 @@ def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
     _write(account / "ckcs_research" / "private_context.md", "private research")
     _write(account / "templates" / "custom.json", '{"x": 1}')
     _write(account / ".env", "DNSE_API_KEY=secret")
-    _write(account / "advisor_api_settings.json", '{"api_key": "secret"}')
+    _write(account / "advisor_api_settings.json", '{"model": "gpt-5.6", "api_key": "secret"}')
     _write(account / "telegram_settings.json", '{"chat_id": "secret"}')
     _write(account / "bot_state.json", '{"position": 1}')
     _write(account / "ckcs_research" / "scan_snapshot_cache.json", '{"raw": true}')
@@ -49,7 +49,9 @@ def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
         "custom.json": {"x": 1}
     }
     assert not (public / "expert_context.md").exists()
-    assert not (public / "advisor_api_settings.json").exists()
+    assert json.loads((public / "advisor_api_settings.json").read_text(encoding="utf-8")) == {
+        "model": "gpt-5.6"
+    }
     assert not (public / "telegram_settings.json").exists()
     public_brain = json.loads((public / "brain_settings.json").read_text(encoding="utf-8"))
     assert public_brain == {"BOT": True}
@@ -64,7 +66,9 @@ def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
     assert not (private / "advisor_api_settings.json").exists()
     assert not (private / "telegram_settings.json").exists()
     assert not (private / "bot_state.json").exists()
-    assert not (private / "ckcs_research" / "scan_snapshot_cache.json").exists()
+    assert json.loads((private / "scan_snapshot_cache.json").read_text(encoding="utf-8")) == {
+        "raw": True
+    }
 
 
 def test_import_pair_backs_up_and_restores_public_and_private(tmp_path):
@@ -95,7 +99,7 @@ def test_import_pair_backs_up_and_restores_public_and_private(tmp_path):
 
     assert (target / "brain_settings.json").read_text(encoding="utf-8").strip() == '{\n  "source": true\n}'
     assert (target / "advisor" / "expert_context.md").read_text(encoding="utf-8") == "source expert"
-    backup_root = data_root / "copy" / "_backups"
+    backup_root = data_root / "copy" / "rollback"
     backups = list(backup_root.rglob("brain_settings.json"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == '{"target": true}'
@@ -103,6 +107,87 @@ def test_import_pair_backs_up_and_restores_public_and_private(tmp_path):
     assert "DNSE_CKCS_WATCHLIST=AAA,FPT" in target_env_text
     assert "DNSE_API_KEY=target-secret" in target_env_text
     assert result["restored"] == 3
+
+
+def test_restore_raw_merges_by_symbol_day_and_prefers_eod(tmp_path):
+    data_root = tmp_path / "data"
+    source = data_root / "111"
+    target = data_root / "222"
+    _write(source / "brain_settings.json", '{"SCAN_SNAPSHOT_RETENTION_DAYS": 250}')
+    _write(target / "brain_settings.json", '{"SCAN_SNAPSHOT_RETENTION_DAYS": 250}')
+    _write(
+        source / "ckcs_research" / "scan_snapshot_cache.json",
+        json.dumps({
+            "schema_version": 2,
+            "updated_at": "2026-07-24 15:00:00",
+            "symbols": {
+                "AAA": {"days": {
+                    "2026-07-23": {"day_status": "EOD", "eod_final": True, "last_scan": "14:50", "samples": 9},
+                    "2026-07-24": {"day_status": "INTRADAY", "last_scan": "10:00", "samples": 2},
+                }}
+            },
+        }),
+    )
+    _write(
+        target / "ckcs_research" / "scan_snapshot_cache.json",
+        json.dumps({
+            "schema_version": 2,
+            "updated_at": "2026-07-24 14:00:00",
+            "symbols": {
+                "AAA": {"days": {
+                    "2026-07-23": {"day_status": "INTRADAY", "last_scan": "14:59", "samples": 20},
+                    "2026-07-24": {"day_status": "INTRADAY", "last_scan": "11:00", "samples": 3},
+                }},
+                "FPT": {"days": {
+                    "2026-07-24": {"day_status": "EOD", "eod_final": True, "last_scan": "14:50", "samples": 7}
+                }},
+            },
+        }),
+    )
+    exported = settings_transfer.export_split_settings(
+        source,
+        data_root / "copy",
+        env_path=tmp_path / ".env",
+    )
+
+    settings_transfer.import_split_settings(
+        exported["public_dir"],
+        target,
+        copy_root=data_root / "copy",
+        env_path=tmp_path / ".env",
+    )
+
+    merged = json.loads(
+        (target / "ckcs_research" / "scan_snapshot_cache.json").read_text(encoding="utf-8")
+    )
+    assert merged["symbols"]["AAA"]["days"]["2026-07-23"]["day_status"] == "EOD"
+    assert merged["symbols"]["AAA"]["days"]["2026-07-24"]["last_scan"] == "11:00"
+    assert "FPT" in merged["symbols"]
+
+
+def test_repeated_restore_keeps_only_one_fixed_rollback(tmp_path):
+    data_root = tmp_path / "data"
+    source = data_root / "111"
+    target = data_root / "222"
+    _write(source / "brain_settings.json", '{"version": 2}')
+    _write(target / "brain_settings.json", '{"version": 1}')
+    exported = settings_transfer.export_split_settings(
+        source, data_root / "copy", env_path=tmp_path / ".env"
+    )
+    settings_transfer.import_split_settings(
+        exported["public_dir"], target, data_root / "copy", env_path=tmp_path / ".env"
+    )
+    _write(target / "brain_settings.json", '{"version": 3}')
+    settings_transfer.import_split_settings(
+        exported["public_dir"], target, data_root / "copy", env_path=tmp_path / ".env"
+    )
+
+    rollback = data_root / "copy" / "rollback"
+    assert sorted(
+        path.name for path in data_root.joinpath("copy").iterdir() if path.is_dir()
+    ) == ["private", "public", "rollback"]
+    saved = rollback / "public" / "brain_settings.json"
+    assert json.loads(saved.read_text(encoding="utf-8")) == {"version": 3}
 
 
 def test_validate_detects_modified_package(tmp_path):
@@ -120,6 +205,23 @@ def test_validate_detects_modified_package(tmp_path):
     _write(public / "brain_settings.json", '{"changed": true}')
     with pytest.raises(ValueError, match="bị sửa hoặc hỏng"):
         settings_transfer.validate_package(public)
+
+
+def test_current_public_manifest_v3_remains_readable(tmp_path):
+    account = tmp_path / "data" / "111"
+    _write(account / "brain_settings.json", '{"ok": true}')
+    result = settings_transfer.export_split_settings(
+        account,
+        tmp_path / "data" / "copy",
+        env_path=tmp_path / ".env",
+    )
+    public = Path(result["public_dir"])
+    manifest_path = public / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 3
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert settings_transfer.validate_package(public)["valid"] is True
 
 
 def test_delete_removes_public_private_pair_only(tmp_path):

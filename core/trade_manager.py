@@ -829,9 +829,25 @@ class TradeManager:
         if stock_guard:
             return stock_guard
 
+        priority_symbols = {
+            str(item or "").strip().upper()
+            for item in (brain.get("PRIORITY_SYMBOLS", []) or [])
+            if str(item or "").strip()
+        }
+        is_priority_symbol = (
+            settlement.is_cash_stock(symbol)
+            and str(symbol or "").strip().upper() in priority_symbols
+        )
+
         # Gọi Checklist độc lập của Bot
         res = self.checklist.run_bot_safeguard_checks(
-            acc_info, self.state, symbol, safeguard_cfg, signal_class, direction
+            acc_info,
+            self.state,
+            symbol,
+            safeguard_cfg,
+            signal_class,
+            direction,
+            priority_symbol=is_priority_symbol,
         )
 
         if not res["passed"]:

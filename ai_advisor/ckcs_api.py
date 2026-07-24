@@ -26,8 +26,10 @@ CKCS_API_PROMPT = """Bạn là AI phân tích dữ liệu CKCS cho RAT-CKVN.
 Đọc scan report và private context được cung cấp rồi trả lời bằng tiếng Việt, rõ ràng và dựa trên dữ liệu.
 Python chỉ thu thập và gửi dữ liệu; không được tuyên bố app đã tự chọn, tự chấm điểm hay tự đặt lệnh.
 Chỉ phân tích module CHECK thực sự xuất hiện. Phân biệt dữ liệu RAT-CKVN với thông tin web mới.
-Nếu private context yêu cầu so sánh hoặc xếp hạng thì thực hiện trong câu trả lời; nếu không, chỉ trình bày nhận định, rủi ro và điểm cần theo dõi.
-Không thay đổi setting, không phát lệnh và không coi output là lệnh giao dịch."""
+Xếp hạng các mã đủ dữ liệu và gán đúng một trạng thái: WATCH, CHỜ MUA, MUA, HOLD, GIẢM, EXIT hoặc LOẠI.
+Với mỗi mã đáng chú ý, nêu: vùng mua; điều kiện kích hoạt; mức không mua đuổi; mốc nhận định sai hoặc SL; TP hoặc cách trailing; thời gian giữ; tỷ trọng đề xuất; ngày hết hiệu lực.
+Nếu có nhận định CKCS trước đó, nêu rõ lý do thay đổi. Được phép kết luận không có mã phù hợp.
+Không thay đổi setting, không phát lệnh và không coi output là lệnh giao dịch. AI chỉ đề xuất tỷ trọng; app không tự chuyển kết quả thành lệnh CKCS."""
 
 
 def normalize_session(session):
@@ -78,6 +80,16 @@ def build_input(session):
     ]
     if private_context.strip():
         parts.append(f"# private_context.md\n{private_context}")
+    previous_session = "afternoon" if session == "morning" else "morning"
+    previous_response = _read(
+        paths.ckcs_response_path(previous_session),
+        settings.get("previous_response_limit", 60_000),
+    )
+    if previous_response.strip():
+        parts.append(
+            f"# NHẬN ĐỊNH CKCS TRƯỚC ĐÓ ({previous_session})\n"
+            f"{previous_response}"
+        )
     return api_client._sanitize_external_text("\n\n".join(parts))
 
 
@@ -212,4 +224,3 @@ def send_session_to_api(session):
             return {"ok": False, "error": api_client._safe_error_text(exc, key)}
         except Exception as exc:
             return {"ok": False, "error": api_client._safe_error_text(exc, key)}
-

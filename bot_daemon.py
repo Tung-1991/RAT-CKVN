@@ -19,6 +19,7 @@ from core.market_hours import (
     seconds_until_network_open,
 )
 from core.position_classifier import is_bot_position, is_manual_position
+from core.volatility_brake import VolatilityBrakeDetector
 from signals.signal_generator import signal_generator
 from core.storage_manager import get_brain_settings_for_symbol
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log
@@ -78,6 +79,17 @@ class StandaloneBotDaemon:
         self.heartbeat_contexts, restored_symbols = self._restore_heartbeat_snapshot()
         self._last_heartbeat_write = 0.0
         self.last_entry_signal_times = {}
+        self.volatility_brake = VolatilityBrakeDetector()
+        self._volatility_brake_inflight = False
+        self._volatility_brake_lock = threading.Lock()
+        try:
+            import core.storage_manager as storage_manager
+
+            self._volatility_brake_latched_until = float(
+                storage_manager.load_state().get("cooldown_until", 0.0) or 0.0
+            )
+        except Exception:
+            self._volatility_brake_latched_until = 0.0
         self._tick_thread = None
         self._active_symbols = restored_symbols
         # Chỉ dọn hàng đợi lệnh cũ. Context cuối dùng cho giá/Preview phải được giữ
@@ -366,12 +378,254 @@ class StandaloneBotDaemon:
         self._tick_symbols_cache = (now, picked)
         return picked
 
+    @staticmethod
+    def _order_result_ok(result):
+        if isinstance(result, dict):
+            return bool(result.get("ok"))
+        return bool(getattr(result, "ok", False))
+
+    def _arm_volatility_global_cooldown(self, event, safeguard_cfg):
+        from core import storage_manager
+
+        state = storage_manager.load_state()
+        storage_manager.apply_state_defaults(state)
+        cooldown_hours = max(
+            0.01, float((safeguard_cfg or {}).get("GLOBAL_COOLDOWN_HOURS", 4.0) or 4.0)
+        )
+        until = time.time() + cooldown_hours * 3600.0
+        reason = (
+            f"VOLATILITY_BRAKE {event.get('symbol')} {event.get('direction')} "
+            f"{event.get('change_pct', 0.0):+.2f}%"
+        )
+        item, created = storage_manager.mark_safeguard_brake(
+            state,
+            "GLOBAL",
+            reason,
+            until,
+            trigger=dict(event),
+        )
+        if not created and float(item.get("until", 0.0) or 0.0) < until:
+            item.update(
+                {
+                    "reason": reason,
+                    "until": until,
+                    "trigger": dict(event),
+                    "created_at": time.time(),
+                }
+            )
+            state.setdefault("active_brake", {}).update({"global": item})
+        state["cooldown_until"] = max(
+            float(state.get("cooldown_until", 0.0) or 0.0),
+            until,
+        )
+        storage_manager.save_state(state)
+        return cooldown_hours, until
+
+    def _cancel_pending_entries_for_brake(self, symbols):
+        cancelled_local = cancelled_broker = failed_broker = 0
+        try:
+            from core import pending_orders
+
+            for item in pending_orders.list_active():
+                if pending_orders.mark(
+                    item.get("id"),
+                    pending_orders.CANCELLED,
+                    "VOLATILITY_BRAKE",
+                ):
+                    cancelled_local += 1
+        except Exception as exc:
+            logger.warning("[VOLATILITY BRAKE] Hủy lệnh chờ local lỗi: %s", exc)
+
+        if getattr(config, "PAPER_TRADING", True):
+            return cancelled_local, cancelled_broker, failed_broker
+
+        open_statuses = {
+            "NEW", "PENDING", "WAITING", "PARTIAL", "PARTIALLY_FILLED",
+            "PARTIALLYFILLED", "OPEN",
+        }
+        seen = set()
+        for symbol in symbols:
+            try:
+                orders = self.connector.get_orders(
+                    symbol=symbol,
+                    orderCategory=getattr(self.connector, "order_category", "NORMAL"),
+                )
+            except Exception:
+                orders = []
+            for order in orders or []:
+                status = str(order.get("status", "") or "").strip().upper()
+                if status not in open_statuses:
+                    continue
+                order_id = str(
+                    order.get("id")
+                    or order.get("orderId")
+                    or order.get("order_id")
+                    or ""
+                )
+                order_symbol = str(order.get("symbol") or symbol or "").upper()
+                if not order_id or order_id in seen:
+                    continue
+                seen.add(order_id)
+                try:
+                    result = self.connector.cancel_order(order_id, symbol=order_symbol)
+                    if self._order_result_ok(result):
+                        cancelled_broker += 1
+                    else:
+                        failed_broker += 1
+                except Exception:
+                    failed_broker += 1
+        return cancelled_local, cancelled_broker, failed_broker
+
+    def _close_all_for_volatility_brake(self):
+        try:
+            positions = list(self.connector.get_all_open_positions() or [])
+        except Exception as exc:
+            logger.error("[VOLATILITY BRAKE] Không đọc được vị thế để đóng: %s", exc)
+            return 0, 1, []
+
+        closed = failed = 0
+        failures = []
+        for position in positions:
+            ticket = str(
+                getattr(position, "position_id", None)
+                or getattr(position, "ticket", None)
+                or ""
+            )
+            symbol = str(getattr(position, "symbol", "") or "")
+            try:
+                result = self.connector.close_position(
+                    position,
+                    comment="VOLATILITY_BRAKE",
+                )
+                if self._order_result_ok(result):
+                    closed += 1
+                else:
+                    failed += 1
+                    failures.append(f"{symbol}#{ticket}")
+            except Exception:
+                failed += 1
+                failures.append(f"{symbol}#{ticket}")
+        return closed, failed, failures
+
+    def _run_volatility_brake_action(self, event, safeguard_cfg):
+        try:
+            cooldown_hours, cooldown_until = self._arm_volatility_global_cooldown(
+                event, safeguard_cfg
+            )
+            self._volatility_brake_latched_until = cooldown_until
+            with _SIGNAL_WRITE_LOCK:
+                self.pending_signals.clear()
+                self._atomic_write_signals(self._active_symbols)
+
+            symbols = list(dict.fromkeys(
+                list(self._active_symbols or [])
+                + [
+                    str(getattr(pos, "symbol", "") or "").upper()
+                    for pos in (self.connector.get_all_open_positions() or [])
+                ]
+            ))
+            local_cancelled, broker_cancelled, broker_cancel_failed = (
+                self._cancel_pending_entries_for_brake(symbols)
+            )
+            closed, close_failed, close_failures = self._close_all_for_volatility_brake()
+
+            event = dict(event)
+            event.update(
+                {
+                    "cooldown_hours": cooldown_hours,
+                    "cooldown_until": cooldown_until,
+                    "closed_positions": closed,
+                    "failed_positions": close_failed,
+                    "failed_position_ids": close_failures,
+                    "cancelled_local_orders": local_cancelled,
+                    "cancelled_broker_orders": broker_cancelled,
+                    "failed_broker_cancels": broker_cancel_failed,
+                    "completed_at": time.time(),
+                }
+            )
+
+            from core import storage_manager
+
+            state = storage_manager.load_state()
+            storage_manager.apply_state_defaults(state)
+            state.setdefault("volatility_events", []).append(event)
+            state["volatility_events"] = state["volatility_events"][-100:]
+            storage_manager.save_state(state)
+
+            direction = "TĂNG" if event.get("direction") == "UP" else "GIẢM"
+            unit_value = (
+                f"{event.get('change_points', 0.0):+.2f} điểm"
+                if event.get("threshold_unit") == "POINTS"
+                else f"{event.get('change_pct', 0.0):+.2f}%"
+            )
+            message = (
+                "🛑 PHANH BIẾN ĐỘNG TOÀN HỆ THỐNG\n"
+                f"{event.get('symbol')} {direction} {unit_value} trong "
+                f"{event.get('window_seconds', 0.0):.0f} giây\n"
+                f"Đã đóng: {closed} | Đóng lỗi: {close_failed}\n"
+                f"Hủy lệnh chờ: local {local_cancelled}, DNSE {broker_cancelled}, "
+                f"lỗi {broker_cancel_failed}\n"
+                f"BOT khóa Global Cooldown {cooldown_hours:g} giờ."
+            )
+            logger.critical(message.replace("\n", " | "))
+
+            try:
+                from telegram_notify.reporter import send_text_report
+
+                result = send_text_report(
+                    message,
+                    title="RAT6 PHANH BIẾN ĐỘNG",
+                    require_enabled=True,
+                )
+                if not result.get("ok") and not result.get("skipped"):
+                    logger.warning(
+                        "[VOLATILITY BRAKE] Telegram lỗi: %s",
+                        result.get("error", "unknown"),
+                    )
+            except Exception as exc:
+                logger.warning("[VOLATILITY BRAKE] Telegram lỗi: %s", exc)
+
+            try:
+                from ai_advisor.scan_report import append_volatility_event_to_existing_reports
+
+                append_volatility_event_to_existing_reports(event)
+            except Exception as exc:
+                logger.warning("[VOLATILITY BRAKE] Ghi báo cáo MD lỗi: %s", exc)
+        finally:
+            with self._volatility_brake_lock:
+                self._volatility_brake_inflight = False
+
+    def _observe_volatility_brake(self, symbol, tick, safeguard_cfg):
+        if time.time() < float(self._volatility_brake_latched_until or 0.0):
+            return
+        event = self.volatility_brake.observe(
+            symbol,
+            tick.get("last", 0.0),
+            safeguard_cfg,
+            timestamp=tick.get("timestamp", time.time()),
+            freshness=tick.get("freshness", "FRESH"),
+        )
+        if not event:
+            return
+        with self._volatility_brake_lock:
+            if self._volatility_brake_inflight:
+                return
+            self._volatility_brake_inflight = True
+        threading.Thread(
+            target=self._run_volatility_brake_action,
+            args=(event, dict(safeguard_cfg or {})),
+            daemon=True,
+            name="volatility-brake",
+        ).start()
+
     def _tick_update_loop(self):
         """Luồng riêng: poll giá real-time mỗi 2 giây qua trades/latest + quotes/latest."""
         tick_interval = 2.0
         idle_interval = 30.0  # [FIX 429] Ngoài giờ nghỉ dài, khỏi đập quotes/latest.
         while self.running:
             try:
+                live_cfg = self._read_live_config()
+                safeguard_cfg = live_cfg.get("bot_safeguard", {}) or {}
                 watched = self._active_symbols or getattr(config, "BOT_ACTIVE_SYMBOLS", [])
                 if not is_any_network_window_open(watched or None, include_preopen=False):
                     time.sleep(min(idle_interval, max(1.0, seconds_until_network_open(watched or None))))
@@ -389,6 +643,7 @@ class StandaloneBotDaemon:
                         break
                     tick = data_engine.fetch_realtime_tick(sym)
                     if tick:
+                        self._observe_volatility_brake(sym, tick, safeguard_cfg)
                         # Ghi tick vào heartbeat context để UI nhận
                         with _SIGNAL_WRITE_LOCK:
                             ctx = self.heartbeat_contexts.get(sym, {})
@@ -458,6 +713,16 @@ class StandaloneBotDaemon:
                 )
                 trade_symbols = [str(item).upper() for item in (trade_symbols or []) if str(item).strip()]
                 raw_symbols = [str(item).upper() for item in (raw_symbols or []) if str(item).strip()]
+                priority_symbols = [
+                    str(item).upper()
+                    for item in (live_cfg.get("PRIORITY_SYMBOLS", []) or [])
+                    if str(item).strip()
+                ]
+                priority_set = set(priority_symbols)
+                trade_symbols = (
+                    [item for item in priority_symbols if item in trade_symbols]
+                    + [item for item in trade_symbols if item not in priority_set]
+                )
                 symbols = list(dict.fromkeys(trade_symbols + (raw_symbols if self._scan_snapshot_enabled else [])))
                 self._active_symbols = symbols
 
@@ -592,6 +857,12 @@ class StandaloneBotDaemon:
         signal_debug_state = {}
         trade_symbols = {str(item).upper() for item in (trade_symbols if trade_symbols is not None else symbols)}
         raw_symbols = {str(item).upper() for item in (raw_symbols if raw_symbols is not None else symbols)}
+        live_cfg = self._read_live_config()
+        priority_symbols = {
+            str(item).upper()
+            for item in (live_cfg.get("PRIORITY_SYMBOLS", []) or [])
+            if str(item).strip()
+        }
 
         for sym in symbols:
             if not self.running:
@@ -610,6 +881,7 @@ class StandaloneBotDaemon:
             # Đảm bảo UI luôn nhận được cấu trúc thị trường mới nhất ngay cả khi Bot đang tắt (Manual Mode)
             signal = signal_generator.generate_signal_v4(dfs, context, symbol=sym)
             context["latest_signal"] = signal # [NEW V4.4] Phục vụ logic REV_C
+            context["priority_symbol"] = sym in priority_symbols
             context["market_open"] = bool(is_open)
             context["market_closed_reason"] = "" if is_open else closed_reason
             if not is_open:

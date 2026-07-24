@@ -22,6 +22,9 @@ load_dotenv(encoding="utf-8-sig")
 COIN_LIST = ["VN30F1M"]
 DEFAULT_SYMBOL = "VN30F1M"
 BOT_ACTIVE_SYMBOLS = ["VN30F1M"]
+# CKCS được người vận hành đánh dấu ưu tiên. Chỉ vượt giới hạn tổng số vị thế mở;
+# không vượt cooldown, max-loss, spread, risk gate hoặc phanh biến động.
+PRIORITY_SYMBOLS = []
 CKPS_SYMBOLS = [s.strip().upper() for s in os.getenv("DNSE_CKPS_WATCHLIST", "VN30F1M").split(",") if s.strip()]
 CKCS_WATCHLIST = [s.strip().upper() for s in os.getenv("DNSE_CKCS_WATCHLIST", "").split(",") if s.strip()]
 # Mã hợp đồng phái sinh THẬT (vd 41I1G6000, đổi theo tháng đáo hạn) — để settlement biết KHÔNG phải CKCS.
@@ -313,6 +316,13 @@ BOT_SAFEGUARD = {
     "MAX_OPEN_POSITIONS": 3,
     "MAX_TRADES_PER_DAY": 30,
     "MAX_LOSING_STREAK": 3,
+    # Phanh biến động: so trực tiếp giá trong cửa sổ ngắn, không dùng indicator/AI.
+    # Khi đủ số lần xác nhận: đóng toàn bộ vị thế, khóa Global Cooldown và gửi cảnh báo.
+    "VOLATILITY_BRAKE_ENABLED": False,
+    "VOLATILITY_BRAKE_WINDOW_SECONDS": 60.0,
+    "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
+    "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,
+    "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
     # [CKCS] Bật: lô CKCS tính theo rủi ro < 1 lô -> ép lên 1 lô chẵn (100 CP), chấp nhận rủi ro > mục tiêu %. Tắt = bỏ lệnh.
     "FORCE_MIN_LOT": False,
     # [CKCS] Cap giá trị 1 lệnh cổ phiếu cơ sở ≤ % NAV (0 = tắt). Chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã.

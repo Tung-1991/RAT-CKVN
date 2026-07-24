@@ -172,7 +172,8 @@ class ChecklistManager:
         return {"passed": all_passed, "checks": checks}
 
     def run_bot_safeguard_checks(
-        self, account_info, state, symbol, safeguard_cfg, signal_class="ENTRY", direction=None
+        self, account_info, state, symbol, safeguard_cfg, signal_class="ENTRY",
+        direction=None, priority_symbol=False,
     ) -> dict:
         apply_state_defaults(state)
         changed = rollover_daily_session(state)
@@ -444,7 +445,7 @@ class ChecklistManager:
 
         if signal_class == "ENTRY":
             # 1. Kiểm tra tổng số lệnh Bot (Chỉ tính lệnh Gốc)
-            if len(parent_bot_pos) >= max_open:
+            if len(parent_bot_pos) >= max_open and not priority_symbol:
                 checks.append(
                     {
                         "name": "Trạng thái",
@@ -453,6 +454,17 @@ class ChecklistManager:
                     }
                 )
                 all_passed = False
+            elif len(parent_bot_pos) >= max_open and priority_symbol:
+                checks.append(
+                    {
+                        "name": "Priority",
+                        "status": "OK",
+                        "msg": (
+                            f"{symbol} là mã PRIORITY: bỏ qua giới hạn tổng "
+                            f"{len(parent_bot_pos)}/{max_open}"
+                        ),
+                    }
+                )
 
             # 2. Kiểm tra giới hạn riêng cho từng Symbol (Chỉ tính lệnh Gốc)
             symbol_parent_pos = [p for p in parent_bot_pos if p.symbol == symbol]

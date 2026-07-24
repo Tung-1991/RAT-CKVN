@@ -5,7 +5,6 @@ import logging
 import os
 import random
 import re
-import shutil
 import time
 import urllib.error
 import urllib.request
@@ -19,10 +18,12 @@ logger = logging.getLogger("RAT_CKVN")
 
 DEFAULT_PROMPT = """Bạn là AI Advisor cho RAT-CKVN. Luôn trả lời bằng tiếng Việt, chuyên nghiệp, sắc gọn và dựa trên bằng chứng.
 Đọc advisor_flow.md trước để hiểu RAT-CKVN, sau đó đọc user_context.md, technical_settings.json, advisor_export.xlsx và previous_advisor_response.md nếu có.
+Các file trong thư mục advisor chỉ dùng để đánh giá BOT, setting và lịch sử giao dịch. Nếu người dùng gửi thêm báo cáo CKCS Research, coi đó là bối cảnh thị trường bổ trợ hoặc dữ liệu để nghiên cứu ứng viên CKCS; không trộn tín hiệu BOT với nhận định chọn cổ phiếu.
 Nếu web_search được bật, bắt buộc kiểm tra bối cảnh thị trường mới cho symbol active hoặc symbol có trade trong export; chỉ giữ thông tin web có tác động trực tiếp tới chẩn đoán RAT-CKVN.
 Tách rõ dữ liệu nội bộ RAT-CKVN với bối cảnh thị trường/web. Không viết bản tin tổng hợp, không lặp lại quá nhiều số liệu nếu đã nêu ở evidence.
 Không dùng markdown bold/italic, không dùng ký tự **, không paste URL dài trong thân bài, không dùng bảng Markdown. Ưu tiên report khoảng 700-1000 từ và 1-2 Telegram chunks; nếu dữ liệu phức tạp, được dài hơn nhưng phải gọn và không lặp số liệu.
-Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa config, và không biến lời khuyên trước đó thành sự thật nếu chưa kiểm chứng bằng dữ liệu hiện tại."""
+Không đề xuất đặt lệnh tự động, không yêu cầu bot tự sửa config, và không biến lời khuyên trước đó thành sự thật nếu chưa kiểm chứng bằng dữ liệu hiện tại.
+AI chỉ đề xuất phương án hoặc tỷ trọng; tuyệt đối không tuyên bố app sẽ tự chuyển kết quả AI thành lệnh CKCS."""
 
 TECHNICAL_SETTINGS_LIMIT = 1000000
 PROMPT_LIMIT = 200000
@@ -755,7 +756,7 @@ def estimate_api_payload(include_previous_response=False):
 def send_package_to_api(prompt=None, include_previous_response=False):
     package = validate_advisor_package()
     if not package["ok"]:
-        msg = "Missing/empty advisor package file(s): " + ", ".join(package["missing"]) + ". Generate Advisor Package first."
+        msg = "Thiếu/rỗng file Advisor: " + ", ".join(package["missing"]) + ". Hãy làm mới dữ liệu BOT trước."
         history.record_event("advisor_api_invalid_package", msg, severity="WARN", payload={"missing": package["missing"]})
         return {"ok": False, "error": msg, "package": package}
     settings = load_api_settings()
@@ -851,9 +852,6 @@ def send_package_to_api(prompt=None, include_previous_response=False):
             text = _append_citations(text, citations)
             with open(paths.advisor_response_path(), "w", encoding="utf-8") as f:
                 f.write(text)
-            response_history = paths.advisor_response_history_path()
-            os.makedirs(os.path.dirname(response_history), exist_ok=True)
-            shutil.copy2(paths.advisor_response_path(), response_history)
             actual_model = str(data.get("model") or model) if isinstance(data, dict) else model
             usage = data.get("usage", {}) if isinstance(data, dict) else {}
             history.record_event(
@@ -863,15 +861,13 @@ def send_package_to_api(prompt=None, include_previous_response=False):
                     "model": actual_model,
                     "usage": usage,
                     "citations": len(citations),
-                    "response_history": response_history,
                     "include_previous_response": bool(include_previous_response),
                 },
             )
-            _stdout_log(f"response saved model={actual_model} response={paths.advisor_response_path()} history={response_history}")
+            _stdout_log(f"response saved model={actual_model} response={paths.advisor_response_path()}")
             return {
                 "ok": True,
                 "response": paths.advisor_response_path(),
-                "response_history": response_history,
                 "model": actual_model,
                 "usage": usage,
                 "citations": citations,

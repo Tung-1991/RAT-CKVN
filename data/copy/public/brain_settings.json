@@ -49,6 +49,7 @@
     "VIX",
     "VPG"
   ],
+  "PRIORITY_SYMBOLS": [],
   "SCAN_SNAPSHOT_ENABLED": true,
   "SCAN_SNAPSHOT_INTERVAL_MINUTES": 15,
   "SCAN_SNAPSHOT_RETENTION_DAYS": 250,
@@ -443,9 +444,10 @@
   },
   "check_indicators": {
     "adx": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G0"
+        "G0",
+        "G1"
       ],
       "params": {
         "period": 14,
@@ -454,9 +456,10 @@
       "group_params": {}
     },
     "ema": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G0"
+        "G0",
+        "G1"
       ],
       "params": {
         "period": 50
@@ -506,9 +509,10 @@
       "group_params": {}
     },
     "volume": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G2"
+        "G0",
+        "G1"
       ],
       "params": {
         "period": 20,
@@ -539,9 +543,10 @@
       "group_params": {}
     },
     "bollinger_bands": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G2"
+        "G0",
+        "G1"
       ],
       "params": {
         "period": 20,
@@ -560,9 +565,10 @@
       "group_params": {}
     },
     "rsi": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G2"
+        "G0",
+        "G1"
       ],
       "params": {
         "period": 14,
@@ -586,9 +592,10 @@
       "group_params": {}
     },
     "macd": {
-      "active": false,
+      "active": true,
       "groups": [
-        "G2"
+        "G0",
+        "G1"
       ],
       "params": {
         "fast": 12,
@@ -763,6 +770,11 @@
     "MAX_OPEN_POSITIONS": 6,
     "MAX_TRADES_PER_DAY": 3,
     "MAX_LOSING_STREAK": 3,
+    "VOLATILITY_BRAKE_ENABLED": false,
+    "VOLATILITY_BRAKE_WINDOW_SECONDS": 60.0,
+    "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
+    "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,
+    "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
     "FORCE_MIN_LOT": false,
     "STOCK_MAX_ORDER_NAV_PCT": 20.0,
     "RISK_GATE_MAX_PCT_PS": 10.0,
@@ -870,21 +882,57 @@
   },
   "TSL_LOGIC_MODE": "STATIC",
   "symbol_configs": {},
-  "ai_advisor_schedule": {
-    "mode": "Manual Only",
-    "fixed_time": "",
-    "export_days": 7,
-    "global_emergency": true,
-    "include_previous_response": false,
-    "last_fixed_date": "",
-    "ckcs_auto_report_morning": true,
-    "ckcs_auto_report_afternoon": true,
-    "ckcs_send_api_morning": false,
-    "ckcs_send_api_afternoon": false,
-    "ckcs_morning_time": "11:35",
-    "ckcs_afternoon_time": "14:50",
-    "ckcs_report_days": 15,
-    "ckcs_last_morning_date": "",
-    "ckcs_last_afternoon_date": "2026-07-22"
-  }
+  "AUTO_TRADE_ENABLED": false,
+  "MONEY_DISPLAY_ZERO_TRIM": "000",
+  "MONEY_DISPLAY_UNIT": "K_VND",
+  "PAPER_INITIAL_BALANCE": 100000000.0,
+  "PAPER_SPREAD_POINTS": 0.0,
+  "DNSE_BROKER_FEE_PER_CONTRACT": 0.0,
+  "DNSE_EXCHANGE_FEE_PER_CONTRACT": 2700.0,
+  "DNSE_CLEARING_FEE_PER_CONTRACT": 2550.0,
+  "CKCS_WATCHLIST": [
+    "AAA",
+    "ANV",
+    "CTD",
+    "CTP",
+    "DC4",
+    "DBC",
+    "DCM",
+    "DGC",
+    "DGW",
+    "DIG",
+    "DRC",
+    "DXS",
+    "GEG",
+    "HAG",
+    "HAP",
+    "HAR",
+    "HPG",
+    "HPX",
+    "HT1",
+    "IDC",
+    "ITC",
+    "JVC",
+    "KDH",
+    "LDG",
+    "MBS",
+    "NHA",
+    "NLG",
+    "NVL",
+    "PDR",
+    "PLX",
+    "PNJ",
+    "POW",
+    "QCG",
+    "SCR",
+    "SCS",
+    "TDM",
+    "TLG",
+    "TV2",
+    "VIX",
+    "VPG"
+  ],
+  "CKPS_SYMBOLS": [
+    "VN30F1M"
+  ]
 }
