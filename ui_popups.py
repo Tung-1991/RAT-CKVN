@@ -1998,8 +1998,18 @@ def open_bot_setting_popup(app):
     _fit_popup(top, 1050, 720, 860, 560)
     _bring_popup_to_front(top)
     # top.transient(app) # Khóa Z-index, luôn nổi trên App chính
-    tab_core = _speed_up_scroll(ctk.CTkScrollableFrame(top, fg_color="transparent"))
-    tab_core.pack(fill="both", expand=True, padx=15, pady=15)
+    safeguard_tabs = ctk.CTkTabview(top)
+    safeguard_tabs.pack(fill="both", expand=True, padx=15, pady=(10, 0))
+    tab_core_root = safeguard_tabs.add("GIỚI HẠN BOT")
+    tab_volatility_root = safeguard_tabs.add("THEO DÕI BIẾN ĐỘNG")
+    tab_core = _speed_up_scroll(
+        ctk.CTkScrollableFrame(tab_core_root, fg_color="transparent")
+    )
+    tab_core.pack(fill="both", expand=True, padx=5, pady=5)
+    tab_volatility = _speed_up_scroll(
+        ctk.CTkScrollableFrame(tab_volatility_root, fg_color="transparent")
+    )
+    tab_volatility.pack(fill="both", expand=True, padx=5, pady=5)
     # Switch Auto Trade
     f_auto = ctk.CTkFrame(tab_core, fg_color="transparent")
     f_auto.pack(fill="x", pady=10)
@@ -2287,6 +2297,143 @@ def open_bot_setting_popup(app):
     except Exception:
         pass
 
+    action_labels = {
+        "CHỈ CẢNH BÁO": "ALERT_ONLY",
+        "CHẶN BOT TĂNG VỊ THẾ": "BLOCK_NEW_EXPOSURE",
+        "KHẨN CẤP — ĐÓNG HẾT": "CLOSE_ALL",
+    }
+    action_values = {value: label for label, value in action_labels.items()}
+    var_volatility_brake = ctk.BooleanVar(
+        value=bool(safe_cfg.get("VOLATILITY_BRAKE_ENABLED", False))
+    )
+    var_volatility_telegram = ctk.BooleanVar(
+        value=bool(safe_cfg.get("VOLATILITY_BRAKE_TELEGRAM_ENABLED", True))
+    )
+    vol_panel = ctk.CTkFrame(
+        tab_volatility, fg_color="#20252B", border_width=1, border_color="#FFB300"
+    )
+    vol_panel.pack(fill="x", padx=15, pady=12)
+    ctk.CTkLabel(
+        vol_panel,
+        text="THEO DÕI TĂNG / GIẢM MẠNH",
+        text_color="#FFD54F",
+        font=("Roboto", 16, "bold"),
+    ).pack(anchor="w", padx=18, pady=(15, 4))
+    ctk.CTkLabel(
+        vol_panel,
+        text=(
+            "Chỉ các mã bên dưới mới được kiểm tra. Dùng chung giá của daemon, "
+            "không mở thêm WebSocket hay vòng gọi API riêng."
+        ),
+        text_color="#B0BEC5",
+        wraplength=840,
+        justify="left",
+    ).pack(anchor="w", padx=18, pady=(0, 10))
+
+    vol_grid = ctk.CTkFrame(vol_panel, fg_color="transparent")
+    vol_grid.pack(fill="x", padx=18, pady=5)
+    vol_grid.columnconfigure(1, weight=1)
+    ctk.CTkCheckBox(
+        vol_grid,
+        text="Bật theo dõi biến động",
+        variable=var_volatility_brake,
+        text_color="#FFD54F",
+        font=("Roboto", 13, "bold"),
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=6)
+    ctk.CTkLabel(vol_grid, text="Mã giám sát:").grid(
+        row=1, column=0, sticky="w", padx=(0, 12), pady=6
+    )
+    e_volatility_symbols = ctk.CTkEntry(vol_grid)
+    configured_symbols = safe_cfg.get("VOLATILITY_BRAKE_SYMBOLS", ["VN30F1M"])
+    if isinstance(configured_symbols, str):
+        configured_symbols = configured_symbols.replace(";", ",").split(",")
+    e_volatility_symbols.insert(
+        0,
+        ", ".join(
+            str(symbol or "").strip().upper()
+            for symbol in (configured_symbols or ["VN30F1M"])
+            if str(symbol or "").strip()
+        ),
+    )
+    e_volatility_symbols.grid(row=1, column=1, sticky="ew", pady=6)
+    ctk.CTkLabel(vol_grid, text="Hành động khi kích hoạt:").grid(
+        row=2, column=0, sticky="w", padx=(0, 12), pady=6
+    )
+    cbo_volatility_action = ctk.CTkOptionMenu(
+        vol_grid,
+        values=list(action_labels),
+        fg_color="#455A64",
+        button_color="#37474F",
+    )
+    cbo_volatility_action.set(
+        action_values.get(
+            str(safe_cfg.get("VOLATILITY_BRAKE_ACTION", "ALERT_ONLY")).upper(),
+            "CHỈ CẢNH BÁO",
+        )
+    )
+    cbo_volatility_action.grid(row=2, column=1, sticky="ew", pady=6)
+
+    fields = ctk.CTkFrame(vol_panel, fg_color="transparent")
+    fields.pack(fill="x", padx=18, pady=5)
+    for column in range(4):
+        fields.columnconfigure(column, weight=1)
+
+    def _vol_entry(label, value, row, column):
+        box = ctk.CTkFrame(fields, fg_color="transparent")
+        box.grid(row=row, column=column, sticky="ew", padx=6, pady=5)
+        ctk.CTkLabel(box, text=label).pack(anchor="w")
+        entry = ctk.CTkEntry(box, justify="center")
+        entry.insert(0, str(value))
+        entry.pack(fill="x", pady=(2, 0))
+        return entry
+
+    e_volatility_window = _vol_entry(
+        "Cửa sổ (giây)",
+        safe_cfg.get("VOLATILITY_BRAKE_WINDOW_SECONDS", 60.0),
+        0,
+        0,
+    )
+    e_volatility_derivative_points = _vol_entry(
+        "CKPS (điểm)",
+        safe_cfg.get("VOLATILITY_BRAKE_DERIVATIVE_POINTS", 5.0),
+        0,
+        1,
+    )
+    e_volatility_stock_pct = _vol_entry(
+        "CKCS (%)",
+        safe_cfg.get("VOLATILITY_BRAKE_STOCK_PCT", 1.5),
+        0,
+        2,
+    )
+    e_volatility_confirmations = _vol_entry(
+        "Số lần xác nhận",
+        safe_cfg.get("VOLATILITY_BRAKE_CONFIRMATIONS", 2),
+        0,
+        3,
+    )
+    e_volatility_symbol_cooldown = _vol_entry(
+        "Cooldown từng mã (phút)",
+        safe_cfg.get("VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES", 240.0),
+        1,
+        0,
+    )
+    ctk.CTkCheckBox(
+        fields,
+        text="Gửi Telegram khi kích hoạt",
+        variable=var_volatility_telegram,
+    ).grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(24, 5))
+    ctk.CTkLabel(
+        vol_panel,
+        text=(
+            "Mặc định CHỈ CẢNH BÁO không sửa lệnh, không khóa BOT. "
+            "ĐÓNG HẾT chỉ chạy khi Ngài chủ động chọn; khi đó cả vị thế tay cũng bị đóng."
+        ),
+        text_color="#FF8A80",
+        font=("Arial", 11, "italic"),
+        wraplength=840,
+        justify="left",
+    ).pack(anchor="w", padx=18, pady=(8, 16))
+
     # --- [GROUP 1: ⚠️ PHANH KHẨN CẤP GLOBAL (EMERGENCY)] ---
     f_global = ctk.CTkFrame(f_safety, border_width=1, border_color="#F44336")
     f_global.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=5, pady=8)
@@ -2329,57 +2476,14 @@ def open_bot_setting_popup(app):
         font=("Arial", 11, "italic"),
     )
     chk_gl_on_sg.grid(row=1, column=2, columnspan=2, sticky="w", padx=10, pady=5)
-    var_volatility_brake = ctk.BooleanVar(
-        value=bool(safe_cfg.get("VOLATILITY_BRAKE_ENABLED", False))
-    )
-    ctk.CTkCheckBox(
-        f_gl_content,
-        text="Bật phanh biến động: trigger → đóng hết + Global Cooldown + Telegram",
-        variable=var_volatility_brake,
-        text_color="#FF5252",
-        font=("Roboto", 11, "bold"),
-    ).grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 4))
-    ctk.CTkLabel(f_gl_content, text="Cửa sổ (giây):").grid(
-        row=3, column=0, sticky="w", padx=10, pady=5
-    )
-    e_volatility_window = ctk.CTkEntry(f_gl_content, width=70, justify="center")
-    e_volatility_window.insert(
-        0, str(safe_cfg.get("VOLATILITY_BRAKE_WINDOW_SECONDS", 60.0))
-    )
-    e_volatility_window.grid(row=3, column=1, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_gl_content, text="CKCS biến động (%):").grid(
-        row=3, column=2, sticky="w", padx=10, pady=5
-    )
-    e_volatility_stock_pct = ctk.CTkEntry(
-        f_gl_content, width=70, justify="center"
-    )
-    e_volatility_stock_pct.insert(
-        0, str(safe_cfg.get("VOLATILITY_BRAKE_STOCK_PCT", 1.5))
-    )
-    e_volatility_stock_pct.grid(row=3, column=3, sticky="w", padx=10, pady=5)
-    ctk.CTkLabel(f_gl_content, text="CKPS biến động (điểm):").grid(
-        row=4, column=0, sticky="w", padx=10, pady=5
-    )
-    e_volatility_derivative_points = ctk.CTkEntry(
-        f_gl_content, width=70, justify="center"
-    )
-    e_volatility_derivative_points.insert(
-        0, str(safe_cfg.get("VOLATILITY_BRAKE_DERIVATIVE_POINTS", 5.0))
-    )
-    e_volatility_derivative_points.grid(
-        row=4, column=1, sticky="w", padx=10, pady=5
-    )
     ctk.CTkLabel(
         f_gl_content,
-        text=(
-            "Áp dụng cho cả tăng và giảm. Đóng toàn bộ vị thế của chế độ hiện tại, "
-            "kể cả lệnh tay; báo cáo MD hiện có được ghi nối, không sinh file mới."
-        ),
-        text_color="#FFB74D",
+        text="Theo dõi tăng/giảm mạnh đã chuyển sang tab THEO DÕI BIẾN ĐỘNG.",
+        text_color="#90CAF9",
         font=("Arial", 10, "italic"),
         wraplength=520,
         justify="left",
-    ).grid(row=4, column=2, columnspan=2, sticky="w", padx=10, pady=5)
+    ).grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=5)
 
     # --- [GROUP 2: 📉 SAFEGUARD & PROFIT (PROTECTION)] ---
     f_sg = ctk.CTkFrame(f_safety, border_width=1, border_color="#00C853")
@@ -2666,6 +2770,15 @@ def open_bot_setting_popup(app):
             if os.path.exists(cfg_path):
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     existing_data = json.load(f)
+            volatility_symbols = list(
+                dict.fromkeys(
+                    symbol.strip().upper()
+                    for symbol in e_volatility_symbols.get().replace(";", ",").split(",")
+                    if symbol.strip()
+                )
+            )
+            if var_volatility_brake.get() and not volatility_symbols:
+                raise ValueError("Phải nhập ít nhất một mã giám sát biến động.")
             if "bot_safeguard" not in existing_data:
                 existing_data["bot_safeguard"] = {}
             existing_data["bot_safeguard"].update(
@@ -2697,6 +2810,14 @@ def open_bot_setting_popup(app):
                     "GLOBAL_COOLDOWN_HOURS": float(e_global_cooldown.get()),
                     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": var_gl_on_sg.get(),
                     "VOLATILITY_BRAKE_ENABLED": var_volatility_brake.get(),
+                    "VOLATILITY_BRAKE_SYMBOLS": volatility_symbols,
+                    "VOLATILITY_BRAKE_ACTION": action_labels[
+                        cbo_volatility_action.get()
+                    ],
+                    "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": max(
+                        0.0, float(e_volatility_symbol_cooldown.get())
+                    ),
+                    "VOLATILITY_BRAKE_TELEGRAM_ENABLED": var_volatility_telegram.get(),
                     "VOLATILITY_BRAKE_WINDOW_SECONDS": max(
                         5.0, float(e_volatility_window.get())
                     ),
@@ -2706,7 +2827,9 @@ def open_bot_setting_popup(app):
                     "VOLATILITY_BRAKE_DERIVATIVE_POINTS": max(
                         0.01, float(e_volatility_derivative_points.get())
                     ),
-                    "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
+                    "VOLATILITY_BRAKE_CONFIRMATIONS": max(
+                        1, int(e_volatility_confirmations.get())
+                    ),
                     "WATERMARK_TRIGGER": money_input_from_display(e_gl_wm_trigger.get(), cbo_gl_wm_trigger_unit.get()),
                     "WATERMARK_TRIGGER_UNIT": unit_from_display(cbo_gl_wm_trigger_unit.get()),
                     "WATERMARK_DRAWDOWN": money_input_from_display(e_gl_wm_drawdown.get(), cbo_gl_wm_drawdown_unit.get()),

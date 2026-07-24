@@ -319,6 +319,10 @@ BOT_SAFEGUARD = {
     # Phanh biến động: so trực tiếp giá trong cửa sổ ngắn, không dùng indicator/AI.
     # Khi đủ số lần xác nhận: đóng toàn bộ vị thế, khóa Global Cooldown và gửi cảnh báo.
     "VOLATILITY_BRAKE_ENABLED": False,
+    "VOLATILITY_BRAKE_SYMBOLS": ["VN30F1M"],
+    "VOLATILITY_BRAKE_ACTION": "ALERT_ONLY",
+    "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 240.0,
+    "VOLATILITY_BRAKE_TELEGRAM_ENABLED": True,
     "VOLATILITY_BRAKE_WINDOW_SECONDS": 60.0,
     "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
     "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,

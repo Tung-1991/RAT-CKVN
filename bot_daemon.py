@@ -19,7 +19,7 @@ from core.market_hours import (
     seconds_until_network_open,
 )
 from core.position_classifier import is_bot_position, is_manual_position
-from core.volatility_brake import VolatilityBrakeDetector
+from core.volatility_brake import VolatilityBrakeDetector, settings_from_safeguard
 from signals.signal_generator import signal_generator
 from core.storage_manager import get_brain_settings_for_symbol
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log
@@ -85,11 +85,17 @@ class StandaloneBotDaemon:
         try:
             import core.storage_manager as storage_manager
 
+            volatility_state = storage_manager.load_state()
+            storage_manager.apply_state_defaults(volatility_state)
             self._volatility_brake_latched_until = float(
-                storage_manager.load_state().get("cooldown_until", 0.0) or 0.0
+                volatility_state.get("cooldown_until", 0.0) or 0.0
+            )
+            self._volatility_symbol_cooldowns = dict(
+                volatility_state.get("volatility_symbol_cooldowns") or {}
             )
         except Exception:
             self._volatility_brake_latched_until = 0.0
+            self._volatility_symbol_cooldowns = {}
         self._tick_thread = None
         self._active_symbols = restored_symbols
         # Chỉ dọn hàng đợi lệnh cũ. Context cuối dùng cho giá/Preview phải được giữ
@@ -375,6 +381,12 @@ class StandaloneBotDaemon:
             for sym in (getattr(config, "CKPS_SYMBOLS", []) or []):
                 add(sym)
 
+        # Cung nguon gia hien co cho bo theo doi; khong mo them ket noi rieng.
+        monitor_cfg = settings_from_safeguard(live_cfg.get("bot_safeguard", {}))
+        if monitor_cfg["VOLATILITY_BRAKE_ENABLED"]:
+            for sym in monitor_cfg["VOLATILITY_BRAKE_SYMBOLS"]:
+                add(sym)
+
         self._tick_symbols_cache = (now, picked)
         return picked
 
@@ -507,31 +519,82 @@ class StandaloneBotDaemon:
                 failures.append(f"{symbol}#{ticket}")
         return closed, failed, failures
 
+    @staticmethod
+    def _volatility_action_label(action):
+        return {
+            "ALERT_ONLY": "CHỈ CẢNH BÁO",
+            "BLOCK_NEW_EXPOSURE": "CHẶN BOT TĂNG VỊ THẾ",
+            "CLOSE_ALL": "ĐÓNG HẾT + GLOBAL COOLDOWN",
+        }.get(str(action or "").upper(), "CHỈ CẢNH BÁO")
+
+    def _volatility_symbol_on_cooldown(self, symbol):
+        cooldowns = getattr(self, "_volatility_symbol_cooldowns", {}) or {}
+        try:
+            until = float(cooldowns.get(str(symbol or "").upper(), 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return False
+        return time.time() < until
+
+    def _arm_volatility_symbol_cooldown(self, symbol, safeguard_cfg):
+        from core import storage_manager
+
+        cfg = settings_from_safeguard(safeguard_cfg)
+        minutes = cfg["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"]
+        until = time.time() + minutes * 60.0
+        state = storage_manager.load_state()
+        storage_manager.apply_state_defaults(state)
+        cooldowns = state.setdefault("volatility_symbol_cooldowns", {})
+        cooldowns[str(symbol or "").upper()] = until
+        now = time.time()
+        state["volatility_symbol_cooldowns"] = {
+            key: float(value)
+            for key, value in cooldowns.items()
+            if float(value or 0.0) > now
+        }
+        self._volatility_symbol_cooldowns = dict(
+            state["volatility_symbol_cooldowns"]
+        )
+        storage_manager.save_state(state)
+        return minutes, until
+
     def _run_volatility_brake_action(self, event, safeguard_cfg):
         try:
-            cooldown_hours, cooldown_until = self._arm_volatility_global_cooldown(
-                event, safeguard_cfg
-            )
-            self._volatility_brake_latched_until = cooldown_until
-            with _SIGNAL_WRITE_LOCK:
-                self.pending_signals.clear()
-                self._atomic_write_signals(self._active_symbols)
+            cfg = settings_from_safeguard(safeguard_cfg)
+            action = cfg["VOLATILITY_BRAKE_ACTION"]
+            cooldown_hours = cooldown_until = 0.0
+            local_cancelled = broker_cancelled = broker_cancel_failed = 0
+            closed = close_failed = 0
+            close_failures = []
 
-            symbols = list(dict.fromkeys(
-                list(self._active_symbols or [])
-                + [
-                    str(getattr(pos, "symbol", "") or "").upper()
-                    for pos in (self.connector.get_all_open_positions() or [])
-                ]
-            ))
-            local_cancelled, broker_cancelled, broker_cancel_failed = (
-                self._cancel_pending_entries_for_brake(symbols)
-            )
-            closed, close_failed, close_failures = self._close_all_for_volatility_brake()
+            if action in {"BLOCK_NEW_EXPOSURE", "CLOSE_ALL"}:
+                cooldown_hours, cooldown_until = self._arm_volatility_global_cooldown(
+                    event, safeguard_cfg
+                )
+                self._volatility_brake_latched_until = cooldown_until
+
+            if action == "CLOSE_ALL":
+                with _SIGNAL_WRITE_LOCK:
+                    self.pending_signals.clear()
+                    self._atomic_write_signals(self._active_symbols)
+                symbols = list(dict.fromkeys(
+                    list(self._active_symbols or [])
+                    + [
+                        str(getattr(pos, "symbol", "") or "").upper()
+                        for pos in (self.connector.get_all_open_positions() or [])
+                    ]
+                ))
+                local_cancelled, broker_cancelled, broker_cancel_failed = (
+                    self._cancel_pending_entries_for_brake(symbols)
+                )
+                closed, close_failed, close_failures = (
+                    self._close_all_for_volatility_brake()
+                )
 
             event = dict(event)
             event.update(
                 {
+                    "action": action,
+                    "action_label": self._volatility_action_label(action),
                     "cooldown_hours": cooldown_hours,
                     "cooldown_until": cooldown_until,
                     "closed_positions": closed,
@@ -559,31 +622,41 @@ class StandaloneBotDaemon:
                 else f"{event.get('change_pct', 0.0):+.2f}%"
             )
             message = (
-                "🛑 PHANH BIẾN ĐỘNG TOÀN HỆ THỐNG\n"
+                "⚠️ CẢNH BÁO BIẾN ĐỘNG\n"
                 f"{event.get('symbol')} {direction} {unit_value} trong "
                 f"{event.get('window_seconds', 0.0):.0f} giây\n"
-                f"Đã đóng: {closed} | Đóng lỗi: {close_failed}\n"
-                f"Hủy lệnh chờ: local {local_cancelled}, DNSE {broker_cancelled}, "
-                f"lỗi {broker_cancel_failed}\n"
-                f"BOT khóa Global Cooldown {cooldown_hours:g} giờ."
+                f"Hành động: {self._volatility_action_label(action)}"
             )
-            logger.critical(message.replace("\n", " | "))
-
-            try:
-                from telegram_notify.reporter import send_text_report
-
-                result = send_text_report(
-                    message,
-                    title="RAT6 PHANH BIẾN ĐỘNG",
-                    require_enabled=True,
+            if action == "CLOSE_ALL":
+                message += (
+                    f"\nĐã đóng: {closed} | Đóng lỗi: {close_failed}"
+                    f"\nHủy lệnh chờ: local {local_cancelled}, DNSE {broker_cancelled}, "
+                    f"lỗi {broker_cancel_failed}"
+                    f"\nBOT khóa Global Cooldown {cooldown_hours:g} giờ."
                 )
-                if not result.get("ok") and not result.get("skipped"):
-                    logger.warning(
-                        "[VOLATILITY BRAKE] Telegram lỗi: %s",
-                        result.get("error", "unknown"),
+            elif action == "BLOCK_NEW_EXPOSURE":
+                message += f"\nBOT không tăng vị thế trong {cooldown_hours:g} giờ."
+            logger.log(
+                logging.CRITICAL if action == "CLOSE_ALL" else logging.WARNING,
+                message.replace("\n", " | "),
+            )
+
+            if cfg["VOLATILITY_BRAKE_TELEGRAM_ENABLED"]:
+                try:
+                    from telegram_notify.reporter import send_text_report
+
+                    result = send_text_report(
+                        message,
+                        title="RAT6 CẢNH BÁO BIẾN ĐỘNG",
+                        require_enabled=False,
                     )
-            except Exception as exc:
-                logger.warning("[VOLATILITY BRAKE] Telegram lỗi: %s", exc)
+                    if not result.get("ok") and not result.get("skipped"):
+                        logger.warning(
+                            "[VOLATILITY BRAKE] Telegram lỗi: %s",
+                            result.get("error", "unknown"),
+                        )
+                except Exception as exc:
+                    logger.warning("[VOLATILITY BRAKE] Telegram lỗi: %s", exc)
 
             try:
                 from ai_advisor.scan_report import append_volatility_event_to_existing_reports
@@ -596,7 +669,13 @@ class StandaloneBotDaemon:
                 self._volatility_brake_inflight = False
 
     def _observe_volatility_brake(self, symbol, tick, safeguard_cfg):
-        if time.time() < float(self._volatility_brake_latched_until or 0.0):
+        cfg = settings_from_safeguard(safeguard_cfg)
+        if (
+            cfg["VOLATILITY_BRAKE_ACTION"] != "ALERT_ONLY"
+            and time.time() < float(self._volatility_brake_latched_until or 0.0)
+        ):
+            return
+        if self._volatility_symbol_on_cooldown(symbol):
             return
         event = self.volatility_brake.observe(
             symbol,
@@ -611,6 +690,11 @@ class StandaloneBotDaemon:
             if self._volatility_brake_inflight:
                 return
             self._volatility_brake_inflight = True
+        cooldown_minutes, cooldown_until = self._arm_volatility_symbol_cooldown(
+            symbol, safeguard_cfg
+        )
+        event["symbol_cooldown_minutes"] = cooldown_minutes
+        event["symbol_cooldown_until"] = cooldown_until
         threading.Thread(
             target=self._run_volatility_brake_action,
             args=(event, dict(safeguard_cfg or {})),

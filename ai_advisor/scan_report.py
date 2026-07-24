@@ -422,12 +422,22 @@ def _volatility_event_lines():
             if event.get("threshold_unit") == "POINTS"
             else f"{float(event.get('change_pct', 0.0) or 0.0):+.2f}%"
         )
+        action = str(event.get("action") or "CLOSE_ALL").upper()
+        action_text = {
+            "ALERT_ONLY": "chỉ cảnh báo",
+            "BLOCK_NEW_EXPOSURE": (
+                f"chặn BOT tăng vị thế {float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ"
+            ),
+            "CLOSE_ALL": (
+                f"đóng {int(event.get('closed_positions', 0) or 0)}, "
+                f"đóng lỗi {int(event.get('failed_positions', 0) or 0)}; "
+                f"Global Cooldown {float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ"
+            ),
+        }.get(action, "chỉ cảnh báo")
         lines.append(
             f"- `{stamp}` **{event.get('symbol', '—')} {direction} {movement}** trong "
             f"{float(event.get('window_seconds', 0.0) or 0.0):.0f}s; "
-            f"đóng {int(event.get('closed_positions', 0) or 0)}, "
-            f"đóng lỗi {int(event.get('failed_positions', 0) or 0)}; "
-            f"Global Cooldown {float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ."
+            f"hành động: {action_text}."
         )
     lines.append("")
     return lines
@@ -505,14 +515,26 @@ def append_volatility_event_to_existing_reports(event):
         if event.get("threshold_unit") == "POINTS"
         else f"{float(event.get('change_pct', 0.0) or 0.0):+.2f}%"
     )
+    action = str(event.get("action") or "CLOSE_ALL").upper()
+    action_text = {
+        "ALERT_ONLY": "Chỉ cảnh báo; không sửa lệnh và không khóa BOT.",
+        "BLOCK_NEW_EXPOSURE": (
+            f"Chặn BOT tăng vị thế trong "
+            f"{float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ."
+        ),
+        "CLOSE_ALL": (
+            f"Đã đóng {int(event.get('closed_positions', 0) or 0)} vị thế; "
+            f"đóng lỗi {int(event.get('failed_positions', 0) or 0)}. "
+            f"Global Cooldown "
+            f"{float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ."
+        ),
+    }.get(action, "Chỉ cảnh báo.")
     block = (
         f"\n\n{marker}\n"
         "## CẢNH BÁO PHANH BIẾN ĐỘNG\n\n"
         f"- `{stamp}` **{event.get('symbol', '—')} {direction} {movement}** trong "
         f"{float(event.get('window_seconds', 0.0) or 0.0):.0f} giây.\n"
-        f"- Đã đóng {int(event.get('closed_positions', 0) or 0)} vị thế; "
-        f"đóng lỗi {int(event.get('failed_positions', 0) or 0)}.\n"
-        f"- Global Cooldown: {float(event.get('cooldown_hours', 0.0) or 0.0):g} giờ.\n"
+        f"- Hành động: {action_text}\n"
     )
     candidates = [
         paths.scan_session_report_path("morning"),

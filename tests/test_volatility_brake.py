@@ -3,13 +3,18 @@ import time
 
 from core import storage_manager
 from core.checklist_manager import ChecklistManager
-from core.volatility_brake import VolatilityBrakeDetector
+from core.volatility_brake import VolatilityBrakeDetector, settings_from_safeguard
 from ai_advisor import scan_report
+from bot_daemon import StandaloneBotDaemon
 
 
 def _settings(**overrides):
     data = {
         "VOLATILITY_BRAKE_ENABLED": True,
+        "VOLATILITY_BRAKE_SYMBOLS": ["AAA", "VN30F1M"],
+        "VOLATILITY_BRAKE_ACTION": "ALERT_ONLY",
+        "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 240,
+        "VOLATILITY_BRAKE_TELEGRAM_ENABLED": False,
         "VOLATILITY_BRAKE_WINDOW_SECONDS": 60,
         "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
         "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5,
@@ -45,6 +50,23 @@ def test_derivative_brake_uses_points_and_ignores_stale_tick():
 
     assert event["threshold_unit"] == "POINTS"
     assert event["change_points"] == -6.0
+
+
+def test_unlisted_symbol_never_triggers():
+    detector = VolatilityBrakeDetector()
+    cfg = _settings(
+        VOLATILITY_BRAKE_SYMBOLS=["VN30F1M"],
+        VOLATILITY_BRAKE_CONFIRMATIONS=1,
+    )
+    assert detector.observe("AAA", 100.0, cfg, timestamp=1000) is None
+    assert detector.observe("AAA", 90.0, cfg, timestamp=1030) is None
+
+
+def test_invalid_action_falls_back_to_alert_only():
+    cfg = settings_from_safeguard(
+        {"VOLATILITY_BRAKE_ENABLED": True, "VOLATILITY_BRAKE_ACTION": "WRONG"}
+    )
+    assert cfg["VOLATILITY_BRAKE_ACTION"] == "ALERT_ONLY"
 
 
 class _Connector:
@@ -169,3 +191,62 @@ def test_md_event_only_updates_existing_reports(monkeypatch, tmp_path):
     assert "PHANH BIẾN ĐỘNG" in morning.read_text(encoding="utf-8")
     assert not manual.exists()
     assert not afternoon.exists()
+
+
+def test_alert_only_does_not_touch_orders_or_global_cooldown(monkeypatch):
+    daemon = StandaloneBotDaemon.__new__(StandaloneBotDaemon)
+    daemon._volatility_brake_lock = __import__("threading").Lock()
+    daemon._volatility_brake_inflight = True
+    daemon._active_symbols = ["VN30F1M"]
+    daemon.pending_signals = [{"symbol": "VN30F1M"}]
+    daemon.connector = SimpleNamespace(get_all_open_positions=lambda: [])
+    state = _state()
+    state["cooldown_until"] = 0.0
+    saved = {}
+
+    monkeypatch.setattr(storage_manager, "load_state", lambda: state)
+    monkeypatch.setattr(
+        storage_manager, "save_state", lambda value: saved.update(value)
+    )
+    monkeypatch.setattr(
+        daemon,
+        "_arm_volatility_global_cooldown",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("alert-only must not arm cooldown")
+        ),
+    )
+    monkeypatch.setattr(
+        daemon,
+        "_cancel_pending_entries_for_brake",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("alert-only must not cancel orders")
+        ),
+    )
+    monkeypatch.setattr(
+        daemon,
+        "_close_all_for_volatility_brake",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("alert-only must not close positions")
+        ),
+    )
+    monkeypatch.setattr(
+        scan_report, "append_volatility_event_to_existing_reports", lambda _event: []
+    )
+
+    daemon._run_volatility_brake_action(
+        {
+            "symbol": "VN30F1M",
+            "direction": "DOWN",
+            "change_points": -6.0,
+            "change_pct": -0.3,
+            "threshold_unit": "POINTS",
+            "window_seconds": 60,
+            "triggered_at": time.time(),
+        },
+        _settings(VOLATILITY_BRAKE_ACTION="ALERT_ONLY"),
+    )
+
+    assert daemon.pending_signals == [{"symbol": "VN30F1M"}]
+    assert saved["cooldown_until"] == 0.0
+    assert saved["active_brake"]["global"] is None
+    assert saved["volatility_events"][-1]["action"] == "ALERT_ONLY"

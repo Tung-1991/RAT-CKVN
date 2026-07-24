@@ -12,11 +12,17 @@ import config
 
 DEFAULT_SETTINGS = {
     "VOLATILITY_BRAKE_ENABLED": False,
+    "VOLATILITY_BRAKE_SYMBOLS": ["VN30F1M"],
+    "VOLATILITY_BRAKE_ACTION": "ALERT_ONLY",
+    "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 240.0,
+    "VOLATILITY_BRAKE_TELEGRAM_ENABLED": True,
     "VOLATILITY_BRAKE_WINDOW_SECONDS": 60.0,
     "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
     "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,
     "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
 }
+
+VALID_ACTIONS = {"ALERT_ONLY", "BLOCK_NEW_EXPOSURE", "CLOSE_ALL"}
 
 
 def settings_from_safeguard(safeguard: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -24,6 +30,24 @@ def settings_from_safeguard(safeguard: Optional[Dict[str, Any]]) -> Dict[str, An
     result = dict(DEFAULT_SETTINGS)
     result.update({key: source[key] for key in DEFAULT_SETTINGS if key in source})
     result["VOLATILITY_BRAKE_ENABLED"] = bool(result["VOLATILITY_BRAKE_ENABLED"])
+    symbols = result.get("VOLATILITY_BRAKE_SYMBOLS", [])
+    if isinstance(symbols, str):
+        symbols = symbols.replace(";", ",").split(",")
+    result["VOLATILITY_BRAKE_SYMBOLS"] = list(
+        dict.fromkeys(
+            str(symbol or "").strip().upper()
+            for symbol in (symbols or [])
+            if str(symbol or "").strip()
+        )
+    )
+    action = str(result.get("VOLATILITY_BRAKE_ACTION") or "ALERT_ONLY").strip().upper()
+    result["VOLATILITY_BRAKE_ACTION"] = action if action in VALID_ACTIONS else "ALERT_ONLY"
+    result["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"] = max(
+        0.0, float(result["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"] or 0.0)
+    )
+    result["VOLATILITY_BRAKE_TELEGRAM_ENABLED"] = bool(
+        result["VOLATILITY_BRAKE_TELEGRAM_ENABLED"]
+    )
     result["VOLATILITY_BRAKE_WINDOW_SECONDS"] = max(
         5.0, float(result["VOLATILITY_BRAKE_WINDOW_SECONDS"] or 60.0)
     )
@@ -76,7 +100,13 @@ class VolatilityBrakeDetector:
         except (TypeError, ValueError):
             return None
 
-        if not cfg["VOLATILITY_BRAKE_ENABLED"] or not symbol or price <= 0:
+        allowed_symbols = set(cfg["VOLATILITY_BRAKE_SYMBOLS"])
+        if (
+            not cfg["VOLATILITY_BRAKE_ENABLED"]
+            or not symbol
+            or symbol not in allowed_symbols
+            or price <= 0
+        ):
             self._confirmations[symbol] = 0
             return None
         if str(freshness or "").strip().upper() in {"STALE", "OLD", "GIÁ CŨ", "GIA_CU"}:

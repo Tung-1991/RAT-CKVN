@@ -411,6 +411,7 @@ def apply_state_defaults(state: Dict[str, Any]) -> Dict[str, Any]:
     if "cooldown_until" not in state: state["cooldown_until"] = 0.0
     if "active_brake" not in state: state["active_brake"] = {"global": None, "symbols": {}}
     if "volatility_events" not in state: state["volatility_events"] = []
+    if "volatility_symbol_cooldowns" not in state: state["volatility_symbol_cooldowns"] = {}
     return state
 
 def rollover_daily_session(state: Dict[str, Any], now=None) -> bool:

@@ -1,7 +1,7 @@
 {
   "version": 4,
   "category": "public",
-  "created_at": "2026-07-24 14:44:06",
+  "created_at": "2026-07-24 17:12:48",
   "files": [
     "brain_settings.json",
     "symbol_overrides.json",
@@ -23,7 +23,7 @@
     "advisor_api_settings.json": "advisor_api_settings.json"
   },
   "sha256": {
-    "brain_settings.json": "f50a42220d7677ee6393be10ca1909cbf6e4a60788ed027225463e9900160394",
+    "brain_settings.json": "14f689c8c88c5c963f3d0cb9d0b6d001bd1303b23896b15b50ebe6f1ec660ae8",
     "symbol_overrides.json": "2c4c48d46f088d6c8fafacf3d811af8d4f5f98d1d70e48eddc9d9ffd11a0affc",
     "tsl_settings.json": "8f463b54ba56704ebd93c7ed09b34058ae1ef9edb1e5552d5639f1f2ecf8717a",
     "presets_config.json": "3e93a2d071db60f075c9b770be6619bbd9cf3cc2f044d9208508590303d5263d",
