@@ -1619,71 +1619,101 @@ def open_advisor_popup(app):
             app._set_advisor_status("Telegram settings ERR", str(exc))
             return None
 
-    def _manual_telegram_report_path():
-        return os.path.join(api_client.paths.advisor_root(), "telegram_report.md")
+    def _telegram_md_path(channel):
+        filename = (
+            "telegram_report.md"
+            if channel == "report"
+            else "telegram_opportunity.md"
+        )
+        return os.path.join(api_client.paths.advisor_root(), filename)
 
-    def _ensure_manual_telegram_report():
-        path = _manual_telegram_report_path()
+    def _ensure_telegram_md(channel):
+        path = _telegram_md_path(channel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if not os.path.exists(path):
+            channel_name = (
+                "BÁO CÁO & CẢNH BÁO"
+                if channel == "report"
+                else "GỢI Ý BOT"
+            )
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(
-                    "# BÁO CÁO TELEGRAM THỦ CÔNG\n\n"
-                    "Điền nội dung cần gửi vào đây, lưu file rồi bấm "
-                    "GỬI FILE MD LÊN NHÓM BÁO CÁO.\n"
+                    f"# {channel_name}\n\n"
+                    "Điền nội dung cần gửi vào đây rồi bấm LƯU & GỬI.\n"
                 )
         return path
 
-    def open_manual_telegram_report():
-        try:
-            path = _ensure_manual_telegram_report()
-            open_advisor_file_editor(app, path, "telegram_report.md")
-        except Exception as exc:
-            messagebox.showerror("Mở file MD lỗi", str(exc), parent=top)
-
-    def send_manual_telegram_report():
+    def _send_telegram_md(channel, text, parent):
         saved = save_telegram_settings()
         if not saved:
-            return
-        chat_id = str(saved.get("report_chat_id", "") or "").strip()
+            return False
+        setting_key = "report_chat_id" if channel == "report" else "opportunity_chat_id"
+        channel_name = (
+            "BÁO CÁO & CẢNH BÁO"
+            if channel == "report"
+            else "GỢI Ý BOT"
+        )
+        chat_id = str(saved.get(setting_key, "") or "").strip()
         if not chat_id:
             messagebox.showwarning(
                 "Thiếu Chat ID",
-                "Hãy nhập Chat ID trong khung BÁO CÁO & CẢNH BÁO.",
-                parent=top,
+                f"Hãy nhập Chat ID trong khung {channel_name}.",
+                parent=parent,
             )
-            return
+            return False
         try:
-            path = _ensure_manual_telegram_report()
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                text = handle.read().strip()
+            text = str(text or "").strip()
             if not text:
                 messagebox.showwarning(
                     "File MD đang trống",
-                    "Hãy mở file MD, điền nội dung và lưu trước khi gửi.",
-                    parent=top,
+                    "Hãy điền nội dung trước khi gửi.",
+                    parent=parent,
                 )
-                return
-            result = telegram_reporter.send_text_report(
+                return False
+            from telegram_notify.client import TelegramClient
+
+            client = TelegramClient(
+                token_env=saved.get("bot_token_env", "TELE_BOT_KEY"),
+                allow_insecure_ssl=True,
+            )
+            result = client.send_long_message(
+                chat_id,
                 text,
-                title="RAT6 — Báo cáo thủ công",
-                require_enabled=False,
+                chunk_size=saved.get("chunk_size", 3500),
+                title=f"RAT6 — {channel_name}",
             )
             if not result.get("ok"):
                 raise RuntimeError(result.get("error") or "Telegram không trả về lý do")
-            app._set_advisor_status(f"Đã gửi telegram_report.md → {chat_id}")
+            app._set_advisor_status(f"Đã gửi MD → {channel_name} ({chat_id})")
             messagebox.showinfo(
-                "Đã gửi báo cáo",
-                f"Đã gửi telegram_report.md tới nhóm Báo cáo & Cảnh báo.\nChat ID: {chat_id}",
-                parent=top,
+                "Đã gửi Telegram",
+                f"Đã gửi tới nhóm {channel_name}.\nChat ID: {chat_id}",
+                parent=parent,
             )
+            return True
         except Exception as exc:
-            app._set_advisor_status("Gửi telegram_report.md lỗi", str(exc))
+            app._set_advisor_status(f"Gửi MD tới {channel_name} lỗi", str(exc))
             messagebox.showerror(
                 "Gửi file MD thất bại",
                 f"Chat ID: {chat_id}\nLỗi: {exc}",
-                parent=top,
+                parent=parent,
             )
+            return False
+
+    def open_telegram_md(channel):
+        try:
+            path = _ensure_telegram_md(channel)
+            title = os.path.basename(path)
+            open_advisor_file_editor(
+                app,
+                path,
+                title,
+                send_callback=lambda text, parent: _send_telegram_md(
+                    channel, text, parent
+                ),
+            )
+        except Exception as exc:
+            messagebox.showerror("Mở file MD lỗi", str(exc), parent=top)
 
     def open_telegram_report_sender():
         saved = save_telegram_settings()
@@ -1852,19 +1882,19 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
     ctk.CTkButton(
         tg_buttons,
-        text="MỞ FILE MD",
+        text="MD BÁO CÁO",
         height=30,
         fg_color="#2E7D32",
         hover_color="#1B5E20",
-        command=open_manual_telegram_report,
+        command=lambda: open_telegram_md("report"),
     ).grid(row=0, column=1, sticky="ew", padx=5)
     ctk.CTkButton(
         tg_buttons,
-        text="GỬI FILE MD",
+        text="MD GỢI Ý BOT",
         height=30,
         fg_color="#1f538d",
         hover_color="#14375e",
-        command=send_manual_telegram_report,
+        command=lambda: open_telegram_md("opportunity"),
     ).grid(row=0, column=2, sticky="ew", padx=5)
 
     # Giao diện Telegram chính: đủ setting nhưng chia đúng nghiệp vụ và tận dụng chiều ngang.
@@ -2033,8 +2063,7 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         manual_report_actions,
         text=(
-            "Báo cáo thủ công: mở telegram_report.md để điền và lưu, sau đó gửi tới "
-            "Chat ID BÁO CÁO & CẢNH BÁO. Nhóm GỢI Ý BOT chỉ nhận gợi ý tự động."
+            "Mỗi nhóm có một file MD riêng. Bấm đúng nhóm, điền nội dung rồi chọn LƯU & GỬI."
         ),
         font=("Roboto", 9),
         text_color="#90CAF9",
@@ -2042,19 +2071,19 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(7, 4))
     ctk.CTkButton(
         manual_report_actions,
-        text="MỞ FILE MD ĐỂ ĐIỀN",
+        text="MD — BÁO CÁO & CẢNH BÁO",
         height=36,
         fg_color="#9A7B00",
         hover_color="#755E00",
-        command=open_manual_telegram_report,
+        command=lambda: open_telegram_md("report"),
     ).grid(row=1, column=0, sticky="ew", padx=(10, 4), pady=(0, 9))
     ctk.CTkButton(
         manual_report_actions,
-        text="GỬI FILE MD LÊN NHÓM BÁO CÁO",
+        text="MD — GỢI Ý BOT",
         height=36,
         fg_color="#1f538d",
         hover_color="#14375e",
-        command=send_manual_telegram_report,
+        command=lambda: open_telegram_md("opportunity"),
     ).grid(row=1, column=1, sticky="ew", padx=(4, 10), pady=(0, 9))
 
     control_card = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
@@ -2595,7 +2624,7 @@ def open_advisor_popup(app):
 
 # --- BẢNG MÀU & FONT CHUẨN ---
 
-def open_advisor_file_editor(app, path, title):
+def open_advisor_file_editor(app, path, title, send_callback=None):
     top = ctk.CTkToplevel(app)
     top.title(f"Edit {title}")
     _fit_popup(top, 760, 620, 620, 460)
@@ -2653,8 +2682,17 @@ def open_advisor_file_editor(app, path, title):
                     app._set_ckcs_api_status("Đã lưu private_context.md")
             elif hasattr(app, "_set_advisor_status"):
                 app._set_advisor_status(f"{title} saved")
+            return content
         except Exception as exc:
             status.configure(text=f"Save failed: {exc}", text_color="#D50000")
+            return None
+
+    def save_and_send():
+        content = save_file()
+        if content is None or send_callback is None:
+            return
+        if send_callback(content, top):
+            status.configure(text="Đã lưu và gửi", text_color="#00C853")
 
     def open_folder():
         try:
@@ -2689,6 +2727,16 @@ def open_advisor_file_editor(app, path, title):
         hover_color="#004D40",
         command=save_file,
     ).pack(side="right", padx=(8, 0))
+    if send_callback is not None:
+        ctk.CTkButton(
+            footer,
+            text="LƯU & GỬI",
+            width=125,
+            height=32,
+            fg_color="#1f538d",
+            hover_color="#14375e",
+            command=save_and_send,
+        ).pack(side="right", padx=(8, 0))
     ctk.CTkButton(
         footer,
         text="Close",
