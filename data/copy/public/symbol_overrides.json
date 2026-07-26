@@ -1,16 +1,21 @@
 {
   "VN30F1M": {
     "sandbox": {
+      "MASTER_EVAL_MODE": "VETO",
+      "G0_TIMEFRAME": "1h",
+      "G1_TIMEFRAME": "15m",
+      "G2_TIMEFRAME": "5m",
+      "G3_TIMEFRAME": "1m",
       "voting_rules": {
         "G0": {
           "max_opposite": 0,
-          "max_none": 0,
-          "master_rule": "IGNORE"
+          "max_none": 3,
+          "master_rule": "FIX"
         },
         "G1": {
           "max_opposite": 0,
           "max_none": 0,
-          "master_rule": "IGNORE"
+          "master_rule": "PASS"
         },
         "G2": {
           "max_opposite": 0,
@@ -22,6 +27,13 @@
           "max_none": 1,
           "master_rule": "IGNORE"
         }
+      },
+      "risk_tsl": {
+        "base_risk": 0.2,
+        "base_sl": "G0",
+        "tsl_mode": "STATIC",
+        "bot_tsl": "BE+SWING",
+        "strict_risk": true
       }
     }
   }

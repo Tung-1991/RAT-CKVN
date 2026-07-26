@@ -2648,7 +2648,7 @@ class BotUI(ctk.CTk):
         ui_popups.open_advanced_tools_popup(self)
 
     def open_advisor_popup(self):
-        ui_popups.open_advisor_popup(self)
+        return ui_popups.open_advisor_popup(self)
 
     # ==========================================
     # LOG TAILER - THEO DÕI DAEMON VÀ HIỂN THỊ LÊN UI

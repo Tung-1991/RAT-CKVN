@@ -7,14 +7,21 @@ DEFAULT_SETTINGS = {
     "enabled": False,
     "control_enabled": False,
     "signal_proposals_enabled": False,
+    "opportunity_alerts_enabled": False,
     "bot_token_env": "TELE_BOT_KEY",
     "report_chat_id": "1003772881044",
+    "opportunity_chat_id": "",
     "control_chat_id": "1003941549878",
     "owner_user_id": "",
     "operator_user_ids": "",
     "chunk_size": 3500,
     "control_poll_interval_seconds": 2.0,
     "signal_proposal_cooldown_minutes": 15.0,
+    "opportunity_duplicate_cooldown_minutes": 60.0,
+    "opportunity_batch_minutes": 5.0,
+    "opportunity_mode_filter": "ALL",
+    "opportunity_ckps_enabled": True,
+    "opportunity_ckcs_enabled": True,
 }
 
 
@@ -54,8 +61,10 @@ def normalize_settings(data):
     clean["enabled"] = bool(clean.get("enabled"))
     clean["control_enabled"] = bool(clean.get("control_enabled"))
     clean["signal_proposals_enabled"] = bool(clean.get("signal_proposals_enabled"))
+    clean["opportunity_alerts_enabled"] = bool(clean.get("opportunity_alerts_enabled"))
     clean["bot_token_env"] = str(clean.get("bot_token_env") or DEFAULT_SETTINGS["bot_token_env"]).strip()
     clean["report_chat_id"] = str(clean.get("report_chat_id") or "").strip()
+    clean["opportunity_chat_id"] = str(clean.get("opportunity_chat_id") or "").strip()
     clean["control_chat_id"] = str(clean.get("control_chat_id") or "").strip()
     clean["owner_user_id"] = str(clean.get("owner_user_id") or "").strip()
     clean["operator_user_ids"] = str(clean.get("operator_user_ids") or "").strip()
@@ -70,6 +79,24 @@ def normalize_settings(data):
         min_value=0.5,
         max_value=1440.0,
     )
+    clean["opportunity_duplicate_cooldown_minutes"] = _safe_float(
+        clean.get("opportunity_duplicate_cooldown_minutes"),
+        DEFAULT_SETTINGS["opportunity_duplicate_cooldown_minutes"],
+        min_value=1.0,
+        max_value=1440.0,
+    )
+    clean["opportunity_batch_minutes"] = _safe_float(
+        clean.get("opportunity_batch_minutes"),
+        DEFAULT_SETTINGS["opportunity_batch_minutes"],
+        min_value=0.1,
+        max_value=60.0,
+    )
+    mode_filter = str(clean.get("opportunity_mode_filter") or "ALL").strip().upper()
+    clean["opportunity_mode_filter"] = (
+        mode_filter if mode_filter in {"PAPER", "REAL", "ALL"} else "ALL"
+    )
+    clean["opportunity_ckps_enabled"] = bool(clean.get("opportunity_ckps_enabled", True))
+    clean["opportunity_ckcs_enabled"] = bool(clean.get("opportunity_ckcs_enabled", True))
     return clean
 
 

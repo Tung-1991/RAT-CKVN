@@ -19,6 +19,11 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert loaded["control_enabled"] is False
     assert loaded["signal_proposals_enabled"] is False
     assert loaded["signal_proposal_cooldown_minutes"] == 15.0
+    assert loaded["opportunity_alerts_enabled"] is False
+    assert loaded["opportunity_chat_id"] == ""
+    assert loaded["opportunity_duplicate_cooldown_minutes"] == 60.0
+    assert loaded["opportunity_batch_minutes"] == 5.0
+    assert loaded["opportunity_mode_filter"] == "ALL"
     assert loaded["owner_user_id"] == ""
 
     saved = settings.save_settings(
@@ -26,19 +31,33 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
             "enabled": True,
             "control_enabled": True,
             "signal_proposals_enabled": True,
+            "opportunity_alerts_enabled": True,
             "bot_token_env": "TELE_BOT_KEY",
             "report_chat_id": "123",
+            "opportunity_chat_id": "789",
             "control_chat_id": "456",
             "owner_user_id": "111",
             "operator_user_ids": "222,333",
             "control_poll_interval_seconds": "0",
             "signal_proposal_cooldown_minutes": "15",
+            "opportunity_duplicate_cooldown_minutes": "90",
+            "opportunity_batch_minutes": "3",
+            "opportunity_mode_filter": "all",
+            "opportunity_ckps_enabled": False,
+            "opportunity_ckcs_enabled": True,
             "chunk_size": "999999",
         }
     )
     assert saved["enabled"] is True
     assert saved["control_enabled"] is True
     assert saved["signal_proposals_enabled"] is True
+    assert saved["opportunity_alerts_enabled"] is True
+    assert saved["opportunity_chat_id"] == "789"
+    assert saved["opportunity_duplicate_cooldown_minutes"] == 90.0
+    assert saved["opportunity_batch_minutes"] == 3.0
+    assert saved["opportunity_mode_filter"] == "ALL"
+    assert saved["opportunity_ckps_enabled"] is False
+    assert saved["opportunity_ckcs_enabled"] is True
     assert saved["signal_proposal_cooldown_minutes"] == 15.0
     assert saved["chunk_size"] == 3900
     assert saved["control_poll_interval_seconds"] == 0.5

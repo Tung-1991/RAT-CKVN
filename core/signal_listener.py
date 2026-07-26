@@ -394,11 +394,22 @@ class SignalListener:
                         context=context,
                         market_mode=market_mode,
                     )
-                    record_signal(
+                    opportunity = record_signal(
                         signal,
                         block_reason="BOT_OFF",
                         order_setup=order_setup,
                     )
+                    if opportunity:
+                        from telegram_notify.opportunity_alerts import (
+                            queue_opportunity,
+                        )
+
+                        queue_opportunity(
+                            opportunity,
+                            log_cb=lambda msg, error=False: self.log_ui(
+                                msg, error=error
+                            ),
+                        )
                 except Exception as exc:
                     logger.error(f"[Listener] Lưu gợi ý BOT lỗi: {exc}")
             try:
@@ -497,11 +508,22 @@ class SignalListener:
                             context=context,
                             market_mode=market_mode,
                         )
-                        record_signal(
+                        opportunity = record_signal(
                             signal,
                             block_reason=str(result),
                             order_setup=order_setup,
                         )
+                        if opportunity:
+                            from telegram_notify.opportunity_alerts import (
+                                queue_opportunity,
+                            )
+
+                            queue_opportunity(
+                                opportunity,
+                                log_cb=lambda msg, error=False: self.log_ui(
+                                    msg, error=error
+                                ),
+                            )
                     except Exception as exc:
                         logger.error(f"[Listener] Lưu gợi ý bị chặn lỗi: {exc}")
                 # [FIX] Tường minh lý do lỗi
