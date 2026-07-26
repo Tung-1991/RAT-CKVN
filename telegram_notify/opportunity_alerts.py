@@ -132,7 +132,10 @@ def flush_now(log_cb=None) -> Dict[str, Any]:
     chat_id = str(settings.get("opportunity_chat_id") or "").strip()
     if not chat_id:
         return {"ok": False, "skipped": True, "reason": "missing_chat_id"}
-    client = TelegramClient(token_env=settings.get("bot_token_env", "TELE_BOT_KEY"))
+    client = TelegramClient(
+        token_env=settings.get("bot_token_env", "TELE_BOT_KEY"),
+        allow_insecure_ssl=True,
+    )
     result = client.send_long_message(
         chat_id,
         _format_digest(items),

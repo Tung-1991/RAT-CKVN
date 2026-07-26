@@ -71,6 +71,26 @@ def test_many_symbols_are_sent_as_one_read_only_digest(monkeypatch, tmp_path):
     assert sent[0][2] == "RAT6 GỢI Ý BOT"
 
 
+def test_opportunity_sender_uses_same_ssl_mode_as_report_sender(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    created = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        def send_long_message(self, chat_id, text, chunk_size=3500, title=""):
+            return {"ok": True, "sent": 1, "chat_id": chat_id}
+
+    monkeypatch.setattr(opportunity_alerts, "TelegramClient", FakeClient)
+    opportunity_alerts.queue_opportunity(_item("VN30F1M", market="CKPS"))
+
+    result = opportunity_alerts.flush_now()
+
+    assert result["ok"] is True
+    assert created[0]["allow_insecure_ssl"] is True
+
+
 def test_duplicate_symbol_and_side_obeys_cooldown(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path)
 

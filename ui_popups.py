@@ -1619,43 +1619,71 @@ def open_advisor_popup(app):
             app._set_advisor_status("Telegram settings ERR", str(exc))
             return None
 
-    def send_opportunity_test():
+    def _manual_telegram_report_path():
+        return os.path.join(api_client.paths.advisor_root(), "telegram_report.md")
+
+    def _ensure_manual_telegram_report():
+        path = _manual_telegram_report_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "# BÁO CÁO TELEGRAM THỦ CÔNG\n\n"
+                    "Điền nội dung cần gửi vào đây, lưu file rồi bấm "
+                    "GỬI FILE MD LÊN NHÓM BÁO CÁO.\n"
+                )
+        return path
+
+    def open_manual_telegram_report():
+        try:
+            path = _ensure_manual_telegram_report()
+            open_advisor_file_editor(app, path, "telegram_report.md")
+        except Exception as exc:
+            messagebox.showerror("Mở file MD lỗi", str(exc), parent=top)
+
+    def send_manual_telegram_report():
         saved = save_telegram_settings()
         if not saved:
             return
-        chat_id = str(saved.get("opportunity_chat_id", "") or "").strip()
+        chat_id = str(saved.get("report_chat_id", "") or "").strip()
         if not chat_id:
-            app._set_advisor_status("Thiếu Chat ID nhận gợi ý BOT")
             messagebox.showwarning(
-                "Telegram gợi ý BOT",
-                "Hãy nhập Chat ID nhận gợi ý BOT rồi bấm gửi thử.",
+                "Thiếu Chat ID",
+                "Hãy nhập Chat ID trong khung BÁO CÁO & CẢNH BÁO.",
                 parent=top,
             )
             return
         try:
-            from telegram_notify.client import TelegramClient
-
-            client = TelegramClient(
-                token_env=saved.get("bot_token_env", "TELE_BOT_KEY")
-            )
-            result = client.send_message(
-                chat_id,
-                (
-                    "RAT6 GỢI Ý BOT — TIN THỬ\n\n"
-                    "Kênh này chỉ nhận gợi ý; không có quyền đặt hoặc duyệt lệnh.\n"
-                    f"Bộ lọc: {saved.get('opportunity_mode_filter', 'ALL')} | "
-                    f"CKPS={'ON' if saved.get('opportunity_ckps_enabled') else 'OFF'} | "
-                    f"CKCS={'ON' if saved.get('opportunity_ckcs_enabled') else 'OFF'}"
-                ),
-            )
-            if result.get("ok"):
-                app._set_advisor_status("Đã gửi thử tới group gợi ý BOT")
-            else:
-                app._set_advisor_status(
-                    "Gửi thử gợi ý BOT lỗi", result.get("error", "Không rõ lỗi")
+            path = _ensure_manual_telegram_report()
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read().strip()
+            if not text:
+                messagebox.showwarning(
+                    "File MD đang trống",
+                    "Hãy mở file MD, điền nội dung và lưu trước khi gửi.",
+                    parent=top,
                 )
+                return
+            result = telegram_reporter.send_text_report(
+                text,
+                title="RAT6 — Báo cáo thủ công",
+                require_enabled=False,
+            )
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error") or "Telegram không trả về lý do")
+            app._set_advisor_status(f"Đã gửi telegram_report.md → {chat_id}")
+            messagebox.showinfo(
+                "Đã gửi báo cáo",
+                f"Đã gửi telegram_report.md tới nhóm Báo cáo & Cảnh báo.\nChat ID: {chat_id}",
+                parent=top,
+            )
         except Exception as exc:
-            app._set_advisor_status("Gửi thử gợi ý BOT lỗi", str(exc))
+            app._set_advisor_status("Gửi telegram_report.md lỗi", str(exc))
+            messagebox.showerror(
+                "Gửi file MD thất bại",
+                f"Chat ID: {chat_id}\nLỗi: {exc}",
+                parent=top,
+            )
 
     def open_telegram_report_sender():
         saved = save_telegram_settings()
@@ -1824,19 +1852,19 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
     ctk.CTkButton(
         tg_buttons,
-        text="GỬI THỬ GỢI Ý",
+        text="MỞ FILE MD",
         height=30,
         fg_color="#2E7D32",
         hover_color="#1B5E20",
-        command=send_opportunity_test,
+        command=open_manual_telegram_report,
     ).grid(row=0, column=1, sticky="ew", padx=5)
     ctk.CTkButton(
         tg_buttons,
-        text="GỬI REPORT TAY",
+        text="GỬI FILE MD",
         height=30,
         fg_color="#1f538d",
         hover_color="#14375e",
-        command=open_telegram_report_sender,
+        command=send_manual_telegram_report,
     ).grid(row=0, column=2, sticky="ew", padx=5)
 
     # Giao diện Telegram chính: đủ setting nhưng chia đúng nghiệp vụ và tận dụng chiều ngang.
@@ -1941,7 +1969,6 @@ def open_advisor_popup(app):
         checkbox_height=18,
     ).grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=4)
     compact_field(report_card, 4, "Độ dài mỗi tin", var_tg_chunk, "Mặc định 3500; báo cáo dài sẽ tự chia phần.")
-
     suggestion_card = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
     suggestion_card.grid(row=1, column=1, sticky="nsew", padx=(3, 0), pady=3)
     suggestion_card.grid_columnconfigure(1, weight=1)
@@ -2000,9 +2027,38 @@ def open_advisor_popup(app):
         anchor="w",
         justify="left",
     ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(1, 7))
+    manual_report_actions = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
+    manual_report_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 5))
+    manual_report_actions.grid_columnconfigure((0, 1), weight=1)
+    ctk.CTkLabel(
+        manual_report_actions,
+        text=(
+            "Báo cáo thủ công: mở telegram_report.md để điền và lưu, sau đó gửi tới "
+            "Chat ID BÁO CÁO & CẢNH BÁO. Nhóm GỢI Ý BOT chỉ nhận gợi ý tự động."
+        ),
+        font=("Roboto", 9),
+        text_color="#90CAF9",
+        anchor="w",
+    ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(7, 4))
+    ctk.CTkButton(
+        manual_report_actions,
+        text="MỞ FILE MD ĐỂ ĐIỀN",
+        height=36,
+        fg_color="#9A7B00",
+        hover_color="#755E00",
+        command=open_manual_telegram_report,
+    ).grid(row=1, column=0, sticky="ew", padx=(10, 4), pady=(0, 9))
+    ctk.CTkButton(
+        manual_report_actions,
+        text="GỬI FILE MD LÊN NHÓM BÁO CÁO",
+        height=36,
+        fg_color="#1f538d",
+        hover_color="#14375e",
+        command=send_manual_telegram_report,
+    ).grid(row=1, column=1, sticky="ew", padx=(4, 10), pady=(0, 9))
 
     control_card = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
-    control_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 5))
+    control_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(3, 5))
     control_card.grid_columnconfigure(1, weight=1)
     control_card.grid_columnconfigure(3, weight=1)
     ctk.CTkLabel(
@@ -2051,20 +2107,14 @@ def open_advisor_popup(app):
     ).grid(row=4, column=2, columnspan=2, sticky="w", padx=(8, 10), pady=(0, 6))
 
     telegram_actions = ctk.CTkFrame(telegram_page, fg_color="transparent")
-    telegram_actions.grid(row=3, column=0, columnspan=2, sticky="ew")
-    telegram_actions.grid_columnconfigure((0, 1, 2, 3), weight=1)
+    telegram_actions.grid(row=4, column=0, columnspan=2, sticky="ew")
+    telegram_actions.grid_columnconfigure((0, 1), weight=1)
     ctk.CTkButton(
         telegram_actions, text="LƯU TOÀN BỘ", height=40, fg_color="#00695C", command=save_telegram_settings
     ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
     ctk.CTkButton(
-        telegram_actions, text="GỬI THỬ GỢI Ý", height=40, fg_color="#2E7D32", command=send_opportunity_test
-    ).grid(row=0, column=1, sticky="ew", padx=3)
-    ctk.CTkButton(
-        telegram_actions, text="GỬI REPORT TAY", height=40, command=open_telegram_report_sender
-    ).grid(row=0, column=2, sticky="ew", padx=3)
-    ctk.CTkButton(
         telegram_actions, text="HƯỚNG DẪN CONTROL", height=40, fg_color="#424242", command=open_telegram_help
-    ).grid(row=0, column=3, sticky="ew", padx=(3, 0))
+    ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
     # Không destroy khối xử lý cũ: CTkEntry gắn StringVar vẫn cần tồn tại để
     # CustomTkinter không gọi callback vào widget đã bị xóa.
 
