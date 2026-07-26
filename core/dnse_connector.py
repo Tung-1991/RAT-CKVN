@@ -274,6 +274,14 @@ class DNSEConnector:
         self._positions_cache_ts: float = 0.0
         self._orders_cache: List[Dict[str, Any]] = []
         self._orders_cache_ts: float = 0.0
+        # DNSE order service may temporarily return
+        # ``400 AccountRepository: cannot find object`` during maintenance even
+        # though GET /accounts and /balances still work.  Do not hammer the
+        # endpoint every UI refresh while that repository is unavailable.
+        self._orders_unavailable_until: float = 0.0
+        self._orders_error_log_ts: float = 0.0
+        self._orders_error_key: str = ""
+        self._orders_suppressed_errors: int = 0
         self._fee_profile_cache: Dict[str, BrokerFeeProfile] = {}
         self._fee_profile_cache_ts: Dict[str, float] = {}
         self._ppse_cache: Dict[str, Dict[str, Any]] = {}
@@ -361,6 +369,9 @@ class DNSEConnector:
         self._account_cache_ts = 0.0
         self._positions_cache = []
         self._positions_cache_ts = 0.0
+        self._orders_cache = []
+        self._orders_cache_ts = 0.0
+        self._orders_unavailable_until = 0.0
 
     def set_market_data_provider(self, tick_provider=None, state_provider=None):
         """Đặt feed giá dùng chung. Khi provider tồn tại connector không gọi latest REST."""
@@ -895,6 +906,18 @@ class DNSEConnector:
         symbol = params.pop("symbol", None)
         market_type = self.market_type_for_symbol(symbol) if symbol else self.market_type
         account_no = self.account_no_for_symbol(symbol) if symbol else self.account_no
+
+        def _cached_rows() -> List[Dict[str, Any]]:
+            rows = list(self._orders_cache)
+            if symbol:
+                wanted = str(symbol).upper()
+                rows = [
+                    item
+                    for item in rows
+                    if str(item.get("symbol", "")).upper() == wanted
+                ]
+            return rows
+
         try:
             from core.dnse_ws import market_ws
             ws_connected = market_ws.is_connected()
@@ -912,19 +935,77 @@ class DNSEConnector:
             return rows
         reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 300.0) or 300.0)
         if ws_connected and self._orders_cache_ts and (time.time() - self._orders_cache_ts) < reconcile:
-            rows = list(self._orders_cache)
-            if symbol:
-                rows = [item for item in rows if str(item.get("symbol", "")).upper() == str(symbol).upper()]
-            return rows
+            return _cached_rows()
+
+        # A known temporary DNSE order-repository outage is not an account
+        # configuration error. Keep the last known rows and retry at a measured
+        # interval instead of sending the same request every few seconds.
+        now = time.time()
+        if now < self._orders_unavailable_until:
+            self._orders_suppressed_errors += 1
+            return _cached_rows()
+
         query = {"marketType": market_type, **params}
         ok, data, status_code, message = self._request("GET", f"/accounts/{account_no}/orders", params=query)
         if not ok:
-            logger.error("DNSE get orders failed [%s]: %s", status_code, message or data)
-            return []
+            error_text = str(message or data or "")
+            error_key = f"{status_code}|{account_no}|{market_type}|{error_text}"
+            account_repo_unavailable = (
+                int(status_code or 0) == 400
+                and "accountrepository" in error_text.lower()
+            )
+            if account_repo_unavailable:
+                backoff = max(
+                    15.0,
+                    float(
+                        getattr(
+                            config,
+                            "DNSE_ACCOUNT_REPOSITORY_BACKOFF_SECONDS",
+                            60.0,
+                        )
+                        or 60.0
+                    ),
+                )
+                self._orders_unavailable_until = now + backoff
+
+            should_log = (
+                error_key != self._orders_error_key
+                or (now - self._orders_error_log_ts) >= 60.0
+            )
+            if should_log:
+                suppressed = self._orders_suppressed_errors
+                self._orders_suppressed_errors = 0
+                self._orders_error_key = error_key
+                self._orders_error_log_ts = now
+                if account_repo_unavailable:
+                    logger.warning(
+                        "DNSE order repository temporarily unavailable "
+                        "[400] account=%s market=%s; keep cached orders and "
+                        "retry in %.0fs%s.",
+                        account_no,
+                        market_type,
+                        self._orders_unavailable_until - now,
+                        f" ({suppressed} repeated checks suppressed)" if suppressed else "",
+                    )
+                else:
+                    logger.error(
+                        "DNSE get orders failed [%s] account=%s market=%s: %s%s",
+                        status_code,
+                        account_no,
+                        market_type,
+                        error_text,
+                        f" ({suppressed} repeated checks suppressed)" if suppressed else "",
+                    )
+            else:
+                self._orders_suppressed_errors += 1
+            return _cached_rows()
         payload = _unwrap_payload(data, ("orders",))
         rows = payload if isinstance(payload, list) else []
         self._orders_cache = [dict(item) for item in rows if isinstance(item, dict)]
         self._orders_cache_ts = time.time()
+        self._orders_unavailable_until = 0.0
+        self._orders_error_key = ""
+        self._orders_suppressed_errors = 0
         return rows
 
     def _fallback_fee_profile(self, source: str = "fallback", market_type: str = "DERIVATIVE") -> BrokerFeeProfile:

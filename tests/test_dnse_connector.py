@@ -108,6 +108,50 @@ def test_401_invalid_token_clears_cached_token(monkeypatch):
     assert conn.trading_token_seconds_left() == 0.0
 
 
+def test_orders_account_repository_400_keeps_cache_and_backs_off(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_ACCOUNT_REPOSITORY_BACKOFF_SECONDS", 60.0, raising=False)
+    session = FakeSession(
+        [
+            FakeResponse(
+                400,
+                {"message": "AccountRepository: cannot find object with id: ACC1"},
+            )
+        ]
+    )
+    conn = _connector(session)
+    conn._orders_cache = [
+        {
+            "id": "O-CACHED",
+            "symbol": "VN30F1M",
+            "marketType": "DERIVATIVE",
+            "orderStatus": "New",
+        }
+    ]
+
+    first = conn.get_orders(symbol="VN30F1M", orderCategory="NORMAL")
+    second = conn.get_orders(symbol="VN30F1M", orderCategory="NORMAL")
+
+    assert [item["id"] for item in first] == ["O-CACHED"]
+    assert [item["id"] for item in second] == ["O-CACHED"]
+    assert len(session.calls) == 1
+    assert conn._orders_unavailable_until > time.time()
+    assert conn._orders_suppressed_errors == 1
+
+
+def test_reset_session_caches_clears_orders():
+    conn = _connector(FakeSession([]))
+    conn._orders_cache = [{"id": "OLD"}]
+    conn._orders_cache_ts = time.time()
+    conn._orders_unavailable_until = time.time() + 60
+
+    conn.reset_session_caches()
+
+    assert conn._orders_cache == []
+    assert conn._orders_cache_ts == 0.0
+    assert conn._orders_unavailable_until == 0.0
+
+
 def test_send_order_builds_derivative_payload_and_uses_trading_token(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
