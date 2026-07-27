@@ -102,7 +102,8 @@ def _summary_context(context: Optional[dict]) -> dict:
     keep = {
         "current_price", "bid", "ask", "market_mode", "mode_source", "block_reason",
         "trend_G0", "trend_G1", "trend_G2", "trend_G3", "latest_signal",
-        "group_signals", "atr_G0", "atr_G1", "atr_G2", "atr_G3",
+        "group_signals", "group_details", "group_rules",
+        "atr_G0", "atr_G1", "atr_G2", "atr_G3",
         "swing_low_G0", "swing_low_G1", "swing_low_G2", "swing_low_G3",
         "swing_high_G0", "swing_high_G1", "swing_high_G2", "swing_high_G3",
     }
@@ -141,6 +142,18 @@ def record_signal(
     with _LOCK:
         items = _read(active_path())
         found = next((item for item in items if item.get("dedupe_key") == key), None)
+        if found is None:
+            invalid_history = next(
+                (
+                    item for item in _read(history_path())
+                    if item.get("dedupe_key") == key
+                    and str(item.get("status") or "").upper() == "INVALID_LEVELS"
+                ),
+                None,
+            )
+            new_error = str((order_setup or {}).get("error") or "")
+            if invalid_history is not None and new_error.startswith("INVALID_LEVELS"):
+                return deepcopy(invalid_history)
         if found is None:
             found = {
                 "id": str(uuid.uuid4()),

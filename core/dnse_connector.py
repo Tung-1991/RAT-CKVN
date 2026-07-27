@@ -1569,6 +1569,16 @@ class DNSEConnector:
                 }
         if not result.ok:
             logger.error("DNSE order failed: %s", result.error or result.raw)
+            try:
+                from telegram_notify.system_alerts import notify_order_failure
+
+                notify_order_failure(
+                    result,
+                    symbol=symbol_key,
+                    side="BUY" if side == "NB" else "SELL",
+                )
+            except Exception:
+                pass
         elif side == "NB" and is_stock:
             ticket = result.position_id or result.order_id or result.ticket
             buy_date = datetime.now()

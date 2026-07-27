@@ -355,6 +355,10 @@ class SignalGenerator:
             grp: self._evaluate_group(grp, active_inds_by_group[grp], dfs.get(grp), context, current_mode, voting_rules.get(grp, {}))
             for grp in ["G0", "G1", "G2", "G3"]
         }
+        context["group_rules"] = {
+            grp: str(voting_rules.get(grp, {}).get("master_rule", "IGNORE")).upper()
+            for grp in ["G0", "G1", "G2", "G3"]
+        }
 
         # 5. Đẩy vào Phễu Vote
         return self._evaluate_pipeline_v4(dfs, context, current_mode, voting_rules, active_inds_by_group, eval_mode, min_votes)

@@ -20,9 +20,11 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert loaded["signal_proposals_enabled"] is False
     assert loaded["signal_proposal_cooldown_minutes"] == 15.0
     assert loaded["opportunity_alerts_enabled"] is False
+    assert loaded["opportunity_daily_digest_enabled"] is False
     assert loaded["opportunity_chat_id"] == ""
-    assert loaded["opportunity_duplicate_cooldown_minutes"] == 60.0
-    assert loaded["opportunity_batch_minutes"] == 5.0
+    assert loaded["opportunity_duplicate_cooldown_minutes"] == 0.0
+    assert loaded["opportunity_batch_minutes"] == 0.5
+    assert loaded["system_alerts_enabled"] is True
     assert loaded["opportunity_mode_filter"] == "ALL"
     assert loaded["owner_user_id"] == ""
 
@@ -32,6 +34,7 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
             "control_enabled": True,
             "signal_proposals_enabled": True,
             "opportunity_alerts_enabled": True,
+            "opportunity_daily_digest_enabled": True,
             "bot_token_env": "TELE_BOT_KEY",
             "report_chat_id": "123",
             "opportunity_chat_id": "789",
@@ -52,6 +55,7 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert saved["control_enabled"] is True
     assert saved["signal_proposals_enabled"] is True
     assert saved["opportunity_alerts_enabled"] is True
+    assert saved["opportunity_daily_digest_enabled"] is True
     assert saved["opportunity_chat_id"] == "789"
     assert saved["opportunity_duplicate_cooldown_minutes"] == 90.0
     assert saved["opportunity_batch_minutes"] == 3.0
@@ -63,6 +67,26 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert saved["control_poll_interval_seconds"] == 0.5
     assert settings.allowed_user_ids(saved) == {111, 222, 333}
     assert settings.load_settings()["report_chat_id"] == "123"
+
+
+def test_legacy_opportunity_timers_are_migrated():
+    migrated = settings.normalize_settings(
+        {
+            "opportunity_duplicate_cooldown_minutes": 60,
+            "opportunity_batch_minutes": 5,
+        }
+    )
+    invalid = settings.normalize_settings(
+        {
+            "opportunity_duplicate_cooldown_minutes": "khong-hop-le",
+            "opportunity_batch_minutes": "khong-hop-le",
+        }
+    )
+
+    assert migrated["opportunity_duplicate_cooldown_minutes"] == 0.0
+    assert migrated["opportunity_batch_minutes"] == 0.5
+    assert invalid["opportunity_duplicate_cooldown_minutes"] == 0.0
+    assert invalid["opportunity_batch_minutes"] == 0.5
 
 
 def test_chat_id_candidates_accepts_channel_id_without_minus():
@@ -159,6 +183,27 @@ def test_send_long_message_sends_all_chunks(monkeypatch):
     assert result == {"ok": True, "sent": 2}
     assert sent[0].startswith("Report (1/2)")
     assert sent[1].startswith("Report (2/2)")
+
+
+def test_send_long_message_can_use_text_heading_without_duplicate_title(monkeypatch):
+    sent = []
+    monkeypatch.setenv("TELE_BOT_KEY", "token")
+    monkeypatch.setattr(
+        TelegramClient,
+        "send_message",
+        lambda self, chat_id, text, parse_mode=None: (
+            sent.append(text) or {"ok": True, "chat_id": chat_id}
+        ),
+    )
+
+    result = TelegramClient(token_env="TELE_BOT_KEY").send_long_message(
+        "123",
+        "RAT6 GỢI Ý BOT — 09:30\n\nCKPS",
+        title="",
+    )
+
+    assert result["ok"]
+    assert sent == ["RAT6 GỢI Ý BOT — 09:30\n\nCKPS"]
 
 
 def test_report_diagnostics_does_not_expose_token(monkeypatch, tmp_path):

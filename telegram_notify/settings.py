@@ -5,9 +5,11 @@ import os
 
 DEFAULT_SETTINGS = {
     "enabled": False,
+    "system_alerts_enabled": True,
     "control_enabled": False,
     "signal_proposals_enabled": False,
     "opportunity_alerts_enabled": False,
+    "opportunity_daily_digest_enabled": False,
     "bot_token_env": "TELE_BOT_KEY",
     "report_chat_id": "1003772881044",
     "opportunity_chat_id": "",
@@ -17,8 +19,8 @@ DEFAULT_SETTINGS = {
     "chunk_size": 3500,
     "control_poll_interval_seconds": 2.0,
     "signal_proposal_cooldown_minutes": 15.0,
-    "opportunity_duplicate_cooldown_minutes": 60.0,
-    "opportunity_batch_minutes": 5.0,
+    "opportunity_duplicate_cooldown_minutes": 0.0,
+    "opportunity_batch_minutes": 0.5,
     "opportunity_mode_filter": "ALL",
     "opportunity_ckps_enabled": True,
     "opportunity_ckcs_enabled": True,
@@ -54,14 +56,30 @@ def _safe_float(value, default, min_value=0.5, max_value=30.0):
     return max(min_value, min(max_value, parsed))
 
 
+def _is_exact_number(value, expected):
+    try:
+        return float(value) == float(expected)
+    except (TypeError, ValueError):
+        return False
+
+
 def normalize_settings(data):
     clean = dict(DEFAULT_SETTINGS)
     if isinstance(data, dict):
         clean.update(data)
+        # Migrate only the two legacy defaults. Custom values are preserved.
+        if _is_exact_number(data.get("opportunity_duplicate_cooldown_minutes"), 60.0):
+            clean["opportunity_duplicate_cooldown_minutes"] = 0.0
+        if _is_exact_number(data.get("opportunity_batch_minutes"), 5.0):
+            clean["opportunity_batch_minutes"] = 0.5
     clean["enabled"] = bool(clean.get("enabled"))
+    clean["system_alerts_enabled"] = bool(clean.get("system_alerts_enabled", True))
     clean["control_enabled"] = bool(clean.get("control_enabled"))
     clean["signal_proposals_enabled"] = bool(clean.get("signal_proposals_enabled"))
     clean["opportunity_alerts_enabled"] = bool(clean.get("opportunity_alerts_enabled"))
+    clean["opportunity_daily_digest_enabled"] = bool(
+        clean.get("opportunity_daily_digest_enabled", False)
+    )
     clean["bot_token_env"] = str(clean.get("bot_token_env") or DEFAULT_SETTINGS["bot_token_env"]).strip()
     clean["report_chat_id"] = str(clean.get("report_chat_id") or "").strip()
     clean["opportunity_chat_id"] = str(clean.get("opportunity_chat_id") or "").strip()
@@ -82,7 +100,7 @@ def normalize_settings(data):
     clean["opportunity_duplicate_cooldown_minutes"] = _safe_float(
         clean.get("opportunity_duplicate_cooldown_minutes"),
         DEFAULT_SETTINGS["opportunity_duplicate_cooldown_minutes"],
-        min_value=1.0,
+        min_value=0.0,
         max_value=1440.0,
     )
     clean["opportunity_batch_minutes"] = _safe_float(

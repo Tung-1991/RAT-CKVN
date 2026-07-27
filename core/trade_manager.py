@@ -27,6 +27,17 @@ from core.entry_exit_engine import evaluate_entry_exit, format_decision
 from core.money import format_vnd_full
 
 
+def validate_advisory_levels(side, price, sl, tp):
+    """Pure validation used only by the read-only Telegram opportunity plan."""
+    try:
+        price, sl, tp = float(price), float(sl), float(tp)
+    except (TypeError, ValueError):
+        return False
+    if min(price, sl, tp) <= 0:
+        return False
+    return sl < price < tp if str(side or "").upper() == "BUY" else tp < price < sl
+
+
 class TradeManager:
     def __init__(self, connector, checklist_manager, log_callback=None):
         self.connector = connector
@@ -1819,6 +1830,7 @@ class TradeManager:
         sym_info = self._get_symbol_info(symbol)
         if not tick or not sym_info:
             return {"ok": False, "error": "NO_TICK"}
+        is_stock = settlement.is_cash_stock(symbol)
 
         brain = self._get_brain_settings(symbol)
         risk_tsl = brain.get("risk_tsl", {}) or {}
@@ -1869,6 +1881,26 @@ class TradeManager:
             if atr_key not in context or swing_l_key not in context or swing_h_key not in context:
                 return {"ok": False, "error": f"NO_DATA|{sl_group}"}
             sl_price = float(swing_l) - buffer_atr if side == "BUY" else float(swing_h) + buffer_atr
+        def _valid_sl(value):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return False
+            if value <= 0:
+                return False
+            return value < price if side == "BUY" else value > price
+
+        if not _valid_sl(sl_price):
+            fallback_sl = (
+                float(swing_l or 0.0) - buffer_atr
+                if side == "BUY"
+                else float(swing_h or 0.0) + buffer_atr
+            )
+            if _valid_sl(fallback_sl):
+                sl_price = fallback_sl
+            else:
+                return {"ok": False, "error": "INVALID_LEVELS|SL"}
+
         sl_distance = abs(price - sl_price)
         if sl_distance < price * 0.0005:
             return {"ok": False, "error": "SL_TOO_TIGHT"}
@@ -1884,41 +1916,52 @@ class TradeManager:
             )
 
         sym_cfgs = brain.get("symbol_configs", {}).get(symbol, {}) or {}
-        fixed_lot = float(sym_cfgs.get("fixed_lot", 0.0) or 0.0)
-        if fixed_lot > 0:
-            lot = fixed_lot
-            _, safe_sl = self.connector.calculate_lot_size(symbol, 10.0, sl_price, order_type, 0)
-            sl_price = safe_sl if safe_sl else sl_price
+        owned_quantity = 0.0
+        if is_stock and side == "SELL":
+            # CKCS SELL trong bảng gợi ý là nhận định giảm, không phải lệnh mở short.
+            # Chỉ hiển thị số CP đã về T+2 nếu tài khoản đang sở hữu.
+            try:
+                owned_quantity = float(self._stock_settled_long_volume(symbol) or 0.0)
+            except Exception:
+                owned_quantity = 0.0
+            lot = owned_quantity
         else:
-            base_risk = float(risk_tsl.get("base_risk", getattr(config, "BOT_RISK_PERCENT", 0.3)) or 0.3)
-            mode_multiplier = float((risk_tsl.get("mode_multipliers", {}) or {}).get(market_mode, 1.0) or 1.0)
-            risk_usd = float(acc_info.get("equity", 0.0) or 0.0) * ((base_risk * mode_multiplier) / 100.0)
-            lot, safe_sl = self.connector.calculate_lot_size(symbol, risk_usd, sl_price, order_type, strict_fee_per_lot)
-            if not lot:
-                return {"ok": False, "error": "LOT_CALC_FAILED"}
-            sl_price = safe_sl if safe_sl else sl_price
+            fixed_lot = float(sym_cfgs.get("fixed_lot", 0.0) or 0.0)
+            if fixed_lot > 0:
+                lot = fixed_lot
+                _, safe_sl = self.connector.calculate_lot_size(symbol, 10.0, sl_price, order_type, 0)
+                sl_price = safe_sl if safe_sl else sl_price
+            else:
+                base_risk = float(risk_tsl.get("base_risk", getattr(config, "BOT_RISK_PERCENT", 0.3)) or 0.3)
+                mode_multiplier = float((risk_tsl.get("mode_multipliers", {}) or {}).get(market_mode, 1.0) or 1.0)
+                risk_usd = float(acc_info.get("equity", 0.0) or 0.0) * ((base_risk * mode_multiplier) / 100.0)
+                lot, safe_sl = self.connector.calculate_lot_size(symbol, risk_usd, sl_price, order_type, strict_fee_per_lot)
+                if not lot:
+                    return {"ok": False, "error": "LOT_CALC_FAILED"}
+                sl_price = safe_sl if safe_sl else sl_price
 
         max_lot_cap = float(sym_cfgs.get("max_lot_cap", 0.0) or 0.0)
-        if max_lot_cap > 0:
+        if max_lot_cap > 0 and not (is_stock and side == "SELL"):
             lot = min(float(lot), max_lot_cap)
 
         # Bản gợi ý phải dùng đúng số lượng mà BOT thật sẽ dùng,
         # kể cả trần vốn/tỷ trọng riêng của CKCS.
-        capped = risk_gate.apply_stock_caps(
-            symbol,
-            lot,
-            price,
-            acc_info,
-            sym_info,
-            safeguard_cfg,
-            log=self.log,
-            log_target="bot",
-        )
-        if capped.get("error"):
-            return {"ok": False, "error": str(capped["error"])}
-        lot = float(capped.get("lot", lot) or 0.0)
-        if lot <= 0:
-            return {"ok": False, "error": "LOT_CALC_FAILED"}
+        if not (is_stock and side == "SELL"):
+            capped = risk_gate.apply_stock_caps(
+                symbol,
+                lot,
+                price,
+                acc_info,
+                sym_info,
+                safeguard_cfg,
+                log=self.log,
+                log_target="bot",
+            )
+            if capped.get("error"):
+                return {"ok": False, "error": str(capped["error"])}
+            lot = float(capped.get("lot", lot) or 0.0)
+            if lot <= 0:
+                return {"ok": False, "error": "LOT_CALC_FAILED"}
 
         use_swing_tp = safeguard_cfg.get("BOT_USE_SWING_TP", False)
         use_rr_tp = safeguard_cfg.get("BOT_USE_RR_TP", True)
@@ -1937,6 +1980,30 @@ class TradeManager:
             tp_price = price + (abs(price - sl_price) * reward_ratio) if side == "BUY" else price - (abs(price - sl_price) * reward_ratio)
         else:
             tp_price = 0.0
+
+        def _valid_tp(value):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return False
+            if value <= 0:
+                return False
+            return value > price if side == "BUY" else value < price
+
+        if not _valid_tp(tp_price):
+            # Dùng Swing cùng khung cấu hình làm fallback. Không bịa thêm rule mới.
+            fallback_tp = (
+                float(swing_h or 0.0) - buffer_atr
+                if side == "BUY"
+                else float(swing_l or 0.0) + buffer_atr
+            )
+            if _valid_tp(fallback_tp):
+                tp_price = fallback_tp
+            else:
+                return {"ok": False, "error": "INVALID_LEVELS|TP"}
+
+        if not validate_advisory_levels(side, price, sl_price, tp_price):
+            return {"ok": False, "error": "INVALID_LEVELS|SL"}
 
         bot_tactic = str(
             risk_tsl.get("bot_tsl", getattr(config, "BOT_DEFAULT_TSL", "BE+STEP_R+SWING"))
@@ -1976,15 +2043,19 @@ class TradeManager:
             formula_reward = abs(float(tp_price) - float(price)) * lot * contract_size
             reward_amount = max(broker_reward, formula_reward)
 
-        gate = risk_gate.evaluate(
-            symbol,
-            price,
-            sl_price,
-            lot,
-            contract_size,
-            float(acc_info.get("equity", 0.0) or 0.0),
-            risk_gate.settings_from_brain(brain),
-            source="BOT",
+        gate = (
+            {"action": "INFO", "msg": "CKCS SELL is analysis-only"}
+            if is_stock and side == "SELL"
+            else risk_gate.evaluate(
+                symbol,
+                price,
+                sl_price,
+                lot,
+                contract_size,
+                float(acc_info.get("equity", 0.0) or 0.0),
+                risk_gate.settings_from_brain(brain),
+                source="BOT",
+            )
         )
         entry_order_type = str(
             safeguard_cfg.get(
@@ -2001,6 +2072,12 @@ class TradeManager:
             "symbol": symbol,
             "side": side,
             "lot": round(float(lot), 4),
+            "display_quantity": round(
+                float(owned_quantity if is_stock and side == "SELL" else lot),
+                4,
+            ),
+            "quantity_unit": "CP" if is_stock else "HĐ",
+            "analysis_only": bool(is_stock and side == "SELL"),
             "sl": round(float(sl_price), digits),
             "tp": round(float(tp_price), digits) if tp_price else 0.0,
             "price": float(price),

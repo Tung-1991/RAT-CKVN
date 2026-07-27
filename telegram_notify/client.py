@@ -249,7 +249,14 @@ class TelegramClient:
         chunks = _chunk_text(text, chunk_size=chunk_size)
         sent = 0
         for idx, chunk in enumerate(chunks, start=1):
-            header = f"{title} ({idx}/{len(chunks)})\n\n" if len(chunks) > 1 else f"{title}\n\n"
+            if title:
+                header = (
+                    f"{title} ({idx}/{len(chunks)})\n\n"
+                    if len(chunks) > 1
+                    else f"{title}\n\n"
+                )
+            else:
+                header = f"({idx}/{len(chunks)})\n\n" if len(chunks) > 1 else ""
             result = self.send_message(chat_id, header + chunk)
             if not result.get("ok"):
                 result["sent"] = sent

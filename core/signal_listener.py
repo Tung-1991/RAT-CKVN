@@ -381,6 +381,12 @@ class SignalListener:
         if action == "NONE":
             self.last_telegram_signal_proposal_action.pop(str(symbol or "").upper(), None)
             self._save_telegram_signal_phase(symbol, "")
+            try:
+                from telegram_notify.opportunity_alerts import mark_wait
+
+                mark_wait(symbol)
+            except Exception:
+                pass
             return
 
         if not self._auto_trade_for(symbol):

@@ -612,6 +612,28 @@ class BotUI(ctk.CTk):
                     error=is_error,
                     target="api-health",
                 )
+            try:
+                from telegram_notify.system_alerts import observe_health
+
+                observe_health(
+                    "MARKET DATA",
+                    new_state,
+                    {"MARKET DATA DOWN", "MARKET_DATA_DOWN"},
+                    threshold_seconds=60.0,
+                )
+                connector_health = (
+                    health.get("connector")
+                    if isinstance(health.get("connector"), dict)
+                    else {}
+                )
+                observe_health(
+                    "BROKER API",
+                    str(connector_health.get("broker_api_state") or "LIVE"),
+                    {"BROKER_API_DOWN", "BROKER API DOWN"},
+                    threshold_seconds=60.0,
+                )
+            except Exception:
+                pass
 
         contexts = heartbeat.get("contexts", {})
         if contexts:
@@ -5718,6 +5740,26 @@ class BotUI(ctk.CTk):
             return
         self._advisor_last_trigger_check = now
         try:
+            try:
+                from telegram_notify.opportunity_alerts import run_scheduled_digest
+                from telegram_notify.system_alerts import observe_global_cooldown
+                from core import storage_manager as _storage_manager
+
+                run_scheduled_digest(
+                    log_cb=lambda msg, error=False: self.log_message(
+                        msg, error=error, target="bot"
+                    )
+                )
+                _state = _storage_manager.load_state()
+                _global = ((_state.get("active_brake") or {}).get("global") or {})
+                observe_global_cooldown(
+                    float(_state.get("cooldown_until", 0.0) or 0.0),
+                    str(_global.get("reason") or ""),
+                    now=now,
+                )
+            except Exception as exc:
+                main_logger.debug("Telegram schedule/status tick failed: %s", exc)
+
             today = time.strftime("%Y-%m-%d")
             current_hhmm = time.strftime("%H:%M")
 

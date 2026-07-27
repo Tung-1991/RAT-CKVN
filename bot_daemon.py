@@ -527,15 +527,22 @@ class StandaloneBotDaemon:
             "CLOSE_ALL": "ĐÓNG HẾT + GLOBAL COOLDOWN",
         }.get(str(action or "").upper(), "CHỈ CẢNH BÁO")
 
-    def _volatility_symbol_on_cooldown(self, symbol):
+    @staticmethod
+    def _volatility_cooldown_key(symbol, direction):
+        return f"{str(symbol or '').upper()}|{str(direction or '').upper()}"
+
+    def _volatility_symbol_on_cooldown(self, symbol, direction):
         cooldowns = getattr(self, "_volatility_symbol_cooldowns", {}) or {}
         try:
-            until = float(cooldowns.get(str(symbol or "").upper(), 0.0) or 0.0)
+            until = float(
+                cooldowns.get(self._volatility_cooldown_key(symbol, direction), 0.0)
+                or 0.0
+            )
         except (TypeError, ValueError):
             return False
         return time.time() < until
 
-    def _arm_volatility_symbol_cooldown(self, symbol, safeguard_cfg):
+    def _arm_volatility_symbol_cooldown(self, symbol, direction, safeguard_cfg):
         from core import storage_manager
 
         cfg = settings_from_safeguard(safeguard_cfg)
@@ -544,7 +551,7 @@ class StandaloneBotDaemon:
         state = storage_manager.load_state()
         storage_manager.apply_state_defaults(state)
         cooldowns = state.setdefault("volatility_symbol_cooldowns", {})
-        cooldowns[str(symbol or "").upper()] = until
+        cooldowns[self._volatility_cooldown_key(symbol, direction)] = until
         now = time.time()
         state["volatility_symbol_cooldowns"] = {
             key: float(value)
@@ -643,10 +650,10 @@ class StandaloneBotDaemon:
 
             if cfg["VOLATILITY_BRAKE_TELEGRAM_ENABLED"]:
                 try:
-                    from telegram_notify.reporter import send_text_report
+                    from telegram_notify.opportunity_alerts import send_volatility_event
 
-                    result = send_text_report(
-                        message,
+                    result = send_volatility_event(
+                        event,
                         title="RAT6 CẢNH BÁO BIẾN ĐỘNG",
                         require_enabled=False,
                     )
@@ -659,6 +666,10 @@ class StandaloneBotDaemon:
                     logger.warning("[VOLATILITY BRAKE] Telegram lỗi: %s", exc)
 
             try:
+                if close_failures:
+                    from telegram_notify.system_alerts import notify_emergency_close_failure
+
+                    notify_emergency_close_failure(close_failures)
                 from ai_advisor.scan_report import append_volatility_event_to_existing_reports
 
                 append_volatility_event_to_existing_reports(event)
@@ -675,8 +686,6 @@ class StandaloneBotDaemon:
             and time.time() < float(self._volatility_brake_latched_until or 0.0)
         ):
             return
-        if self._volatility_symbol_on_cooldown(symbol):
-            return
         event = self.volatility_brake.observe(
             symbol,
             tick.get("last", 0.0),
@@ -686,12 +695,14 @@ class StandaloneBotDaemon:
         )
         if not event:
             return
+        if self._volatility_symbol_on_cooldown(symbol, event.get("direction")):
+            return
         with self._volatility_brake_lock:
             if self._volatility_brake_inflight:
                 return
             self._volatility_brake_inflight = True
         cooldown_minutes, cooldown_until = self._arm_volatility_symbol_cooldown(
-            symbol, safeguard_cfg
+            symbol, event.get("direction"), safeguard_cfg
         )
         event["symbol_cooldown_minutes"] = cooldown_minutes
         event["symbol_cooldown_until"] = cooldown_until

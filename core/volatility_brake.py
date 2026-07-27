@@ -14,7 +14,7 @@ DEFAULT_SETTINGS = {
     "VOLATILITY_BRAKE_ENABLED": False,
     "VOLATILITY_BRAKE_SYMBOLS": ["VN30F1M"],
     "VOLATILITY_BRAKE_ACTION": "ALERT_ONLY",
-    "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 240.0,
+    "VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 30.0,
     "VOLATILITY_BRAKE_TELEGRAM_ENABLED": True,
     "VOLATILITY_BRAKE_WINDOW_SECONDS": 60.0,
     "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
@@ -29,6 +29,17 @@ def settings_from_safeguard(safeguard: Optional[Dict[str, Any]]) -> Dict[str, An
     source = safeguard if isinstance(safeguard, dict) else {}
     result = dict(DEFAULT_SETTINGS)
     result.update({key: source[key] for key in DEFAULT_SETTINGS if key in source})
+    # 240 phút là mặc định cũ. Chỉ giá trị mặc định cũ này được migrate;
+    # các giá trị tùy chỉnh khác của người dùng được giữ nguyên.
+    try:
+        is_legacy_cooldown = (
+            float(result.get("VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES", 30.0) or 0.0)
+            == 240.0
+        )
+    except (TypeError, ValueError):
+        is_legacy_cooldown = False
+    if is_legacy_cooldown:
+        result["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"] = 30.0
     result["VOLATILITY_BRAKE_ENABLED"] = bool(result["VOLATILITY_BRAKE_ENABLED"])
     symbols = result.get("VOLATILITY_BRAKE_SYMBOLS", [])
     if isinstance(symbols, str):

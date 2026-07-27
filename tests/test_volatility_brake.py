@@ -69,6 +69,27 @@ def test_invalid_action_falls_back_to_alert_only():
     assert cfg["VOLATILITY_BRAKE_ACTION"] == "ALERT_ONLY"
 
 
+def test_old_default_cooldown_migrates_but_custom_value_is_preserved():
+    migrated = settings_from_safeguard(
+        {"VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 240}
+    )
+    custom = settings_from_safeguard(
+        {"VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES": 45}
+    )
+    assert migrated["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"] == 30
+    assert custom["VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES"] == 45
+
+
+def test_volatility_cooldown_is_separate_for_up_and_down():
+    daemon = StandaloneBotDaemon.__new__(StandaloneBotDaemon)
+    now = time.time()
+    daemon._volatility_symbol_cooldowns = {
+        "VN30F1M|UP": now + 60,
+    }
+    assert daemon._volatility_symbol_on_cooldown("VN30F1M", "UP")
+    assert not daemon._volatility_symbol_on_cooldown("VN30F1M", "DOWN")
+
+
 class _Connector:
     _is_connected = True
     last_latency_ms = 0.0

@@ -64,3 +64,26 @@ def test_signal_opportunity_expires_to_history(monkeypatch, tmp_path):
     expired = signal_opportunities.expire(now=item["expire_at"] + 1)
     assert expired[0]["status"] == signal_opportunities.EXPIRED
     assert signal_opportunities.list_active(now=item["expire_at"] + 2) == []
+
+
+def test_invalid_levels_do_not_spam_but_can_recover_same_day(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    signal = {"symbol": "AAA", "action": "SELL", "context": {"current_price": 10}}
+    invalid_setup = {"ok": False, "error": "INVALID_LEVELS|TP"}
+    first = signal_opportunities.record_signal(signal, now=1000, order_setup=invalid_setup)
+    signal_opportunities.finalize(first["id"], "INVALID_LEVELS", "INVALID_LEVELS|TP")
+
+    duplicate = signal_opportunities.record_signal(
+        signal,
+        now=1100,
+        order_setup=invalid_setup,
+    )
+    recovered = signal_opportunities.record_signal(
+        signal,
+        now=1200,
+        order_setup={"ok": True, "price": 10, "sl": 12, "tp": 7},
+    )
+
+    assert duplicate["id"] == first["id"]
+    assert recovered["id"] != first["id"]
+    assert recovered["status"] == signal_opportunities.ACTIVE

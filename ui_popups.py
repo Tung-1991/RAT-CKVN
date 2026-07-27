@@ -1346,10 +1346,16 @@ def open_advisor_popup(app):
 
     tg_settings = telegram_settings.load_settings()
     var_tg_enabled = tk.BooleanVar(value=bool(tg_settings.get("enabled")))
+    var_tg_system_alerts = tk.BooleanVar(
+        value=bool(tg_settings.get("system_alerts_enabled", True))
+    )
     var_tg_control_enabled = tk.BooleanVar(value=bool(tg_settings.get("control_enabled")))
     var_tg_signal_enabled = tk.BooleanVar(value=bool(tg_settings.get("signal_proposals_enabled")))
     var_tg_opportunity_enabled = tk.BooleanVar(
         value=bool(tg_settings.get("opportunity_alerts_enabled"))
+    )
+    var_tg_opportunity_daily_digest = tk.BooleanVar(
+        value=bool(tg_settings.get("opportunity_daily_digest_enabled", False))
     )
     var_tg_env = tk.StringVar(value=str(tg_settings.get("bot_token_env", "TELE_BOT_KEY")))
     var_tg_report_chat = tk.StringVar(value=str(tg_settings.get("report_chat_id", "1003772881044")))
@@ -1362,10 +1368,10 @@ def open_advisor_popup(app):
     var_tg_poll_interval = tk.StringVar(value=str(tg_settings.get("control_poll_interval_seconds", 2.0)))
     var_tg_signal_cooldown = tk.StringVar(value=str(tg_settings.get("signal_proposal_cooldown_minutes", 15.0)))
     var_tg_opportunity_cooldown = tk.StringVar(
-        value=str(tg_settings.get("opportunity_duplicate_cooldown_minutes", 60.0))
+        value=str(tg_settings.get("opportunity_duplicate_cooldown_minutes", 0.0))
     )
     var_tg_opportunity_batch = tk.StringVar(
-        value=str(tg_settings.get("opportunity_batch_minutes", 5.0))
+        value=str(tg_settings.get("opportunity_batch_minutes", 0.5))
     )
     var_tg_opportunity_mode = tk.StringVar(
         value=str(tg_settings.get("opportunity_mode_filter", "ALL"))
@@ -1566,9 +1572,11 @@ def open_advisor_popup(app):
             saved = telegram_settings.save_settings(
                 {
                     "enabled": var_tg_enabled.get(),
+                    "system_alerts_enabled": var_tg_system_alerts.get(),
                     "control_enabled": var_tg_control_enabled.get(),
                     "signal_proposals_enabled": var_tg_signal_enabled.get(),
                     "opportunity_alerts_enabled": var_tg_opportunity_enabled.get(),
+                    "opportunity_daily_digest_enabled": var_tg_opportunity_daily_digest.get(),
                     "bot_token_env": var_tg_env.get(),
                     "report_chat_id": var_tg_report_chat.get(),
                     "opportunity_chat_id": var_tg_opportunity_chat.get(),
@@ -1586,9 +1594,13 @@ def open_advisor_popup(app):
                 }
             )
             var_tg_enabled.set(bool(saved.get("enabled")))
+            var_tg_system_alerts.set(bool(saved.get("system_alerts_enabled", True)))
             var_tg_control_enabled.set(bool(saved.get("control_enabled")))
             var_tg_signal_enabled.set(bool(saved.get("signal_proposals_enabled")))
             var_tg_opportunity_enabled.set(bool(saved.get("opportunity_alerts_enabled")))
+            var_tg_opportunity_daily_digest.set(
+                bool(saved.get("opportunity_daily_digest_enabled", False))
+            )
             var_tg_env.set(str(saved.get("bot_token_env", "TELE_BOT_KEY")))
             var_tg_report_chat.set(str(saved.get("report_chat_id", "")))
             var_tg_opportunity_chat.set(str(saved.get("opportunity_chat_id", "")))
@@ -1598,10 +1610,10 @@ def open_advisor_popup(app):
             var_tg_poll_interval.set(str(saved.get("control_poll_interval_seconds", 2.0)))
             var_tg_signal_cooldown.set(str(saved.get("signal_proposal_cooldown_minutes", 15.0)))
             var_tg_opportunity_cooldown.set(
-                str(saved.get("opportunity_duplicate_cooldown_minutes", 60.0))
+                str(saved.get("opportunity_duplicate_cooldown_minutes", 0.0))
             )
             var_tg_opportunity_batch.set(
-                str(saved.get("opportunity_batch_minutes", 5.0))
+                str(saved.get("opportunity_batch_minutes", 0.5))
             )
             var_tg_opportunity_mode.set(
                 str(saved.get("opportunity_mode_filter", "ALL"))
@@ -1988,7 +2000,7 @@ def open_advisor_popup(app):
         1,
         "Chat ID",
         var_tg_report_chat,
-        "Nhận kết quả OpenAI; cảnh báo phanh biến động cũng gửi về Chat ID này.",
+        "Nhận kết quả OpenAI và các lỗi hệ thống quan trọng; không nhận cảnh báo biến động giá.",
     )
     ctk.CTkCheckBox(
         report_card,
@@ -1998,7 +2010,21 @@ def open_advisor_popup(app):
         checkbox_width=18,
         checkbox_height=18,
     ).grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=4)
-    compact_field(report_card, 4, "Độ dài mỗi tin", var_tg_chunk, "Mặc định 3500; báo cáo dài sẽ tự chia phần.")
+    ctk.CTkCheckBox(
+        report_card,
+        text="Gửi cảnh báo hệ thống quan trọng",
+        variable=var_tg_system_alerts,
+        font=("Roboto", 10, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=4)
+    compact_field(
+        report_card,
+        5,
+        "Độ dài mỗi tin",
+        var_tg_chunk,
+        "Mặc định 3500; báo cáo dài sẽ tự chia phần.",
+    )
     suggestion_card = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
     suggestion_card.grid(row=1, column=1, sticky="nsew", padx=(3, 0), pady=3)
     suggestion_card.grid_columnconfigure(1, weight=1)
@@ -2020,11 +2046,12 @@ def open_advisor_popup(app):
         checkbox_width=18,
         checkbox_height=18,
     ).grid(row=3, column=0, sticky="w", padx=10, pady=3)
-    ctk.CTkOptionMenu(
+    var_tg_opportunity_mode.set("ALL")
+    ctk.CTkLabel(
         suggestion_card,
-        values=["PAPER", "REAL", "ALL"],
-        variable=var_tg_opportunity_mode,
-        height=30,
+        text="Tất cả PAPER/REAL",
+        text_color="#90CAF9",
+        anchor="e",
     ).grid(row=3, column=1, sticky="ew", padx=(0, 10), pady=3)
     market_checks = ctk.CTkFrame(suggestion_card, fg_color="transparent")
     market_checks.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=2)
@@ -2036,27 +2063,23 @@ def open_advisor_popup(app):
         market_checks, text="CKCS", variable=var_tg_opportunity_ckcs, font=("Roboto", 10, "bold"),
         checkbox_width=18, checkbox_height=18
     ).pack(side="left")
-    ctk.CTkLabel(suggestion_card, text="Lặp cùng mã (phút)", font=("Roboto", 10, "bold")).grid(
-        row=5, column=0, sticky="w", padx=10, pady=3
-    )
-    ctk.CTkEntry(suggestion_card, textvariable=var_tg_opportunity_cooldown, height=30).grid(
-        row=5, column=1, sticky="ew", padx=(0, 10), pady=3
-    )
-    ctk.CTkLabel(suggestion_card, text="Gom tin trong (phút)", font=("Roboto", 10, "bold")).grid(
-        row=6, column=0, sticky="w", padx=10, pady=3
-    )
-    ctk.CTkEntry(suggestion_card, textvariable=var_tg_opportunity_batch, height=30).grid(
-        row=6, column=1, sticky="ew", padx=(0, 10), pady=3
-    )
     ctk.CTkLabel(
         suggestion_card,
-        text="60: một mã + BUY/SELL chỉ báo lại sau 60 phút. 5: gom tín hiệu trong 5 phút thành một tin.",
+        text="Chỉ gửi trong phiên khi BUY/SELL hoặc Priority thay đổi; cùng lượt quét gom trong 30 giây.",
         font=("Roboto", 9),
         text_color="#90CAF9",
         wraplength=300,
         anchor="w",
         justify="left",
-    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(1, 7))
+    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(3, 7))
+    ctk.CTkCheckBox(
+        suggestion_card,
+        text="Gửi thêm bản tổng 09:30 và 14:50",
+        variable=var_tg_opportunity_daily_digest,
+        font=("Roboto", 10, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 7))
     manual_report_actions = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
     manual_report_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 5))
     manual_report_actions.grid_columnconfigure((0, 1), weight=1)
@@ -3453,13 +3476,15 @@ def open_bot_setting_popup(app):
     )
     e_volatility_symbol_cooldown = _vol_entry(
         "Cooldown từng mã (phút)",
-        safe_cfg.get("VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES", 240.0),
+        30.0
+        if float(safe_cfg.get("VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES", 30.0) or 0.0) == 240.0
+        else safe_cfg.get("VOLATILITY_BRAKE_SYMBOL_COOLDOWN_MINUTES", 30.0),
         1,
         0,
     )
     ctk.CTkCheckBox(
         fields,
-        text="Gửi Telegram khi kích hoạt",
+        text="Gửi biến động giá vào nhóm Gợi ý BOT",
         variable=var_volatility_telegram,
     ).grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(24, 5))
     ctk.CTkLabel(

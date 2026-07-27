@@ -20,6 +20,7 @@ class _FakeTimer:
 def _configure(monkeypatch, tmp_path, **overrides):
     monkeypatch.setattr(settings, "account_dir", lambda: str(tmp_path))
     monkeypatch.setattr(opportunity_alerts, "account_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(opportunity_alerts, "_market_session_open", lambda _symbol: True)
     monkeypatch.setattr(opportunity_alerts.threading, "Timer", _FakeTimer)
     data = {
         "opportunity_alerts_enabled": True,
@@ -27,8 +28,8 @@ def _configure(monkeypatch, tmp_path, **overrides):
         "opportunity_mode_filter": "ALL",
         "opportunity_ckps_enabled": True,
         "opportunity_ckcs_enabled": True,
-        "opportunity_duplicate_cooldown_minutes": 60,
-        "opportunity_batch_minutes": 5,
+        "opportunity_duplicate_cooldown_minutes": 0,
+        "opportunity_batch_minutes": 0.5,
     }
     data.update(overrides)
     settings.save_settings(data)
@@ -36,6 +37,8 @@ def _configure(monkeypatch, tmp_path, **overrides):
 
 
 def _item(symbol, side="BUY", mode="PAPER", market="CKCS"):
+    sl = 11.5 if side == "BUY" else 14.0
+    tp = 14.0 if side == "BUY" else 10.0
     return {
         "symbol": symbol,
         "side": side,
@@ -43,7 +46,7 @@ def _item(symbol, side="BUY", mode="PAPER", market="CKCS"):
         "market_type": market,
         "last_price": 12.3,
         "block_reason": "BOT_OFF",
-        "order_setup": {"price": 12.3, "lot": 100, "sl": 11.5, "tp": 14.0},
+        "order_setup": {"price": 12.3, "lot": 100, "sl": sl, "tp": tp},
     }
 
 
@@ -66,9 +69,11 @@ def test_many_symbols_are_sent_as_one_read_only_digest(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert len(sent) == 1
     assert sent[0][0] == "1001234567890"
-    assert "40 tín hiệu mới" in sent[0][1]
-    assert "Chỉ thông báo, chưa gửi lệnh." in sent[0][1]
-    assert sent[0][2] == "RAT6 GỢI Ý BOT"
+    assert "CKCS BUY" in sent[0][1]
+    assert "CK00 | BUY @12.3 (100 CP)" in sent[0][1]
+    assert "BOT_OFF" not in sent[0][1]
+    assert "PAPER" not in sent[0][1]
+    assert sent[0][2] == ""
 
 
 def test_opportunity_sender_uses_same_ssl_mode_as_report_sender(monkeypatch, tmp_path):
@@ -91,7 +96,7 @@ def test_opportunity_sender_uses_same_ssl_mode_as_report_sender(monkeypatch, tmp
     assert created[0]["allow_insecure_ssl"] is True
 
 
-def test_duplicate_symbol_and_side_obeys_cooldown(monkeypatch, tmp_path):
+def test_unchanged_signal_is_not_resent_but_reversal_is(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path)
 
     first = opportunity_alerts.queue_opportunity(_item("AAA", "BUY"))
@@ -99,11 +104,11 @@ def test_duplicate_symbol_and_side_obeys_cooldown(monkeypatch, tmp_path):
     opposite = opportunity_alerts.queue_opportunity(_item("AAA", "SELL"))
 
     assert first["queued"] is True
-    assert duplicate["reason"] == "cooldown"
+    assert duplicate["reason"] == "unchanged"
     assert opposite["queued"] is True
 
 
-def test_mode_and_market_filters_are_independent(monkeypatch, tmp_path):
+def test_paper_real_do_not_filter_read_only_feed_but_market_toggles_do(monkeypatch, tmp_path):
     _configure(
         monkeypatch,
         tmp_path,
@@ -120,4 +125,4 @@ def test_mode_and_market_filters_are_independent(monkeypatch, tmp_path):
     )["reason"] == "filtered"
     assert opportunity_alerts.queue_opportunity(
         _item("VN30F1M", mode="REAL", market="CKPS")
-    )["reason"] == "filtered"
+    )["reason"] == "unchanged"
