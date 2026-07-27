@@ -25,6 +25,9 @@ DEFAULT_SETTINGS = {
     "ckcs_morning_time": "11:35",
     "ckcs_afternoon_time": "14:50",
     "ckcs_report_days": 15,
+    "ckcs_liquidity_filter_enabled": False,
+    "ckcs_liquidity_sessions": 60,
+    "ckcs_liquidity_min_billion": 10.0,
     "ckcs_last_morning_date": "",
     "ckcs_last_afternoon_date": "",
 }
@@ -87,6 +90,18 @@ def normalize(data, *, strict_time=False):
         ckcs_report_days = int(float(raw.get("ckcs_report_days", 15) or 15))
     except (TypeError, ValueError):
         ckcs_report_days = 15
+    try:
+        ckcs_liquidity_min_billion = float(
+            raw.get("ckcs_liquidity_min_billion", 10.0) or 10.0
+        )
+    except (TypeError, ValueError):
+        ckcs_liquidity_min_billion = 10.0
+    try:
+        ckcs_liquidity_sessions = int(
+            float(raw.get("ckcs_liquidity_sessions", 60) or 60)
+        )
+    except (TypeError, ValueError):
+        ckcs_liquidity_sessions = 60
     return {
         "mode": mode,
         "fixed_time": fixed_time,
@@ -101,6 +116,14 @@ def normalize(data, *, strict_time=False):
         "ckcs_morning_time": _time("ckcs_morning_time", "11:35"),
         "ckcs_afternoon_time": _time("ckcs_afternoon_time", "14:50"),
         "ckcs_report_days": max(1, min(2500, ckcs_report_days)),
+        "ckcs_liquidity_filter_enabled": _bool(
+            raw.get("ckcs_liquidity_filter_enabled"), False
+        ),
+        # Data Engine hiện nạp tối đa khoảng 100 nến/ngày cho mỗi group.
+        "ckcs_liquidity_sessions": max(5, min(100, ckcs_liquidity_sessions)),
+        "ckcs_liquidity_min_billion": max(
+            0.1, min(100000.0, ckcs_liquidity_min_billion)
+        ),
         "ckcs_last_morning_date": _date(raw.get("ckcs_last_morning_date")),
         "ckcs_last_afternoon_date": _date(raw.get("ckcs_last_afternoon_date")),
     }

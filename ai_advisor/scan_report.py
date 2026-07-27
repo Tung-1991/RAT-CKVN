@@ -18,6 +18,7 @@ AI_INSTRUCTIONS = """> **CÁCH ĐỌC DỮ LIỆU**
 > - Chỉ phân tích những module CHECK thực sự xuất hiện. Không giả định RSI, MACD, Bollinger Bands hoặc bất kỳ module nào luôn tồn tại.
 > - `BOT signal` là tín hiệu của nhánh TRADE. `CHECK view` chỉ là BUY/SELL/WAIT tham khảo của module báo cáo.
 > - Nếu một ngày có nhiều `CHECK segment`, operator đã đổi cấu hình giữa phiên; không trộn số liệu giữa các segment.
+> - `Thanh khoản 60 phiên` là bộ lọc điều kiện CKCS, không phải indicator và không tạo BUY/SELL. GTGD được ước tính từ typical price × volume của 60 nến ngày đã hoàn tất.
 > - Có thể dùng web search để bổ sung tin tức/bối cảnh mới, nhưng phải tách rõ dữ liệu nội bộ và thông tin tìm trên web.
 > - Đơn vị giá: CKCS thường là nghìn VND; CKPS là điểm chỉ số.
 >
@@ -130,7 +131,7 @@ def _daily_header(day, entry):
     volume_ratio_text = f"x{_fmt(volume.get('ratio'), 2)}"
     if projected is not None:
         volume_ratio_text += f"; ước tính cả phiên x{projected:.2f}"
-    return [
+    lines = [
         f"### {day} ({freshness}; cập nhật {entry.get('samples', 0)} lần)",
         (f"- Giá O/H/L/C: {_fmt(price.get('open'), 2)}/{_fmt(price.get('high'), 2)}/"
          f"{_fmt(price.get('low'), 2)}/{_fmt(price.get('close'), 2)}; hiện tại {_fmt(price.get('current'), 2)}; "
@@ -139,6 +140,19 @@ def _daily_header(day, entry):
          f"tỷ lệ {volume_ratio_text}; xu hướng 5 ngày {volume.get('trend_5d') or '—'}"),
         f"- {_bot_line(entry)}",
     ]
+    liquidity = entry.get("liquidity_60d") or {}
+    if liquidity and liquidity.get("status") != "NOT_APPLICABLE":
+        status = str(liquidity.get("status") or "INSUFFICIENT")
+        available = int(liquidity.get("sessions_available", 0) or 0)
+        required = int(liquidity.get("sessions_required", 60) or 60)
+        average = liquidity.get("average_value_billion")
+        threshold = liquidity.get("threshold_billion")
+        average_text = "—" if average is None else f"{float(average):.2f} tỷ/phiên"
+        lines.append(
+            f"- Thanh khoản {required} phiên: {average_text}; ngưỡng "
+            f"{_fmt(threshold, 2)} tỷ; **{status}** ({available}/{required} phiên)"
+        )
+    return lines
 
 
 def _number(value):
@@ -472,7 +486,14 @@ def render_full_report(cache=None, report_days=None):
              f"Cập nhật: {cache.get('updated_at') or '—'} | Số mã: {len(symbols)}", ""]
     parts.extend(_volatility_event_lines())
     parts.extend(_market_overview(symbols, report_days))
-    for symbol in sorted(symbols):
+    def _liquidity_order(symbol):
+        days = _slice_days(symbols[symbol], report_days)
+        latest = days[-1][1] if days else {}
+        status = str((latest.get("liquidity_60d") or {}).get("status") or "")
+        rank = {"PASS": 0, "INSUFFICIENT": 1, "ERROR": 2, "FAIL": 3}.get(status, 1)
+        return rank, symbol
+
+    for symbol in sorted(symbols, key=_liquidity_order):
         days = _slice_days(symbols[symbol], report_days)
         if not days:
             continue
@@ -489,7 +510,10 @@ def render_full_report(cache=None, report_days=None):
         latest_day, latest_entry = days[-1]
         parts.extend(["### Ngày mới nhất", ""])
         parts.extend(_daily_header(latest_day, latest_entry))
-        parts.extend(_segments_lines(latest_entry))
+        parts.append(
+            "- Chi tiết CHECK đã được gộp ở mục `CHECK trong khoảng` phía trên "
+            "để không lặp lại cùng dữ liệu."
+        )
         parts.append("")
         parts.extend(_history_table(days))
     return "\n".join(parts).strip() + "\n"
@@ -536,10 +560,7 @@ def append_volatility_event_to_existing_reports(event):
         f"{float(event.get('window_seconds', 0.0) or 0.0):.0f} giây.\n"
         f"- Hành động: {action_text}\n"
     )
-    candidates = [
-        paths.scan_session_report_path("morning"),
-        paths.scan_session_report_path("afternoon"),
-    ]
+    candidates = [paths.scan_report_path()]
     updated = []
     with _REPORT_LOCK:
         for report_path in candidates:
@@ -558,8 +579,14 @@ def append_volatility_event_to_existing_reports(event):
     return updated
 
 
-def export_ckcs_report(report_days=None, output_path=None, report_label=None):
-    """Tạo/ghi đè báo cáo sáng hoặc chiều; không sinh scan_report.md legacy."""
+def export_ckcs_report(
+    report_days=None,
+    output_path=None,
+    report_label=None,
+    report_session=None,
+    require_current_session=False,
+):
+    """Tạo/ghi đè một scan_report.md từ kho RAW nội bộ."""
     cache = scan_cache.load_cache()
     selected = set(scan_cache.selected_research_symbols())
     cache = dict(cache)
@@ -570,20 +597,49 @@ def export_ckcs_report(report_days=None, output_path=None, report_label=None):
     }
     if not cache.get("symbols"):
         return None
+    quality = None
+    if report_session:
+        quality = scan_cache.report_session_quality(
+            cache,
+            report_session,
+            selected_symbols=selected,
+        )
+        if require_current_session and not quality["ready"]:
+            logger.warning(
+                "CKCS %s report skipped: current=%s covered=%s/%s latest=%s",
+                report_session,
+                quality["today"],
+                quality["covered_entries"],
+                quality["expected_symbols"],
+                quality["latest_day"],
+            )
+            return None
     paths.ensure_ckcs_research_dir()
     report_text = render_full_report(cache, report_days=report_days)
     if report_label:
+        quality_lines = []
+        if quality:
+            quality_lines.append(
+                f"> Ngày tạo: {quality['today']} | Ngày dữ liệu mới nhất: "
+                f"{quality['latest_day'] or '—'} | Đủ lượt quét phiên: "
+                f"{quality['covered_entries']}/{quality['expected_symbols']} mã."
+            )
+            if not quality["ready"]:
+                quality_lines.append(
+                    "> **CẢNH BÁO: Kho RAW chưa có lượt quét phù hợp của phiên hôm nay; "
+                    "không dùng file này như báo cáo hiện tại.**"
+                )
         report_text = (
             f"> Báo cáo tự động: {str(report_label).strip()}\n"
-            "> Đây là ảnh chụp dữ liệu tại lúc tạo file. Nếu có báo cáo cuối ngày cùng ngày, "
-            "ưu tiên file cuối ngày và không cần gửi kèm file buổi sáng.\n\n"
+            + "\n".join(quality_lines)
+            + ("\n" if quality_lines else "")
+            + "> Đây là báo cáo mới nhất được ghi đè từ kho RAW; lịch sử nhiều ngày vẫn nằm trong báo cáo.\n\n"
             + report_text
         )
     if output_path:
         report_path = output_path
     else:
-        session = "morning" if datetime.now().hour < 13 else "afternoon"
-        report_path = paths.scan_session_report_path(session)
+        report_path = paths.scan_report_path()
     os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
     tmp_path = f"{report_path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
     try:
@@ -595,6 +651,14 @@ def export_ckcs_report(report_days=None, output_path=None, report_label=None):
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+    for legacy_path in paths.legacy_scan_session_report_paths():
+        if os.path.abspath(legacy_path) == os.path.abspath(report_path):
+            continue
+        try:
+            if os.path.isfile(legacy_path):
+                os.remove(legacy_path)
+        except OSError:
+            pass
     requested_days = max(1, int(report_days or 1))
     included_days = {
         day
@@ -606,4 +670,5 @@ def export_ckcs_report(report_days=None, output_path=None, report_label=None):
         "symbols": len(cache["symbols"]),
         "days": len(included_days),
         "requested_days": requested_days,
+        "quality": quality,
     }

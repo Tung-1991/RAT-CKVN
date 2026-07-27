@@ -80,7 +80,15 @@ def _passes_filter(item: Dict[str, Any], settings: Dict[str, Any]) -> bool:
     market = str(item.get("market_type") or "CKCS").upper()
     if market == "CKPS":
         return bool(settings.get("opportunity_ckps_enabled", True))
-    return bool(settings.get("opportunity_ckcs_enabled", True))
+    if not bool(settings.get("opportunity_ckcs_enabled", True)):
+        return False
+    try:
+        from ai_advisor.scan_cache import liquidity_filter_allows
+
+        return bool(liquidity_filter_allows(item.get("symbol")))
+    except Exception:
+        # Lỗi phụ trợ không được làm gãy luồng Telegram hiện hữu.
+        return True
 
 
 def _market_session_open(symbol: str) -> bool:

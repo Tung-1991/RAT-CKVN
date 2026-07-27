@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from datetime import datetime, timedelta
+import os
 
 import pandas as pd
 import pytest
@@ -266,7 +267,13 @@ def test_recorder_eod_final(tmp_account, monkeypatch, dfs):
     monkeypatch.setattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15, raising=False)
     rec = scan_cache.ScanSnapshotRecorder()
     now_closed = NOW.replace(hour=15, minute=5)
-    rec.maybe_record("HPG", dfs, make_context(market_open=True), 0, now=NOW)
+    rec.maybe_record(
+        "HPG",
+        dfs,
+        make_context(market_open=True),
+        0,
+        now=NOW.replace(hour=14, minute=30),
+    )
     ctx = make_context(market_open=False)
     rec.maybe_record("HPG", dfs, ctx, 0, now=now_closed)
     rec.flush()
@@ -293,16 +300,72 @@ def test_after_1445_does_not_create_new_daily_snapshot(tmp_account, dfs):
     assert scan_cache.load_cache()["symbols"] == {}
 
 
-def test_finalize_closed_day_does_not_create_extra_sample(tmp_account, dfs):
+def test_finalize_closed_day_marks_stale_morning_data_incomplete(tmp_account, dfs):
     rec = scan_cache.ScanSnapshotRecorder()
     rec.maybe_record("HPG", dfs, make_context(market_open=True), 0, now=NOW)
     before = rec.status()
     assert rec.finalize_closed_day(["HPG"], now=NOW.replace(hour=15, minute=0)) is True
     rec.flush()
     entry = scan_cache.load_cache()["symbols"]["HPG"]["days"][NOW.strftime("%Y-%m-%d")]
-    assert entry["eod_final"] is True
+    assert entry["eod_final"] is False
+    assert entry["day_status"] == "INCOMPLETE"
     assert entry["samples"] == 1
     assert before["symbols"] == 1
+
+
+def test_legacy_false_eod_is_demoted_when_loaded(tmp_account):
+    day = NOW.strftime("%Y-%m-%d")
+    cache = {
+        "schema_version": 2,
+        "updated_at": f"{day} 17:00:00",
+        "symbols": {
+            "HPG": {
+                "days": {
+                    day: {
+                        "samples": 3,
+                        "first_scan": "09:51",
+                        "last_scan": "10:21",
+                        "day_status": "EOD",
+                        "eod_final": True,
+                    }
+                }
+            }
+        },
+    }
+    assert scan_cache.save_cache(cache) is True
+    entry = scan_cache.load_cache()["symbols"]["HPG"]["days"][day]
+    assert entry["eod_final"] is False
+    assert entry["day_status"] == "INCOMPLETE"
+
+
+def test_report_session_quality_rejects_old_or_morning_only_data(dfs):
+    cache = scan_cache.empty_cache()
+    snap = scan_cache.compute_snapshot(dfs, make_context(), 0, now=NOW)
+    scan_cache.merge_sample(cache, "HPG", snap, now=NOW)
+    quality = scan_cache.report_session_quality(
+        cache,
+        "afternoon",
+        now=NOW.replace(hour=15),
+        selected_symbols=["HPG"],
+    )
+    assert quality["ready"] is False
+    assert quality["covered_entries"] == 0
+
+    cache = scan_cache.empty_cache()
+    scan_cache.merge_sample(
+        cache,
+        "HPG",
+        snap,
+        now=NOW.replace(hour=14, minute=30),
+    )
+    quality = scan_cache.report_session_quality(
+        cache,
+        "afternoon",
+        now=NOW.replace(hour=15),
+        selected_symbols=["HPG"],
+    )
+    assert quality["ready"] is True
+    assert quality["covered_entries"] == 1
 
 
 # ---------------------------------------------------------------- renderer + API section
@@ -370,21 +433,24 @@ def test_export_ckcs_report_is_separate_from_advisor_api(tmp_account, dfs, monke
     snap = scan_cache.compute_snapshot(dfs, make_context(), 1, now=NOW)
     scan_cache.merge_sample(cache, "VN30F1M", snap, now=NOW)
     scan_cache.save_cache(cache)
-    morning = paths.scan_session_report_path("morning")
-    result = scan_report.export_ckcs_report(report_days=15, output_path=morning)
+    report = paths.scan_report_path()
+    for legacy in paths.legacy_scan_session_report_paths():
+        os.makedirs(os.path.dirname(legacy), exist_ok=True)
+        with open(legacy, "w", encoding="utf-8") as handle:
+            handle.write("legacy")
+    result = scan_report.export_ckcs_report(report_days=15, output_path=report)
     assert result is not None and result["symbols"] == 1
-    import os
-    assert os.path.exists(morning)
-    assert not os.path.exists(paths.scan_report_path())
+    assert os.path.exists(report)
+    assert all(not os.path.exists(path) for path in paths.legacy_scan_session_report_paths())
     assert not os.path.exists(os.path.join(paths.advisor_root(), "scan_summary.md"))
-    report_text = open(morning, encoding="utf-8").read()
+    report_text = open(report, encoding="utf-8").read()
     assert "## HPG" in report_text
     assert "## VN30F1M" not in report_text
 
     monkeypatch.setattr(scan_cache, "selected_research_symbols", lambda: ["HPG", "VN30F1M"])
-    result = scan_report.export_ckcs_report(report_days=15, output_path=morning)
+    result = scan_report.export_ckcs_report(report_days=15, output_path=report)
     assert result["symbols"] == 2
-    assert "## VN30F1M" in open(morning, encoding="utf-8").read()
+    assert "## VN30F1M" in open(report, encoding="utf-8").read()
 
     sections = dict(api_client.build_api_sections())
     assert "scan_summary.md" not in sections

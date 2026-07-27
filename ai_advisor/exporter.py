@@ -105,7 +105,7 @@ ADVISOR_SCOPE_NOTE = """## Phạm vi Advisor và CKCS Research
 
 - Các file trong `advisor/` dùng để đánh giá BOT, setting và lịch sử giao dịch.
 - Đọc `user_context.md` để hiểu mục tiêu và `expert_context.md` để đối chiếu nhận định chuyên gia với dữ liệu BOT hiện tại.
-- `scan_report_morning.md` hoặc `scan_report_afternoon.md` trong `ckcs_research/` chỉ là dữ liệu thị trường bổ trợ/nghiên cứu CKCS.
+- `scan_report.md` trong `ckcs_research/` chỉ là dữ liệu thị trường bổ trợ/nghiên cứu CKCS.
 - Không trộn tín hiệu BOT với nhận định chọn CKCS. AI chỉ đề xuất; app không tự chuyển kết quả thành lệnh.
 """
 
@@ -197,7 +197,7 @@ def cleanup_legacy_advisor_artifacts():
         os.path.join(paths.advisor_root(), "scan_report.md"),
         os.path.join(paths.advisor_root(), "scan_summary.md"),
         paths.legacy_scan_cache_path(),
-        paths.scan_report_path(),
+        *paths.legacy_scan_session_report_paths(),
     ]
     external = paths.external_package_root()
     if os.path.isdir(external):

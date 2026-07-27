@@ -185,15 +185,8 @@ def test_priority_does_not_bypass_global_cooldown(monkeypatch):
 
 def test_md_event_only_updates_existing_reports(monkeypatch, tmp_path):
     manual = tmp_path / "scan_report.md"
-    morning = tmp_path / "scan_report_morning.md"
-    afternoon = tmp_path / "scan_report_afternoon.md"
-    morning.write_text("# Morning\n", encoding="utf-8")
+    manual.write_text("# Current\n", encoding="utf-8")
     monkeypatch.setattr(scan_report.paths, "scan_report_path", lambda: str(manual))
-    monkeypatch.setattr(
-        scan_report.paths,
-        "scan_session_report_path",
-        lambda session: str(morning if session == "morning" else afternoon),
-    )
     event = {
         "symbol": "AAA",
         "direction": "DOWN",
@@ -208,10 +201,8 @@ def test_md_event_only_updates_existing_reports(monkeypatch, tmp_path):
 
     updated = scan_report.append_volatility_event_to_existing_reports(event)
 
-    assert updated == [str(morning)]
-    assert "PHANH BIẾN ĐỘNG" in morning.read_text(encoding="utf-8")
-    assert not manual.exists()
-    assert not afternoon.exists()
+    assert updated == [str(manual)]
+    assert "PHANH BIẾN ĐỘNG" in manual.read_text(encoding="utf-8")
 
 
 def test_alert_only_does_not_touch_orders_or_global_cooldown(monkeypatch):

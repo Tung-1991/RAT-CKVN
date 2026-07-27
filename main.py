@@ -230,6 +230,9 @@ class BotUI(ctk.CTk):
         self.var_ckcs_send_api_afternoon = tk.BooleanVar(value=False)
         self.var_ckcs_morning_time = tk.StringVar(value="11:35")
         self.var_ckcs_afternoon_time = tk.StringVar(value="14:50")
+        self.var_ckcs_liquidity_filter_enabled = tk.BooleanVar(value=False)
+        self.var_ckcs_liquidity_sessions = tk.StringVar(value="60")
+        self.var_ckcs_liquidity_min_billion = tk.StringVar(value="10")
         self.advisor_api_preview_text = "API payload: not estimated"
         self.advisor_api_preview_detail_text = ""
         self.advisor_last_export_status = "Never"
@@ -5169,7 +5172,11 @@ class BotUI(ctk.CTk):
             except (TypeError, ValueError):
                 days = 15
             self.after(0, lambda: self._set_ckcs_api_status(f"Đang tạo báo cáo {session_vi}..."))
-            result = ckcs_api.generate_session_report(session, report_days=days)
+            result = ckcs_api.generate_session_report(
+                session,
+                report_days=days,
+                require_current_session=(reason == "schedule"),
+            )
             if not result:
                 self._ckcs_auto_retry_after[session] = time.time() + 300
                 self.after(0, lambda: self._set_ckcs_api_status(
@@ -5678,6 +5685,15 @@ class BotUI(ctk.CTk):
             self.var_ckcs_morning_time.set(saved["ckcs_morning_time"])
             self.var_ckcs_afternoon_time.set(saved["ckcs_afternoon_time"])
             self.var_ckcs_report_days.set(str(saved["ckcs_report_days"]))
+            self.var_ckcs_liquidity_filter_enabled.set(
+                bool(saved["ckcs_liquidity_filter_enabled"])
+            )
+            self.var_ckcs_liquidity_sessions.set(
+                str(saved["ckcs_liquidity_sessions"])
+            )
+            self.var_ckcs_liquidity_min_billion.set(
+                f"{float(saved['ckcs_liquidity_min_billion']):g}"
+            )
             self._ckcs_last_morning_date = str(saved.get("ckcs_last_morning_date") or "")
             self._ckcs_last_afternoon_date = str(saved.get("ckcs_last_afternoon_date") or "")
             return saved
@@ -5704,6 +5720,15 @@ class BotUI(ctk.CTk):
                     "ckcs_morning_time": self.var_ckcs_morning_time.get(),
                     "ckcs_afternoon_time": self.var_ckcs_afternoon_time.get(),
                     "ckcs_report_days": self.var_ckcs_report_days.get(),
+                    "ckcs_liquidity_filter_enabled": (
+                        self.var_ckcs_liquidity_filter_enabled.get()
+                    ),
+                    "ckcs_liquidity_sessions": (
+                        self.var_ckcs_liquidity_sessions.get()
+                    ),
+                    "ckcs_liquidity_min_billion": (
+                        self.var_ckcs_liquidity_min_billion.get()
+                    ),
                     "ckcs_last_morning_date": self._ckcs_last_morning_date,
                     "ckcs_last_afternoon_date": self._ckcs_last_afternoon_date,
                 }
@@ -5718,6 +5743,15 @@ class BotUI(ctk.CTk):
             self.var_ckcs_morning_time.set(saved["ckcs_morning_time"])
             self.var_ckcs_afternoon_time.set(saved["ckcs_afternoon_time"])
             self.var_ckcs_report_days.set(str(saved["ckcs_report_days"]))
+            self.var_ckcs_liquidity_filter_enabled.set(
+                bool(saved["ckcs_liquidity_filter_enabled"])
+            )
+            self.var_ckcs_liquidity_sessions.set(
+                str(saved["ckcs_liquidity_sessions"])
+            )
+            self.var_ckcs_liquidity_min_billion.set(
+                f"{float(saved['ckcs_liquidity_min_billion']):g}"
+            )
             if not silent:
                 self._set_advisor_status(
                     f"Đã lưu lịch Advisor | {saved['mode']}"

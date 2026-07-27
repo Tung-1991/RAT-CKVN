@@ -43,12 +43,14 @@ def session_label(session):
     return "PHIÊN SÁNG" if normalize_session(session) == "morning" else "CUỐI NGÀY"
 
 
-def generate_session_report(session, report_days=15):
+def generate_session_report(session, report_days=15, require_current_session=False):
     session = normalize_session(session)
     return export_ckcs_report(
         report_days=report_days,
-        output_path=paths.scan_session_report_path(session),
+        output_path=paths.scan_report_path(),
         report_label=session_label(session),
+        report_session=session,
+        require_current_session=bool(require_current_session),
     )
 
 
@@ -63,12 +65,12 @@ def build_input(session):
     session = normalize_session(session)
     settings = api_client.load_api_settings()
     report = _read(
-        paths.scan_session_report_path(session),
+        paths.scan_report_path(),
         settings.get("technical_settings_limit", 1_000_000),
     )
     if not report.strip():
         raise FileNotFoundError(
-            f"Chưa có {os.path.basename(paths.scan_session_report_path(session))}"
+            f"Chưa có {os.path.basename(paths.scan_report_path())}"
         )
     private_context = _read(
         paths.research_private_context_path(),
@@ -76,7 +78,7 @@ def build_input(session):
     )
     parts = [
         f"# CKCS SESSION\n{session_label(session)}",
-        f"# {os.path.basename(paths.scan_session_report_path(session))}\n{report}",
+        f"# {os.path.basename(paths.scan_report_path())}\n{report}",
     ]
     if private_context.strip():
         parts.append(f"# private_context.md\n{private_context}")

@@ -19,11 +19,21 @@ from ai_advisor import paths
 
 logger = logging.getLogger("BotDaemon")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SIGNAL_DEDUP_MINUTES = 30
 WEEK_BARS = 5
 _SESSION_WINDOWS = ((9 * 60, 11 * 60 + 30), (13 * 60, 14 * 60 + 45))
+_MORNING_CLOSE_MINUTE = 11 * 60 + 30
+_MARKET_CLOSE_MINUTE = 14 * 60 + 45
+_COVERAGE_GRACE_MINUTES = 5
 _IO_LOCK = threading.RLock()
+LIQUIDITY_SESSIONS = 60
+_LIQUIDITY_LOOKUP_LOCK = threading.RLock()
+_LIQUIDITY_LOOKUP_CACHE = {
+    "path": "",
+    "mtime_ns": -1,
+    "values": {},
+}
 
 
 def _f(value, nd=4):
@@ -46,6 +56,76 @@ def session_elapsed_fraction(now):
         elif minute > start:
             elapsed += minute - start
     return round(elapsed / total, 4) if total else 1.0
+
+
+def _parse_hhmm(value):
+    try:
+        hour, minute = str(value or "").strip().split(":", 1)
+        total = int(hour) * 60 + int(minute)
+        return total if 0 <= total < 24 * 60 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _coverage_cutoff(close_minute, interval_minutes=None):
+    """Mốc mẫu cuối hợp lệ theo chính chu kỳ RAW mà người dùng đã chọn."""
+    try:
+        interval = float(
+            interval_minutes
+            if interval_minutes is not None
+            else getattr(config, "SCAN_SNAPSHOT_INTERVAL_MINUTES", 15)
+        )
+    except (TypeError, ValueError):
+        interval = 15.0
+    interval = max(1.0, min(120.0, interval))
+    # Với chu kỳ 15 phút, mẫu 14:25 trở đi đủ đại diện lượt quét cuối phiên.
+    return max(13 * 60, int(close_minute - interval - _COVERAGE_GRACE_MINUTES))
+
+
+def has_session_coverage(entry, session="afternoon", interval_minutes=None):
+    """Không coi dữ liệu buổi sáng là dữ liệu cuối ngày chỉ vì app mở sau 14:45."""
+    last_scan = _parse_hhmm((entry or {}).get("last_scan"))
+    if last_scan is None:
+        return False
+    close_minute = (
+        _MORNING_CLOSE_MINUTE
+        if str(session or "").strip().lower() == "morning"
+        else _MARKET_CLOSE_MINUTE
+    )
+    return last_scan >= _coverage_cutoff(close_minute, interval_minutes)
+
+
+def report_session_quality(cache, session, now=None, selected_symbols=None):
+    """Đánh giá kho hiện tại có thực sự chứa lượt quét của phiên cần xuất hay không."""
+    now = now or datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    selected = {
+        str(symbol or "").strip().upper()
+        for symbol in (selected_symbols or selected_research_symbols())
+        if str(symbol or "").strip()
+    }
+    entries = []
+    latest_days = set()
+    for symbol, node in ((cache or {}).get("symbols", {}) or {}).items():
+        if selected and str(symbol).upper() not in selected:
+            continue
+        days = (node or {}).get("days", {}) or {}
+        if days:
+            latest_days.add(sorted(days)[-1])
+        entry = days.get(today)
+        if entry:
+            entries.append(entry)
+    covered = sum(has_session_coverage(entry, session) for entry in entries)
+    expected = len(selected) if selected else len(entries)
+    return {
+        "ready": bool(entries and covered),
+        "today": today,
+        "session": str(session or "").strip().lower(),
+        "latest_day": max(latest_days) if latest_days else None,
+        "current_entries": len(entries),
+        "covered_entries": covered,
+        "expected_symbols": expected,
+    }
 
 
 def pick_daily_df(dfs):
@@ -84,6 +164,79 @@ def pick_intraday_df(dfs, now):
         except Exception:
             continue
     return min(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
+
+
+def _is_ckps_symbol(symbol):
+    symbol = str(symbol or "").strip().upper()
+    configured = {
+        str(item or "").strip().upper()
+        for item in (getattr(config, "CKPS_SYMBOLS", []) or [])
+    }
+    return symbol.startswith("VN30F") or symbol in configured
+
+
+def compute_liquidity_60d(
+    daily_df,
+    *,
+    symbol=None,
+    now=None,
+    min_billion=10.0,
+    sessions=LIQUIDITY_SESSIONS,
+):
+    """Ước tính GTGD bình quân từ OHLCV ngày; không phải phiếu BUY/SELL.
+
+    DNSE biểu diễn giá CKCS theo nghìn VND và volume theo cổ phiếu. Endpoint
+    OHLC không có turnover chính xác, vì vậy dùng typical price × volume.
+    Chỉ lấy nến đã hoàn tất trước ngày hiện tại để tránh trộn volume dở dang.
+    """
+    sessions = max(1, int(sessions or LIQUIDITY_SESSIONS))
+    threshold_vnd = max(0.0, float(min_billion or 0.0)) * 1_000_000_000.0
+    base = {
+        "sessions_required": sessions,
+        "sessions_available": 0,
+        "average_value_vnd": None,
+        "average_value_billion": None,
+        "threshold_billion": round(threshold_vnd / 1_000_000_000.0, 4),
+        "status": "NOT_APPLICABLE" if _is_ckps_symbol(symbol) else "INSUFFICIENT",
+        "method": "TYPICAL_PRICE_X_VOLUME",
+        "estimated": True,
+    }
+    if _is_ckps_symbol(symbol):
+        return base
+    required = {"time", "high", "low", "close", "volume"}
+    if daily_df is None or daily_df.empty or not required.issubset(daily_df.columns):
+        return base
+    try:
+        now = now or datetime.now()
+        work = daily_df.loc[:, list(required)].copy()
+        work["time"] = pd.to_datetime(work["time"], errors="coerce")
+        for column in ("high", "low", "close", "volume"):
+            work[column] = pd.to_numeric(work[column], errors="coerce")
+        work = work[
+            work["time"].notna()
+            & (work["time"].dt.date < now.date())
+            & (work["high"] > 0)
+            & (work["low"] > 0)
+            & (work["close"] > 0)
+            & (work["volume"] >= 0)
+        ].sort_values("time").drop_duplicates(subset=["time"], keep="last")
+        work = work.tail(sessions)
+        base["sessions_available"] = int(len(work))
+        if len(work) < sessions:
+            return base
+        typical_price_thousand = (
+            work["high"] + work["low"] + work["close"]
+        ) / 3.0
+        values_vnd = typical_price_thousand * 1000.0 * work["volume"]
+        average_vnd = float(values_vnd.mean())
+        base["average_value_vnd"] = round(average_vnd, 0)
+        base["average_value_billion"] = round(average_vnd / 1_000_000_000.0, 3)
+        base["status"] = "PASS" if average_vnd >= threshold_vnd else "FAIL"
+        return base
+    except Exception as exc:
+        base["status"] = "ERROR"
+        base["error"] = str(exc)
+        return base
 
 
 def _compute_price_block(daily_df, current_price, now, intraday_df=None):
@@ -177,10 +330,28 @@ def compute_snapshot(dfs, context, signal, now=None, symbol=None, settings=None)
     daily_group, daily_df = pick_daily_df(dfs)
     intraday_df = pick_intraday_df(dfs, now)
     check = check_engine.evaluate(dfs, context, symbol=symbol, settings=settings)
+    try:
+        from ai_advisor import schedule_settings
+
+        liquidity_settings = schedule_settings.load()
+        min_billion = liquidity_settings.get("ckcs_liquidity_min_billion", 10.0)
+        liquidity_sessions = liquidity_settings.get(
+            "ckcs_liquidity_sessions", LIQUIDITY_SESSIONS
+        )
+    except Exception:
+        min_billion = 10.0
+        liquidity_sessions = LIQUIDITY_SESSIONS
     return {
         "price": _compute_price_block(daily_df, context.get("current_price"), now, intraday_df),
         "volume": _compute_volume_block(daily_df, market_open, now, intraday_df),
         "daily_group": daily_group,
+        "liquidity_60d": compute_liquidity_60d(
+            daily_df,
+            symbol=symbol,
+            now=now,
+            min_billion=min_billion,
+            sessions=liquidity_sessions,
+        ),
         "bot": {
             "trend_G0": context.get("trend_G0"), "trend_G1": context.get("trend_G1"),
             "trend_G2": context.get("trend_G2"), "trend_G3": context.get("trend_G3"),
@@ -227,8 +398,13 @@ def _normalize_day_statuses(cache, now=None):
     for node in (cache.get("symbols", {}) or {}).values():
         for day, entry in (node.get("days", {}) or {}).items():
             if entry.get("eod_final") or entry.get("day_status") == "EOD":
-                entry["eod_final"] = True
-                entry["day_status"] = "EOD"
+                # Sửa dữ liệu legacy từng bị đóng dấu EOD dù lượt quét cuối còn ở buổi sáng.
+                if _parse_hhmm(entry.get("last_scan")) is not None and not has_session_coverage(entry):
+                    entry["eod_final"] = False
+                    entry["day_status"] = "INCOMPLETE"
+                else:
+                    entry["eod_final"] = True
+                    entry["day_status"] = "EOD"
             elif day < today:
                 entry["eod_final"] = False
                 entry["day_status"] = "INCOMPLETE"
@@ -387,7 +563,7 @@ def merge_sample(cache, sym, snapshot, now=None, eod=False):
     entry = _day_entry(cache, sym, day)
     entry["price"] = _merge_price_block(entry.get("price"), snapshot.get("price"))
     entry["volume"] = _merge_volume_block(entry.get("volume"), snapshot.get("volume"))
-    for key in ("bot", "daily_group"):
+    for key in ("bot", "daily_group", "liquidity_60d"):
         entry[key] = snapshot.get(key)
     latest_signal = (snapshot.get("bot") or {}).get("latest_signal")
     label = "BUY" if latest_signal == 1 else ("SELL" if latest_signal == -1 else "WAIT")
@@ -519,6 +695,52 @@ def save_cache(cache, path=None):
     return False
 
 
+def _latest_liquidity_lookup():
+    """Đọc cache một lần theo mtime để Telegram không parse file cho từng mã."""
+    path = os.path.abspath(paths.scan_cache_path())
+    try:
+        mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:
+        return {}
+    with _LIQUIDITY_LOOKUP_LOCK:
+        if (
+            _LIQUIDITY_LOOKUP_CACHE["path"] == path
+            and _LIQUIDITY_LOOKUP_CACHE["mtime_ns"] == mtime_ns
+        ):
+            return dict(_LIQUIDITY_LOOKUP_CACHE["values"])
+        cache = load_cache(path)
+        values = {}
+        for symbol, node in (cache.get("symbols", {}) or {}).items():
+            days = node.get("days", {}) or {}
+            if not days:
+                continue
+            latest = days[sorted(days)[-1]]
+            values[str(symbol).upper()] = dict(latest.get("liquidity_60d") or {})
+        _LIQUIDITY_LOOKUP_CACHE.update({
+            "path": path,
+            "mtime_ns": mtime_ns,
+            "values": values,
+        })
+        return dict(values)
+
+
+def liquidity_filter_allows(symbol):
+    """Rule chỉ dành cho báo cáo/gợi ý CKCS; không được gọi từ logic đặt lệnh."""
+    symbol = str(symbol or "").strip().upper()
+    if _is_ckps_symbol(symbol):
+        return True
+    try:
+        from ai_advisor import schedule_settings
+
+        settings = schedule_settings.load()
+    except Exception:
+        return True
+    if not settings.get("ckcs_liquidity_filter_enabled", False):
+        return True
+    result = _latest_liquidity_lookup().get(symbol) or {}
+    return str(result.get("status") or "").upper() == "PASS"
+
+
 class ScanSnapshotRecorder:
     def __init__(self):
         self._cache = None
@@ -541,7 +763,7 @@ class ScanSnapshotRecorder:
             return False
         self._ensure_loaded()
         # 14:45 trở đi chỉ khóa bản ghi đã có; tuyệt đối không tạo thêm mẫu mới.
-        if now.hour * 60 + now.minute >= 14 * 60 + 45:
+        if now.hour * 60 + now.minute >= _MARKET_CLOSE_MINUTE:
             self.finalize_closed_day([sym], now=now)
             return self._dirty
         market_open = bool(context.get("market_open", True))
@@ -566,9 +788,9 @@ class ScanSnapshotRecorder:
                 self._dirty = False
 
     def finalize_closed_day(self, symbols=None, now=None):
-        """Khóa bản ghi hôm nay sau 14:45; không gọi market API và không tạo mẫu mới."""
+        """Khóa bản ghi hôm nay sau 14:45 nhưng không nâng dữ liệu buổi sáng thành EOD."""
         now = now or datetime.now()
-        if now.hour * 60 + now.minute < 14 * 60 + 45:
+        if now.hour * 60 + now.minute < _MARKET_CLOSE_MINUTE:
             return False
         self._ensure_loaded()
         day = now.strftime("%Y-%m-%d")
@@ -579,9 +801,15 @@ class ScanSnapshotRecorder:
                 continue
             entry = node.get("days", {}).get(day)
             if entry and not entry.get("eod_final"):
-                entry["eod_final"] = True
-                entry["day_status"] = "EOD"
-                changed = True
+                complete = has_session_coverage(entry, "afternoon")
+                next_status = "EOD" if complete else "INCOMPLETE"
+                if (
+                    bool(entry.get("eod_final")) != complete
+                    or entry.get("day_status") != next_status
+                ):
+                    entry["eod_final"] = complete
+                    entry["day_status"] = next_status
+                    changed = True
             for old_day, old_entry in (node.get("days", {}) or {}).items():
                 if old_day < day and not old_entry.get("eod_final") and old_entry.get("day_status") != "INCOMPLETE":
                     old_entry["day_status"] = "INCOMPLETE"
@@ -599,14 +827,16 @@ class ScanSnapshotRecorder:
         today_entries = [entry for entry in today_entries if entry]
         statuses = {entry.get("day_status", "INTRADAY") for entry in today_entries}
         today_status = next(iter(statuses)) if len(statuses) == 1 else ("MIXED" if statuses else "NO_DATA")
+        all_days = {
+            day
+            for node in symbols.values()
+            for day in (node.get("days", {}) or {})
+        }
         return {
             "updated_at": self._cache.get("updated_at"),
             "symbols": len(symbols),
-            "days": len({
-                day
-                for node in symbols.values()
-                for day in (node.get("days", {}) or {})
-            }),
+            "days": len(all_days),
+            "latest_day": max(all_days) if all_days else None,
             "today_status": today_status,
             "today_samples": sum(int(entry.get("samples", 0) or 0) for entry in today_entries),
             "selected_symbols": len(selected_research_symbols()),

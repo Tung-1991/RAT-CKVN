@@ -314,10 +314,9 @@ App tự cập nhật trong phiên:
 - scan_snapshot_cache.json: kho nội bộ theo mã/ngày, giữ mặc định 250 ngày.
 
 App tạo/ghi đè báo cáo:
-- 11:35: scan_report_morning.md.
-- 14:50: scan_report_afternoon.md.
-- Làm mới thủ công cập nhật đúng file sáng hoặc chiều theo thời điểm hiện tại.
-- Nếu đã có file chiều cùng ngày, chỉ cần gửi file chiều.
+- 11:35 và 14:50 cùng cập nhật một file `scan_report.md`; lần sau ghi đè lần trước.
+- Làm mới thủ công cũng cập nhật đúng file này.
+- Lịch sử nhiều ngày không mất vì được lấy từ `scan_snapshot_cache.json`.
 
 Người dùng tự điền:
 - private_context.md: tin chuyên gia, nhận định cá nhân, vốn và thời gian nắm giữ.
@@ -326,11 +325,11 @@ Chỉ có khi bật/gọi API:
 - ckcs_response_morning.md hoặc ckcs_response_afternoon.md.
 
 RAW chỉ bổ sung bối cảnh thị trường/nghiên cứu CKCS; không sửa BOT và không đặt lệnh.
-Khi gửi qua trình duyệt, chọn một báo cáo sáng/chiều + private_context.md và tài liệu/ảnh chuyên gia.
+Khi gửi qua trình duyệt, chọn scan_report.md + private_context.md và tài liệu/ảnh chuyên gia.
 Không cần gửi scan_snapshot_cache.json vì đây là kho nội bộ dài.
 
 API là phần nâng cao và mặc định tắt; tắt API không phát sinh request hoặc phí.
-Không còn external_package, scan_report.md, scan_summary.md, file latest hoặc file version phụ.
+Không còn external_package, scan_report_morning.md, scan_report_afternoon.md, scan_summary.md, file latest hoặc file version phụ.
 """
 
 
@@ -716,6 +715,11 @@ def open_advisor_popup(app):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(
                     "# PRIVATE CONTEXT — THÔNG TIN RIÊNG CHO PHÂN TÍCH CKCS\n\n"
+                    "## Bộ lọc cơ bản\n\n"
+                    "- Thanh khoản 60 phiên: app tự tính; không cần nhập lại.\n"
+                    "- Tăng trưởng doanh thu/lợi nhuận 5 năm: ghi tiêu chuẩn và dữ liệu chuyên gia tại đây.\n"
+                    "- Định giá: giá thị trường thấp hơn giá hợp lý tối thiểu 20%; ghi nguồn, ngày và phương pháp định giá.\n"
+                    "- Lọc kỹ thuật: ghi điều kiện đạt dựa trên các module CHECK đã bật.\n\n"
                     "## Tin tức / dữ liệu chuyên gia\n\n"
                     "Điền nội dung tại đây.\n\n"
                     "## Nhận định cá nhân\n\n"
@@ -747,7 +751,7 @@ def open_advisor_popup(app):
 
     _refresh_scan_status()
 
-    # --- CKCS API: lịch tạo hai file phiên và tùy chọn gửi LLM bên ngoài ---
+    # --- CKCS API: hai lịch cập nhật cùng một report và tùy chọn gửi LLM ---
     ckcs_api_body = _speed_up_scroll(ctk.CTkScrollableFrame(tab_ckcs_api, fg_color="transparent"))
     ckcs_api_body.pack(fill="both", expand=True, padx=8, pady=8)
 
@@ -756,7 +760,7 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_api_warning,
         text=(
-            "Phần này chỉ tạo hai báo cáo sáng/chiều để Ngài tự chọn gửi qua trình duyệt. "
+            "Phần này cập nhật một scan_report.md để Ngài tự gửi qua trình duyệt. "
             "Không tự chọn mã, không sửa setting và không đặt lệnh."
         ),
         font=("Roboto", 11, "bold"),
@@ -805,8 +809,7 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_common,
         text=(
-            "Làm mới thủ công cập nhật đúng file sáng hoặc chiều theo giờ hiện tại. "
-            "Nếu đã có file chiều cùng ngày thì không cần gửi kèm file sáng. "
+            "Làm mới thủ công cập nhật scan_report.md; lịch sau sẽ ghi đè bằng dữ liệu mới hơn. "
             "API dùng chung cấu hình tại tab API NÂNG CAO và mặc định tắt."
         ),
         font=("Roboto", 10, "bold"),
@@ -954,7 +957,7 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_panel,
         text=(
-            "App gom dữ liệu các mã đã chọn vào kho theo mã/ngày, rồi tạo báo cáo sáng hoặc chiều. "
+            "App gom dữ liệu các mã đã chọn vào kho theo mã/ngày, rồi cập nhật một scan_report.md. "
             "Phần này không chọn mã, không gọi AI và không tác động BOT."
         ),
         font=("Roboto", 10, "bold"),
@@ -1011,42 +1014,106 @@ def open_advisor_popup(app):
 
     ctk.CTkCheckBox(
         ckcs_panel,
-        text="Tự tạo báo cáo sáng",
+        text="Lọc thanh khoản bình quân",
+        variable=app.var_ckcs_liquidity_filter_enabled,
+        command=lambda: _save_advisor_schedule(silent=True),
+        font=("Roboto", 11, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=5)
+    liquidity_labels = ctk.CTkFrame(ckcs_panel, fg_color="transparent")
+    liquidity_labels.grid(row=5, column=2, sticky="w", padx=(6, 6), pady=5)
+    ctk.CTkLabel(
+        liquidity_labels,
+        text="Số phiên",
+        font=("Roboto", 10, "bold"),
+    ).pack(side="left", padx=(0, 28))
+    ctk.CTkLabel(
+        liquidity_labels,
+        text="Ngưỡng tỷ",
+        font=("Roboto", 10, "bold"),
+    ).pack(side="left")
+    liquidity_controls = ctk.CTkFrame(ckcs_panel, fg_color="transparent")
+    liquidity_controls.grid(row=5, column=3, sticky="ew", padx=(0, 12), pady=5)
+    liquidity_controls.grid_columnconfigure((0, 1), weight=1)
+    liquidity_sessions_entry = ctk.CTkEntry(
+        liquidity_controls,
+        textvariable=app.var_ckcs_liquidity_sessions,
+        width=55,
+        height=28,
+    )
+    liquidity_sessions_entry.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    liquidity_entry = ctk.CTkEntry(
+        liquidity_controls,
+        textvariable=app.var_ckcs_liquidity_min_billion,
+        width=55,
+        height=28,
+    )
+    liquidity_entry.grid(row=0, column=1, sticky="ew", padx=3)
+    ctk.CTkButton(
+        liquidity_controls,
+        text="ÁP DỤNG",
+        width=75,
+        height=28,
+        fg_color="#2E7D32",
+        command=lambda: _save_advisor_schedule(silent=False),
+    ).grid(row=0, column=2, sticky="e", padx=(3, 0))
+    ctk.CTkLabel(
+        ckcs_panel,
+        text=(
+            "Số phiên chỉnh 5–100. App tự tính từ nến ngày DNSE; CKCS không đạt sẽ không "
+            "gửi vào nhóm Gợi ý BOT; RAW và lệnh BOT không bị thay đổi."
+        ),
+        font=("Roboto", 9),
+        text_color="#90CAF9",
+        anchor="w",
+        justify="left",
+    ).grid(row=6, column=0, columnspan=4, sticky="w", padx=12, pady=(0, 5))
+
+    ctk.CTkCheckBox(
+        ckcs_panel,
+        text="Cập nhật scan_report.md buổi sáng",
         variable=app.var_ckcs_auto_report_morning,
         command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 11, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=5, column=0, sticky="w", padx=12, pady=5)
+    ).grid(row=7, column=0, sticky="w", padx=12, pady=5)
     morning_time_entry = ctk.CTkEntry(
         ckcs_panel, textvariable=app.var_ckcs_morning_time, width=100, height=28
     )
-    morning_time_entry.grid(row=5, column=1, sticky="ew", padx=(0, 16), pady=5)
+    morning_time_entry.grid(row=7, column=1, sticky="ew", padx=(0, 16), pady=5)
     ctk.CTkCheckBox(
         ckcs_panel,
-        text="Tự tạo báo cáo cuối ngày",
+        text="Cập nhật scan_report.md cuối ngày",
         variable=app.var_ckcs_auto_report_afternoon,
         command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 11, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=5, column=2, sticky="w", padx=(6, 6), pady=5)
+    ).grid(row=7, column=2, sticky="w", padx=(6, 6), pady=5)
     afternoon_time_entry = ctk.CTkEntry(
         ckcs_panel, textvariable=app.var_ckcs_afternoon_time, width=100, height=28
     )
-    afternoon_time_entry.grid(row=5, column=3, sticky="ew", padx=(0, 12), pady=5)
+    afternoon_time_entry.grid(row=7, column=3, sticky="ew", padx=(0, 12), pady=5)
 
     def _save_ckcs_compact():
         _save_scan_snapshot()
         _save_advisor_schedule(silent=True)
         app._set_ckcs_api_status("Đã lưu cấu hình kho và lịch báo cáo")
 
-    for entry in (ckcs_report_days_entry, morning_time_entry, afternoon_time_entry):
+    for entry in (
+        ckcs_report_days_entry,
+        liquidity_sessions_entry,
+        liquidity_entry,
+        morning_time_entry,
+        afternoon_time_entry,
+    ):
         entry.bind("<FocusOut>", lambda _event: _save_advisor_schedule(silent=True))
         entry.bind("<Return>", lambda _event: _save_advisor_schedule(silent=False))
 
     ckcs_files_card = ctk.CTkFrame(ckcs_panel, fg_color="#1E1E1E", corner_radius=8)
-    ckcs_files_card.grid(row=6, column=0, columnspan=4, sticky="ew", padx=12, pady=(10, 5))
+    ckcs_files_card.grid(row=8, column=0, columnspan=4, sticky="ew", padx=12, pady=(10, 5))
     ctk.CTkLabel(
         ckcs_files_card,
         text="FILE CKCS RESEARCH",
@@ -1055,14 +1122,14 @@ def open_advisor_popup(app):
     ).pack(anchor="w", padx=10, pady=(8, 1))
     ctk.CTkLabel(
         ckcs_files_card,
-        text="Nhận định riêng do Ngài điền; báo cáo sáng/chiều được tạo từ kho dữ liệu CKCS.",
+        text="Nhận định riêng do Ngài điền; scan_report.md luôn là báo cáo CKCS mới nhất.",
         font=("Roboto", 9),
         text_color="#B0BEC5",
     ).pack(anchor="w", padx=10, pady=(0, 5))
 
     ckcs_file_buttons = ctk.CTkFrame(ckcs_files_card, fg_color="transparent")
     ckcs_file_buttons.pack(fill="x", padx=10, pady=(0, 8))
-    ckcs_file_buttons.grid_columnconfigure((0, 1, 2), weight=1)
+    ckcs_file_buttons.grid_columnconfigure((0, 1), weight=1)
     ctk.CTkButton(
         ckcs_file_buttons,
         text="private_context.md",
@@ -1073,23 +1140,15 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
     ctk.CTkButton(
         ckcs_file_buttons,
-        text="scan_report_morning.md",
+        text="scan_report.md",
         height=32,
         font=("Roboto", 9, "bold"),
         fg_color="#424242",
         command=lambda: app.open_ckcs_session_file("morning", response=False),
     ).grid(row=0, column=1, sticky="ew", padx=4)
-    ctk.CTkButton(
-        ckcs_file_buttons,
-        text="scan_report_afternoon.md",
-        height=32,
-        font=("Roboto", 9, "bold"),
-        fg_color="#424242",
-        command=lambda: app.open_ckcs_session_file("afternoon", response=False),
-    ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
     compact_actions = ctk.CTkFrame(ckcs_panel, fg_color="transparent")
-    compact_actions.grid(row=7, column=0, columnspan=4, sticky="ew", padx=12, pady=(4, 8))
+    compact_actions.grid(row=9, column=0, columnspan=4, sticky="ew", padx=12, pady=(4, 8))
     compact_actions.grid_columnconfigure(0, weight=2)
     compact_actions.grid_columnconfigure((1, 2), weight=1)
     ctk.CTkButton(
@@ -1125,7 +1184,7 @@ def open_advisor_popup(app):
         justify="left",
         wraplength=560,
     )
-    app.lbl_ckcs_raw_status.grid(row=8, column=0, columnspan=4, sticky="ew", padx=12, pady=(2, 2))
+    app.lbl_ckcs_raw_status.grid(row=10, column=0, columnspan=4, sticky="ew", padx=12, pady=(2, 2))
     app.lbl_ckcs_api_status = ctk.CTkLabel(
         ckcs_panel,
         text=getattr(app, "ckcs_api_last_status", "Báo cáo chưa được tạo trong lần mở app này"),
@@ -1135,7 +1194,7 @@ def open_advisor_popup(app):
         justify="left",
         wraplength=560,
     )
-    app.lbl_ckcs_api_status.grid(row=9, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 12))
+    app.lbl_ckcs_api_status.grid(row=11, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 12))
     # Giữ các widget xử lý cũ ở trạng thái không hiển thị. Một số CTkEntry vẫn
     # còn trace trên StringVar; destroy chúng tại đây sẽ làm callback gọi vào
     # widget đã mất khi app cập nhật setting.

@@ -118,10 +118,18 @@ def scan_report_path():
 
 
 def scan_session_report_path(session):
+    """Compatibility alias: both schedules overwrite one canonical report."""
     session = str(session or "").strip().lower()
     if session not in {"morning", "afternoon"}:
         raise ValueError("CKCS session phải là morning hoặc afternoon")
-    return os.path.join(ckcs_research_root(), f"scan_report_{session}.md")
+    return scan_report_path()
+
+
+def legacy_scan_session_report_paths():
+    return [
+        os.path.join(ckcs_research_root(), "scan_report_morning.md"),
+        os.path.join(ckcs_research_root(), "scan_report_afternoon.md"),
+    ]
 
 
 def ckcs_response_path(session):

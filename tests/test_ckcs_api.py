@@ -9,15 +9,13 @@ def _patch_account(monkeypatch, tmp_path):
     paths.ensure_ckcs_research_dir()
 
 
-def test_ckcs_input_uses_only_session_report_and_private_context(monkeypatch, tmp_path):
+def test_ckcs_input_uses_canonical_report_and_private_context(monkeypatch, tmp_path):
     _patch_account(monkeypatch, tmp_path)
     paths.ensure_ckcs_research_dir()
-    with open(paths.scan_session_report_path("morning"), "w", encoding="utf-8") as handle:
-        handle.write("RAW MORNING")
+    with open(paths.scan_report_path(), "w", encoding="utf-8") as handle:
+        handle.write("RAW CURRENT")
     with open(paths.research_private_context_path(), "w", encoding="utf-8") as handle:
         handle.write("PRIVATE VIEW")
-    with open(paths.scan_session_report_path("afternoon"), "w", encoding="utf-8") as handle:
-        handle.write("RAW AFTERNOON")
     monkeypatch.setattr(
         api_client,
         "load_api_settings",
@@ -26,14 +24,13 @@ def test_ckcs_input_uses_only_session_report_and_private_context(monkeypatch, tm
 
     text = ckcs_api.build_input("morning")
 
-    assert "RAW MORNING" in text
+    assert "RAW CURRENT" in text
     assert "PRIVATE VIEW" in text
-    assert "RAW AFTERNOON" not in text
 
 
 def test_ckcs_input_includes_previous_analysis_for_change_reason(monkeypatch, tmp_path):
     _patch_account(monkeypatch, tmp_path)
-    with open(paths.scan_session_report_path("afternoon"), "w", encoding="utf-8") as handle:
+    with open(paths.scan_report_path(), "w", encoding="utf-8") as handle:
         handle.write("RAW AFTERNOON")
     with open(paths.ckcs_response_path("morning"), "w", encoding="utf-8") as handle:
         handle.write("MORNING VIEW")
@@ -56,7 +53,7 @@ def test_ckcs_input_includes_previous_analysis_for_change_reason(monkeypatch, tm
 
 def test_ckcs_api_reuses_advisor_model_and_saves_response(monkeypatch, tmp_path):
     _patch_account(monkeypatch, tmp_path)
-    with open(paths.scan_session_report_path("afternoon"), "w", encoding="utf-8") as handle:
+    with open(paths.scan_report_path(), "w", encoding="utf-8") as handle:
         handle.write("RAW AFTERNOON")
     settings = {
         "provider": "openai",

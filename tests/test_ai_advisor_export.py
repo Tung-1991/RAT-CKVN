@@ -15,6 +15,7 @@ def test_file_help_separates_advisor_and_raw_data_outputs():
         "technical_settings.json",
         "advisor_export.xlsx",
         "scan_snapshot_cache.json",
+        "scan_report.md",
         "scan_report_morning.md",
         "scan_report_afternoon.md",
         "ckcs_response_morning.md",
@@ -63,12 +64,12 @@ def test_advisor_paths_split_history_and_export(monkeypatch, tmp_path):
     assert paths.scan_report_path().replace("\\", "/").endswith(
         "ckcs_research/scan_report.md"
     )
-    assert paths.scan_session_report_path("morning").replace("\\", "/").endswith(
-        "ckcs_research/scan_report_morning.md"
-    )
-    assert paths.scan_session_report_path("afternoon").replace("\\", "/").endswith(
-        "ckcs_research/scan_report_afternoon.md"
-    )
+    assert paths.scan_session_report_path("morning") == paths.scan_report_path()
+    assert paths.scan_session_report_path("afternoon") == paths.scan_report_path()
+    assert [
+        item.replace("\\", "/").rsplit("/", 1)[-1]
+        for item in paths.legacy_scan_session_report_paths()
+    ] == ["scan_report_morning.md", "scan_report_afternoon.md"]
     assert paths.ckcs_response_path("morning").replace("\\", "/").endswith(
         "ckcs_research/ckcs_response_morning.md"
     )
