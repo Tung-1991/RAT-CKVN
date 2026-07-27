@@ -312,6 +312,7 @@ Khi gửi qua trình duyệt, mở thẳng thư mục advisor và chọn các fi
 
 App tự cập nhật trong phiên:
 - scan_snapshot_cache.json: kho nội bộ theo mã/ngày, giữ mặc định 250 ngày.
+- ckcs_shortlist.md: danh sách CKCS đã qua lọc tín hiệu, mức giá và thanh khoản; luôn ghi đè.
 
 App tạo/ghi đè báo cáo:
 - 11:35 và 14:50 cùng cập nhật một file `scan_report.md`; lần sau ghi đè lần trước.
@@ -325,7 +326,8 @@ Chỉ có khi bật/gọi API:
 - ckcs_response_morning.md hoặc ckcs_response_afternoon.md.
 
 RAW chỉ bổ sung bối cảnh thị trường/nghiên cứu CKCS; không sửa BOT và không đặt lệnh.
-Khi gửi qua trình duyệt, chọn scan_report.md + private_context.md và tài liệu/ảnh chuyên gia.
+Khi gửi qua trình duyệt, chọn ckcs_shortlist.md + scan_report.md + private_context.md.
+LLM đọc shortlist trước, sau đó chỉ tra RAW của các mã đó và VN30/VN30F trong scan_report.md.
 Không cần gửi scan_snapshot_cache.json vì đây là kho nội bộ dài.
 
 API là phần nâng cao và mặc định tắt; tắt API không phát sinh request hoặc phí.
@@ -714,20 +716,37 @@ def open_advisor_popup(app):
         if not os.path.isfile(path):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(
-                    "# PRIVATE CONTEXT — THÔNG TIN RIÊNG CHO PHÂN TÍCH CKCS\n\n"
-                    "## Bộ lọc cơ bản\n\n"
-                    "- Thanh khoản 60 phiên: app tự tính; không cần nhập lại.\n"
-                    "- Tăng trưởng doanh thu/lợi nhuận 5 năm: ghi tiêu chuẩn và dữ liệu chuyên gia tại đây.\n"
-                    "- Định giá: giá thị trường thấp hơn giá hợp lý tối thiểu 20%; ghi nguồn, ngày và phương pháp định giá.\n"
-                    "- Lọc kỹ thuật: ghi điều kiện đạt dựa trên các module CHECK đã bật.\n\n"
-                    "## Tin tức / dữ liệu chuyên gia\n\n"
-                    "Điền nội dung tại đây.\n\n"
-                    "## Nhận định cá nhân\n\n"
-                    "Điền nội dung tại đây.\n\n"
-                    "## Mục tiêu và giới hạn đầu tư\n\n"
-                    "Ví dụ: thời gian nắm giữ, mức vốn, ngành muốn ưu tiên hoặc tránh.\n"
+                    "# PRIVATE CONTEXT — LỌC CKCS\n\n"
+                    "## Cách dùng 3 file\n\n"
+                    "1. ckcs_shortlist.md: danh sách sơ tuyển cần phân tích.\n"
+                    "2. scan_report.md: RAW nhiều ngày; chỉ tra các mã trong shortlist và "
+                    "VN30/VN30F làm bối cảnh.\n"
+                    "3. private_context.md: bốn tiêu chí và yêu cầu đầu ra dưới đây.\n\n"
+                    "Không cần phân tích lại toàn bộ danh sách mã. Nếu shortlist rỗng, "
+                    "cho phép kết luận chưa có mã phù hợp.\n\n"
+                    "## 1. Thanh khoản\n\n"
+                    "Dùng PASS/FAIL do app tính từ số phiên và ngưỡng đang cấu hình.\n\n"
+                    "## 2. Tăng trưởng doanh thu/lợi nhuận\n\n"
+                    "Tìm nguồn công khai trên web để đánh giá chu kỳ và tăng trưởng 5 năm; "
+                    "tách hoạt động cốt lõi khỏi khoản bất thường.\n\n"
+                    "## 3. Định giá doanh nghiệp\n\n"
+                    "Tìm và đối chiếu nguồn định giá công khai. Ưu tiên giá thị trường thấp hơn "
+                    "giá hợp lý khoảng 20%; nói rõ nguồn, ngày và độ chắc chắn.\n\n"
+                    "## 4. Lọc kỹ thuật\n\n"
+                    "Đọc đúng CHECK/Lego, group, timeframe và rule thực tế trong scan_report.md; "
+                    "không tự giả định một bộ indicator khác.\n\n"
+                    "## Đầu ra cần nhất\n\n"
+                    "Xếp hạng ngắn; với mỗi mã ghi rõ ENTRY/vùng mua, điều kiện kích hoạt, "
+                    "mức không mua đuổi, CẮT/điểm nhận định sai, TP hoặc trailing, "
+                    "thời gian giữ, tỷ trọng và ngày hết hiệu lực.\n"
                 )
         open_advisor_file_editor(app, path, "private_context.md — CKCS Research")
+
+    def _open_ckcs_shortlist():
+        from telegram_notify.opportunity_alerts import refresh_shortlist
+
+        path = refresh_shortlist()
+        open_advisor_file_editor(app, path, "ckcs_shortlist.md — tự ghi đè")
 
     def _refresh_scan_status():
         try:
@@ -1123,8 +1142,8 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_files_card,
         text=(
-            "Chỉ có một scan_report.md: lần 11:35 cập nhật file, lần 14:50 "
-            "ghi đè cùng file bằng dữ liệu mới hơn."
+            "Ba file dùng cho LLM: shortlist sơ tuyển, RAW nhiều ngày và hướng dẫn riêng. "
+            "Shortlist cùng scan_report luôn được ghi đè bằng dữ liệu mới."
         ),
         font=("Roboto", 9),
         text_color="#B0BEC5",
@@ -1132,10 +1151,10 @@ def open_advisor_popup(app):
 
     ckcs_file_buttons = ctk.CTkFrame(ckcs_files_card, fg_color="transparent")
     ckcs_file_buttons.pack(fill="x", padx=10, pady=(0, 8))
-    ckcs_file_buttons.grid_columnconfigure((0, 1), weight=1)
+    ckcs_file_buttons.grid_columnconfigure((0, 1, 2), weight=1)
     ctk.CTkButton(
         ckcs_file_buttons,
-        text="private_context.md",
+        text="SỬA private_context.md",
         height=32,
         font=("Roboto", 9, "bold"),
         fg_color="#424242",
@@ -1143,12 +1162,20 @@ def open_advisor_popup(app):
     ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
     ctk.CTkButton(
         ckcs_file_buttons,
-        text="scan_report.md",
+        text="MỞ / SỬA ckcs_shortlist.md",
+        height=32,
+        font=("Roboto", 9, "bold"),
+        fg_color="#424242",
+        command=_open_ckcs_shortlist,
+    ).grid(row=0, column=1, sticky="ew", padx=4)
+    ctk.CTkButton(
+        ckcs_file_buttons,
+        text="MỞ scan_report.md",
         height=32,
         font=("Roboto", 9, "bold"),
         fg_color="#424242",
         command=lambda: app.open_ckcs_session_file("morning", response=False),
-    ).grid(row=0, column=1, sticky="ew", padx=4)
+    ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
     compact_actions = ctk.CTkFrame(ckcs_panel, fg_color="transparent")
     compact_actions.grid(row=9, column=0, columnspan=4, sticky="ew", padx=12, pady=(4, 8))
@@ -2761,10 +2788,11 @@ def open_advisor_file_editor(app, path, title, send_callback=None):
                 f.write(content)
             status.configure(text="Saved", text_color="#00C853")
             if "CKCS" in title:
+                saved_name = os.path.basename(path)
                 if hasattr(app, "_set_ckcs_raw_status"):
-                    app._set_ckcs_raw_status("Đã lưu private_context.md")
+                    app._set_ckcs_raw_status(f"Đã lưu {saved_name}")
                 if hasattr(app, "_set_ckcs_api_status"):
-                    app._set_ckcs_api_status("Đã lưu private_context.md")
+                    app._set_ckcs_api_status(f"Đã lưu {saved_name}")
             elif hasattr(app, "_set_advisor_status"):
                 app._set_advisor_status(f"{title} saved")
             return content

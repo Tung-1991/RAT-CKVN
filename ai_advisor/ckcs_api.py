@@ -23,7 +23,8 @@ logger = logging.getLogger("RAT_CKVN")
 SESSIONS = {"morning", "afternoon"}
 
 CKCS_API_PROMPT = """Bạn là AI phân tích dữ liệu CKCS cho RAT-CKVN.
-Đọc scan report và private context được cung cấp rồi trả lời bằng tiếng Việt, rõ ràng và dựa trên dữ liệu.
+Đọc shortlist trước, sau đó chỉ tra RAW của các mã đó và bối cảnh VN30/VN30F trong scan report.
+Đọc private context để áp dụng bốn tiêu chí và trả lời bằng tiếng Việt, rõ ràng, dựa trên dữ liệu.
 Python chỉ thu thập và gửi dữ liệu; không được tuyên bố app đã tự chọn, tự chấm điểm hay tự đặt lệnh.
 Chỉ phân tích module CHECK thực sự xuất hiện. Phân biệt dữ liệu RAT-CKVN với thông tin web mới.
 Xếp hạng các mã đủ dữ liệu và gán đúng một trạng thái: WATCH, CHỜ MUA, MUA, HOLD, GIẢM, EXIT hoặc LOẠI.
@@ -76,10 +77,16 @@ def build_input(session):
         paths.research_private_context_path(),
         settings.get("user_context_limit", 100_000),
     )
+    shortlist = _read(
+        paths.ckcs_shortlist_path(),
+        settings.get("user_context_limit", 100_000),
+    )
     parts = [
         f"# CKCS SESSION\n{session_label(session)}",
-        f"# {os.path.basename(paths.scan_report_path())}\n{report}",
     ]
+    if shortlist.strip():
+        parts.append(f"# ckcs_shortlist.md\n{shortlist}")
+    parts.append(f"# {os.path.basename(paths.scan_report_path())}\n{report}")
     if private_context.strip():
         parts.append(f"# private_context.md\n{private_context}")
     previous_session = "afternoon" if session == "morning" else "morning"

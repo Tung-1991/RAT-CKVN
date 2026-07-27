@@ -16,6 +16,8 @@ def test_ckcs_input_uses_canonical_report_and_private_context(monkeypatch, tmp_p
         handle.write("RAW CURRENT")
     with open(paths.research_private_context_path(), "w", encoding="utf-8") as handle:
         handle.write("PRIVATE VIEW")
+    with open(paths.ckcs_shortlist_path(), "w", encoding="utf-8") as handle:
+        handle.write("SHORTLIST CURRENT")
     monkeypatch.setattr(
         api_client,
         "load_api_settings",
@@ -25,7 +27,9 @@ def test_ckcs_input_uses_canonical_report_and_private_context(monkeypatch, tmp_p
     text = ckcs_api.build_input("morning")
 
     assert "RAW CURRENT" in text
+    assert "SHORTLIST CURRENT" in text
     assert "PRIVATE VIEW" in text
+    assert text.index("SHORTLIST CURRENT") < text.index("RAW CURRENT")
 
 
 def test_ckcs_input_includes_previous_analysis_for_change_reason(monkeypatch, tmp_path):

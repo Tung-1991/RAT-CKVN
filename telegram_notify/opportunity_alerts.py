@@ -27,6 +27,10 @@ def state_path() -> str:
     return os.path.join(account_dir(), "telegram_opportunity_state.json")
 
 
+def shortlist_path() -> str:
+    return os.path.join(account_dir(), "ckcs_research", "ckcs_shortlist.md")
+
+
 def cooldown_path() -> str:
     """Compatibility alias for tools/tests that used the old filename."""
     return state_path()
@@ -65,6 +69,90 @@ def _write_state(state: Dict[str, Any]) -> None:
     with open(tmp_path, "w", encoding="utf-8") as handle:
         json.dump(state, handle, indent=2, ensure_ascii=False)
     os.replace(tmp_path, path)
+
+
+def _shortlist_items(state: Dict[str, Any], settings: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Return the current CKCS signals that are eligible for the suggestion feed."""
+    now = time.time()
+    rows = []
+    for current in (state.get("current", {}) or {}).values():
+        if not isinstance(current, dict):
+            continue
+        if str(current.get("side") or "").upper() not in {"BUY", "SELL"}:
+            continue
+        try:
+            updated_at = float(current.get("updated_at") or 0.0)
+        except (TypeError, ValueError):
+            updated_at = 0.0
+        if updated_at and now - updated_at > 24 * 3600:
+            continue
+        item = current.get("item")
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("market_type") or "CKCS").upper() == "CKPS":
+            continue
+        if _passes_filter(item, settings) and _valid_setup(item):
+            rows.append(deepcopy(item))
+    return rows
+
+
+def _shortlist_markdown(items: list[Dict[str, Any]], now: Optional[datetime] = None) -> str:
+    """Build the one compact user-facing CKCS shortlist file."""
+    now = now or datetime.now()
+    sections = {
+        title: rows
+        for title, rows in _sections(items)
+        if title in {"PRIORITY", "CKCS BUY", "CKCS SELL"} and rows
+    }
+    lines = [
+        "# CKCS SHORTLIST",
+        "",
+        f"Cập nhật: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        (
+            "Danh sách sơ tuyển từ Gợi ý BOT sau khi kiểm tra tín hiệu Lego, "
+            "mức CẮT/TP và bộ lọc thanh khoản. Đây không phải lệnh giao dịch."
+        ),
+        "",
+    ]
+    if not sections:
+        lines.extend(
+            [
+                "Không có mã CKCS BUY/SELL hợp lệ trong cache hiện tại.",
+                "",
+            ]
+        )
+    else:
+        for title in ("PRIORITY", "CKCS BUY", "CKCS SELL"):
+            rows = sections.get(title, [])
+            if not rows:
+                continue
+            lines.extend([f"## {title}", ""])
+            lines.extend(f"- {_line(item)}" for item in rows)
+            lines.append("")
+    lines.extend(
+        [
+            "LLM chỉ phân tích sâu các mã trong file này; dùng scan_report.md để tra RAW nhiều ngày.",
+            "Tăng trưởng 5 năm và định giá cơ bản vẫn phải đối chiếu nguồn công khai trên web.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def refresh_shortlist(*, state: Optional[Dict[str, Any]] = None) -> str:
+    """Overwrite ckcs_shortlist.md from the existing Telegram opportunity state."""
+    with _LOCK:
+        current_state = deepcopy(state) if isinstance(state, dict) else _read_state()
+        items = _shortlist_items(current_state, load_settings())
+        content = _shortlist_markdown(items)
+        path = shortlist_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_path, path)
+        return path
 
 
 def _number(value: Any, digits: int = 2) -> str:
@@ -336,10 +424,6 @@ def queue_opportunity(item: Dict[str, Any], log_cb=None) -> Dict[str, Any]:
     """Observe a BUY/SELL state and queue it only when the state changed."""
     global _TIMER
     settings = load_settings()
-    if not settings.get("opportunity_alerts_enabled"):
-        return {"ok": False, "skipped": True, "reason": "disabled"}
-    if not str(settings.get("opportunity_chat_id") or "").strip():
-        return {"ok": False, "skipped": True, "reason": "missing_chat_id"}
     if not isinstance(item, dict) or not _passes_filter(item, settings):
         return {"ok": False, "skipped": True, "reason": "filtered"}
     if not _market_session_open(str(item.get("symbol") or "")):
@@ -375,8 +459,13 @@ def queue_opportunity(item: Dict[str, Any], log_cb=None) -> Dict[str, Any]:
             != (symbol in priorities)
         )
         _write_state(state)
+        refresh_shortlist(state=state)
         if not changed:
             return {"ok": False, "skipped": True, "reason": "unchanged"}
+        if not settings.get("opportunity_alerts_enabled"):
+            return {"ok": True, "stored": True, "reason": "telegram_disabled"}
+        if not str(settings.get("opportunity_chat_id") or "").strip():
+            return {"ok": True, "stored": True, "reason": "missing_chat_id"}
 
         _PENDING[symbol] = deepcopy(item)
         delay = max(
@@ -399,6 +488,12 @@ def mark_wait(symbol: str) -> None:
         return
     with _LOCK:
         state = _read_state()
+        previous = state["current"].get(symbol, {})
+        if (
+            str(previous.get("side") or "").upper() == "WAIT"
+            and symbol not in _PENDING
+        ):
+            return
         state["current"][symbol] = {"side": "WAIT", "item": {}, "updated_at": time.time()}
         state["last_sent"][symbol] = {
             "side": "WAIT",
@@ -407,6 +502,7 @@ def mark_wait(symbol: str) -> None:
         }
         _PENDING.pop(symbol, None)
         _write_state(state)
+        refresh_shortlist(state=state)
 
 
 def _current_items(state: Dict[str, Any]) -> list[Dict[str, Any]]:

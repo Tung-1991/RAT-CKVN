@@ -117,6 +117,10 @@ def scan_report_path():
     return os.path.join(ckcs_research_root(), "scan_report.md")
 
 
+def ckcs_shortlist_path():
+    return os.path.join(ckcs_research_root(), "ckcs_shortlist.md")
+
+
 def scan_session_report_path(session):
     """Compatibility alias: both schedules overwrite one canonical report."""
     session = str(session or "").strip().lower()

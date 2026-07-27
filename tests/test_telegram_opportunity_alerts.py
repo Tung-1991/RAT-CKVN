@@ -113,6 +113,41 @@ def test_unchanged_signal_is_not_resent_but_reversal_is(monkeypatch, tmp_path):
     assert opposite["queued"] is True
 
 
+def test_shortlist_is_one_overwritten_ckcs_markdown(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    opportunity_alerts.queue_opportunity(_item("VN30F1M", "SELL", market="CKPS"))
+    opportunity_alerts.queue_opportunity(_item("AAA", "BUY"))
+    path = opportunity_alerts.shortlist_path()
+    first = open(path, "r", encoding="utf-8").read()
+
+    assert "## CKCS BUY" in first
+    assert "AAA | BUY @12.3 (100 CP)" in first
+    assert "VN30F1M" not in first
+
+    opportunity_alerts.mark_wait("AAA")
+    second = open(path, "r", encoding="utf-8").read()
+
+    assert "AAA | BUY" not in second
+    assert "Không có mã CKCS BUY/SELL hợp lệ" in second
+
+
+def test_shortlist_still_updates_when_telegram_suggestions_are_disabled(
+    monkeypatch, tmp_path
+):
+    _configure(monkeypatch, tmp_path, opportunity_alerts_enabled=False)
+
+    result = opportunity_alerts.queue_opportunity(_item("AAA", "SELL"))
+    content = open(
+        opportunity_alerts.shortlist_path(), "r", encoding="utf-8"
+    ).read()
+
+    assert result["stored"] is True
+    assert result["reason"] == "telegram_disabled"
+    assert "## CKCS SELL" in content
+    assert "AAA | SELL @12.3 (100 CP)" in content
+
+
 def test_paper_real_do_not_filter_read_only_feed_but_market_toggles_do(monkeypatch, tmp_path):
     _configure(
         monkeypatch,
