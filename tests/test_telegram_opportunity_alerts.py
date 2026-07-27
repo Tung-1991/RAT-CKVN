@@ -22,6 +22,11 @@ def _configure(monkeypatch, tmp_path, **overrides):
     monkeypatch.setattr(opportunity_alerts, "account_dir", lambda: str(tmp_path))
     monkeypatch.setattr(opportunity_alerts, "_market_session_open", lambda _symbol: True)
     monkeypatch.setattr(opportunity_alerts.threading, "Timer", _FakeTimer)
+    # Các bài test này kiểm tra gom/chống lặp Telegram, không kiểm tra rule
+    # thanh khoản (rule đó có bộ test riêng).
+    monkeypatch.setattr(
+        "ai_advisor.scan_cache.liquidity_filter_allows", lambda _symbol: True
+    )
     data = {
         "opportunity_alerts_enabled": True,
         "opportunity_chat_id": "1001234567890",

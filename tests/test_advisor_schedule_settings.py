@@ -5,6 +5,7 @@ import pytest
 
 import main
 from ai_advisor import schedule_settings
+from core import storage_manager
 
 
 class _Var:
@@ -51,6 +52,28 @@ def test_schedule_settings_roundtrip_inside_existing_brain(monkeypatch):
     assert saved["ckcs_morning_time"] == "11:35"
     assert saved["ckcs_afternoon_time"] == "14:50"
     assert saved_payloads
+
+
+def test_storage_manager_preserves_advisor_schedule_from_account_file(
+    monkeypatch, tmp_path
+):
+    brain_path = tmp_path / "brain_settings.json"
+    brain_path.write_text(
+        '{"ai_advisor_schedule": {'
+        '"ckcs_liquidity_filter_enabled": true,'
+        '"ckcs_liquidity_sessions": 60,'
+        '"ckcs_liquidity_min_billion": 10'
+        "}}",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(storage_manager, "BRAIN_FILE", str(brain_path))
+    storage_manager.invalidate_settings_cache()
+
+    loaded = storage_manager.load_brain_settings()
+
+    assert loaded["ai_advisor_schedule"]["ckcs_liquidity_filter_enabled"] is True
+    assert loaded["ai_advisor_schedule"]["ckcs_liquidity_sessions"] == 60
+    assert loaded["ai_advisor_schedule"]["ckcs_liquidity_min_billion"] == 10
 
 
 def test_schedule_rejects_invalid_fixed_time(monkeypatch):

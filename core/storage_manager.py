@@ -1040,6 +1040,9 @@ def load_brain_settings() -> Dict[str, Any]:
         "manual_margin": copy.deepcopy(getattr(config, "MANUAL_MARGIN_CONFIG", {})),
         "market_calendar": copy.deepcopy(getattr(config, "MARKET_CALENDAR_DEFAULT", {})),
         "opportunity_settings": copy.deepcopy(getattr(config, "BOT_OPPORTUNITY_DEFAULT", {})),
+        # Lịch Advisor/CKCS là setting theo tài khoản. Giữ nguyên khối này khi
+        # load/save brain_settings; nếu thiếu, UI sẽ rơi về mặc định sau restart.
+        "ai_advisor_schedule": {},
         "bot_safeguard": copy.deepcopy(getattr(config, "BOT_SAFEGUARD", {})),
         "TSL_CONFIG": copy.deepcopy(getattr(config, "TSL_CONFIG", {})),
         "TSL_LOGIC_MODE": getattr(config, "TSL_LOGIC_MODE", "STATIC"),
@@ -1123,6 +1126,7 @@ def load_brain_settings() -> Dict[str, Any]:
                 "manual_margin",
                 "market_calendar",
                 "opportunity_settings",
+                "ai_advisor_schedule",
                 "bot_safeguard",
                 "TSL_CONFIG",
                 "symbol_configs",

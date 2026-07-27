@@ -61,6 +61,11 @@ IGNORED_ACCOUNT_DIRS = {"copy", "logs", "paper", "templates", "rollback"}
 
 
 def _sha256(path: Path) -> str:
+    if path.suffix.lower() in {".json", ".md", ".txt"}:
+        # Git for Windows may convert LF <-> CRLF after checkout.  That must
+        # not make a valid portable settings package look corrupted.
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        return hashlib.sha256(content).hexdigest()
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):

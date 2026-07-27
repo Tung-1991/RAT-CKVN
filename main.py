@@ -230,7 +230,7 @@ class BotUI(ctk.CTk):
         self.var_ckcs_send_api_afternoon = tk.BooleanVar(value=False)
         self.var_ckcs_morning_time = tk.StringVar(value="11:35")
         self.var_ckcs_afternoon_time = tk.StringVar(value="14:50")
-        self.var_ckcs_liquidity_filter_enabled = tk.BooleanVar(value=False)
+        self.var_ckcs_liquidity_filter_enabled = tk.BooleanVar(value=True)
         self.var_ckcs_liquidity_sessions = tk.StringVar(value="60")
         self.var_ckcs_liquidity_min_billion = tk.StringVar(value="10")
         self.advisor_api_preview_text = "API payload: not estimated"

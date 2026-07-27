@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {
     "ckcs_morning_time": "11:35",
     "ckcs_afternoon_time": "14:50",
     "ckcs_report_days": 15,
-    "ckcs_liquidity_filter_enabled": False,
+    "ckcs_liquidity_filter_enabled": True,
     "ckcs_liquidity_sessions": 60,
     "ckcs_liquidity_min_billion": 10.0,
     "ckcs_last_morning_date": "",
@@ -117,7 +117,7 @@ def normalize(data, *, strict_time=False):
         "ckcs_afternoon_time": _time("ckcs_afternoon_time", "14:50"),
         "ckcs_report_days": max(1, min(2500, ckcs_report_days)),
         "ckcs_liquidity_filter_enabled": _bool(
-            raw.get("ckcs_liquidity_filter_enabled"), False
+            raw.get("ckcs_liquidity_filter_enabled"), True
         ),
         # Data Engine hiện nạp tối đa khoảng 100 nến/ngày cho mỗi group.
         "ckcs_liquidity_sessions": max(5, min(100, ckcs_liquidity_sessions)),

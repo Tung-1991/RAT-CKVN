@@ -1,7 +1,7 @@
 {
   "version": 4,
   "category": "public",
-  "created_at": "2026-07-27 17:30:31",
+  "created_at": "2026-07-27 20:27:30",
   "files": [
     "brain_settings.json",
     "symbol_overrides.json",
@@ -23,14 +23,14 @@
     "advisor_api_settings.json": "advisor_api_settings.json"
   },
   "sha256": {
-    "brain_settings.json": "22c976008a24ae0ec0ed15bfa88f214418a1655298a5a20af78a4b818f324266",
-    "symbol_overrides.json": "3a9329275b8437c73276ceff47cba91f349d5f6f84ca1f2c0db110b869252fbd",
-    "tsl_settings.json": "8f463b54ba56704ebd93c7ed09b34058ae1ef9edb1e5552d5639f1f2ecf8717a",
-    "presets_config.json": "3e93a2d071db60f075c9b770be6619bbd9cf3cc2f044d9208508590303d5263d",
-    "advisor_prompt.md": "afc7076b190dce45f6505958d662bae29e5bc3fe5db762a84ed97585573a9edc",
-    "advisor_flow.md": "5ae1722cf2341030f62c80ba246ebc37a163ad5c53af24b5be02272cf86b421d",
-    "advisor_api_settings.json": "479d4e4843e66091479db424eb80d8e1dbc02d65eacf2f6fb211031778690c54",
-    "portable_settings.json": "242ce8ed3296923fe440af990c5dcea4b66e1e723df13148fb02be9a53ef558b",
-    "templates_bundle.json": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f"
+    "brain_settings.json": "e5c9800d916fb4ac0663570c738d78fdc3c348dcc0b4b8ff17aaa09e47f9aff1",
+    "symbol_overrides.json": "bcab832d668aa236988e08ba3bd37be56015bb4d2994a54dfe7a5caabdeb14c8",
+    "tsl_settings.json": "308e85ba4ca9069fe7c1be80ad192bebf6a55810857270c104ab6be0a9d220b6",
+    "presets_config.json": "e2f8a0dd6889662475f3257ab3b5eb14810a16ea09b79164d95ed82dd44d9ced",
+    "advisor_prompt.md": "eb8f1c2997758839786f5d2018826ad46c19a095160604537e286e1c43117086",
+    "advisor_flow.md": "561eb9c3783f4902b4b6ac0a8e35c831e700e14d980e2d448b9c3c93228d7cef",
+    "advisor_api_settings.json": "22f248b72d26e3c07d1157d2c130d7c8c5444a47009c5f29bda6668fe04f001c",
+    "portable_settings.json": "afc58ef1ad211cc879f1c2a66b217c96d591d8aa451c1df11fb57faaea3b1529",
+    "templates_bundle.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
   }
 }

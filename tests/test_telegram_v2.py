@@ -25,6 +25,10 @@ def _configure(monkeypatch, tmp_path):
     monkeypatch.setattr(opportunity_alerts, "_market_session_open", lambda _symbol: True)
     monkeypatch.setattr(system_alerts, "account_dir", lambda: str(tmp_path))
     monkeypatch.setattr(opportunity_alerts.threading, "Timer", _FakeTimer)
+    # Tách rule thanh khoản khỏi các bài test mức giá, phiên và formatter.
+    monkeypatch.setattr(
+        "ai_advisor.scan_cache.liquidity_filter_allows", lambda _symbol: True
+    )
     settings.save_settings(
         {
             "opportunity_alerts_enabled": True,

@@ -1072,7 +1072,7 @@ def open_advisor_popup(app):
 
     ctk.CTkCheckBox(
         ckcs_panel,
-        text="Cập nhật scan_report.md buổi sáng",
+        text="Cập nhật cùng file lúc",
         variable=app.var_ckcs_auto_report_morning,
         command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 11, "bold"),
@@ -1085,7 +1085,7 @@ def open_advisor_popup(app):
     morning_time_entry.grid(row=7, column=1, sticky="ew", padx=(0, 16), pady=5)
     ctk.CTkCheckBox(
         ckcs_panel,
-        text="Cập nhật scan_report.md cuối ngày",
+        text="Cập nhật lại và ghi đè lúc",
         variable=app.var_ckcs_auto_report_afternoon,
         command=lambda: _save_advisor_schedule(silent=True),
         font=("Roboto", 11, "bold"),
@@ -1122,7 +1122,10 @@ def open_advisor_popup(app):
     ).pack(anchor="w", padx=10, pady=(8, 1))
     ctk.CTkLabel(
         ckcs_files_card,
-        text="Nhận định riêng do Ngài điền; scan_report.md luôn là báo cáo CKCS mới nhất.",
+        text=(
+            "Chỉ có một scan_report.md: lần 11:35 cập nhật file, lần 14:50 "
+            "ghi đè cùng file bằng dữ liệu mới hơn."
+        ),
         font=("Roboto", 9),
         text_color="#B0BEC5",
     ).pack(anchor="w", padx=10, pady=(0, 5))

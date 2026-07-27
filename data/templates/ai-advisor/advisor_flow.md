@@ -25,7 +25,7 @@ Khi gửi thủ công cho AI bên ngoài, chọn trực tiếp các file cần t
 - advisor_export.xlsx: workbook evidence tự động gen theo số ngày export.
 - advisor_response.md: câu trả lời mới nhất của AI sau khi gọi API.
 
-Nếu người dùng gửi thêm `scan_report_morning.md` hoặc `scan_report_afternoon.md` từ `ckcs_research/`, đó chỉ là dữ liệu thị trường bổ trợ hoặc dữ liệu nghiên cứu ứng viên CKCS. Không trộn nhận định chọn CKCS với tín hiệu và kết quả BOT.
+Nếu người dùng gửi thêm `scan_report.md` từ `ckcs_research/`, đó chỉ là dữ liệu thị trường bổ trợ hoặc dữ liệu nghiên cứu ứng viên CKCS. Không trộn nhận định chọn CKCS với tín hiệu và kết quả BOT.
 
 ## Quy tắc dùng web
 - Dữ liệu nội bộ RAT-CKVN là nguồn chính để chẩn đoán bot/config/trade.

@@ -207,6 +207,22 @@ def test_validate_detects_modified_package(tmp_path):
         settings_transfer.validate_package(public)
 
 
+def test_validate_ignores_windows_line_ending_conversion(tmp_path):
+    account = tmp_path / "data" / "111"
+    _write(account / "brain_settings.json", '{\n  "ok": true\n}\n')
+    result = settings_transfer.export_split_settings(
+        account,
+        tmp_path / "data" / "copy",
+        env_path=tmp_path / ".env",
+    )
+    public = Path(result["public_dir"])
+    brain = public / "brain_settings.json"
+    lf_content = brain.read_bytes().replace(b"\r\n", b"\n")
+    brain.write_bytes(lf_content.replace(b"\n", b"\r\n"))
+
+    assert settings_transfer.validate_package(public)["valid"] is True
+
+
 def test_current_public_manifest_v3_remains_readable(tmp_path):
     account = tmp_path / "data" / "111"
     _write(account / "brain_settings.json", '{"ok": true}')
