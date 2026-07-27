@@ -603,7 +603,10 @@ class DNSEConnector:
             "X-Aux-Date": date_str,
             "version": os.getenv("DNSE_API_VERSION", "2026-05-07"),
         }
-        if self.trading_token:
+        # Trading token chỉ dành cho endpoint thực sự cần quyền giao dịch.
+        # Gắn token cũ vào API chỉ-đọc (balances/positions/orders) có thể khiến
+        # DNSE trả 401 dù API key/signature vẫn hoàn toàn hợp lệ.
+        if require_trading_token and self.trading_token:
             headers["trading-token"] = self.trading_token
         if require_trading_token and not self.has_trading_token():
             raise RuntimeError("DNSE trading token is missing or expired. Verify OTP first.")

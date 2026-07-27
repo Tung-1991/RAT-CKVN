@@ -108,6 +108,18 @@ def test_401_invalid_token_clears_cached_token(monkeypatch):
     assert conn.trading_token_seconds_left() == 0.0
 
 
+def test_read_only_request_does_not_send_stale_trading_token(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession([FakeResponse(200, {"positions": []})])
+    conn = _connector(session)
+    conn.trading_token = "stale"
+    conn.trading_token_expires_at = time.time() + 3600
+
+    assert conn.get_all_open_positions() == []
+
+    assert "trading-token" not in session.calls[0]["headers"]
+
+
 def test_orders_account_repository_400_keeps_cache_and_backs_off(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "DNSE_ACCOUNT_REPOSITORY_BACKOFF_SECONDS", 60.0, raising=False)
