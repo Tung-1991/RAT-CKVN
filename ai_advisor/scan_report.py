@@ -12,6 +12,7 @@ from ai_advisor import paths, scan_cache
 
 logger = logging.getLogger(__name__)
 _REPORT_LOCK = threading.RLock()
+_REPORT_SKIP_LOG_SIGNATURES = {}
 
 AI_INSTRUCTIONS = """> **CÁCH ĐỌC DỮ LIỆU**
 > - CHECK là dữ liệu kỹ thuật phục vụ báo cáo; không phải lệnh và không tác động BOT TRADE.
@@ -605,15 +606,31 @@ def export_ckcs_report(
             selected_symbols=selected,
         )
         if require_current_session and not quality["ready"]:
-            logger.warning(
-                "CKCS %s report skipped: current=%s covered=%s/%s latest=%s",
-                report_session,
+            session_key = str(report_session or "").strip().lower()
+            signature = (
                 quality["today"],
                 quality["covered_entries"],
                 quality["expected_symbols"],
                 quality["latest_day"],
             )
+            # Scheduler có thể thử lại nhiều lần trong giờ nghỉ trưa. Chỉ ghi
+            # cảnh báo khi chất lượng kho thực sự thay đổi để không spam console.
+            if _REPORT_SKIP_LOG_SIGNATURES.get(session_key) != signature:
+                logger.warning(
+                    "CKCS %s report skipped: current=%s covered=%s/%s latest=%s",
+                    report_session,
+                    quality["today"],
+                    quality["covered_entries"],
+                    quality["expected_symbols"],
+                    quality["latest_day"],
+                )
+                _REPORT_SKIP_LOG_SIGNATURES[session_key] = signature
             return None
+        if report_session:
+            _REPORT_SKIP_LOG_SIGNATURES.pop(
+                str(report_session or "").strip().lower(),
+                None,
+            )
     paths.ensure_ckcs_research_dir()
     report_text = render_full_report(cache, report_days=report_days)
     if report_label:

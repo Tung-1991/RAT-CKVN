@@ -229,6 +229,48 @@ def test_positions_are_mapped_to_broker_position(monkeypatch):
     assert pos.profit == 300000
 
 
+def test_positions_read_failure_keeps_last_known_cache(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession(
+        [
+            FakeResponse(401, {"message": "Token is invalid"}),
+            FakeResponse(401, {"message": "Token is invalid"}),
+        ]
+    )
+    conn = _connector(session)
+    cached = SimpleNamespace(ticket="P-CACHED")
+    conn._positions_cache = [cached]
+
+    positions = conn.get_positions()
+    positions_again = conn.get_positions()
+
+    assert positions == [cached]
+    assert positions_again == [cached]
+    assert conn._positions_cache == [cached]
+    assert len(session.calls) == 1
+
+
+def test_orders_401_is_not_retried_until_auth_changes(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession(
+        [
+            FakeResponse(401, {"message": "Token is invalid"}),
+            FakeResponse(200, {"orders": [{"id": "O1"}]}),
+        ]
+    )
+    conn = _connector(session)
+
+    assert conn.get_orders(symbol="VN30F1M") == []
+    assert conn.get_orders(symbol="VN30F1M") == []
+    assert len(session.calls) == 1
+
+    conn.trading_token = "new-token"
+    conn.trading_token_expires_at = time.time() + 3600
+    rows = conn.get_orders(symbol="VN30F1M")
+    assert [item["id"] for item in rows] == ["O1"]
+    assert len(session.calls) == 2
+
+
 def test_stock_symbol_uses_stock_profile_account_and_fee_rate(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0)

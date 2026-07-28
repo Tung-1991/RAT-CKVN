@@ -368,6 +368,36 @@ def test_report_session_quality_rejects_old_or_morning_only_data(dfs):
     assert quality["covered_entries"] == 1
 
 
+def test_report_skip_warning_is_not_repeated_for_same_coverage(
+    tmp_account, dfs, monkeypatch, caplog
+):
+    from ai_advisor import scan_report
+
+    cache = scan_cache.empty_cache()
+    snap = scan_cache.compute_snapshot(dfs, make_context(), 0, now=NOW)
+    scan_cache.merge_sample(cache, "HPG", snap, now=NOW)
+    assert scan_cache.save_cache(cache) is True
+    monkeypatch.setattr(scan_cache, "selected_research_symbols", lambda: ["HPG"])
+    scan_report._REPORT_SKIP_LOG_SIGNATURES.clear()
+
+    with caplog.at_level("WARNING"):
+        assert scan_report.export_ckcs_report(
+            report_session="morning",
+            require_current_session=True,
+        ) is None
+        assert scan_report.export_ckcs_report(
+            report_session="morning",
+            require_current_session=True,
+        ) is None
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "CKCS morning report skipped" in record.getMessage()
+    ]
+    assert len(messages) == 1
+
+
 # ---------------------------------------------------------------- renderer + API section
 def _build_populated_cache(dfs):
     cache = scan_cache.empty_cache()

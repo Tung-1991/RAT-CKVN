@@ -282,6 +282,7 @@ class DNSEConnector:
         self._orders_error_log_ts: float = 0.0
         self._orders_error_key: str = ""
         self._orders_suppressed_errors: int = 0
+        self._read_auth_blocked_marker = None
         self._fee_profile_cache: Dict[str, BrokerFeeProfile] = {}
         self._fee_profile_cache_ts: Dict[str, float] = {}
         self._ppse_cache: Dict[str, Dict[str, Any]] = {}
@@ -372,6 +373,7 @@ class DNSEConnector:
         self._orders_cache = []
         self._orders_cache_ts = 0.0
         self._orders_unavailable_until = 0.0
+        self._read_auth_blocked_marker = None
 
     def set_market_data_provider(self, tick_provider=None, state_provider=None):
         """Đặt feed giá dùng chung. Khi provider tồn tại connector không gọi latest REST."""
@@ -746,6 +748,7 @@ class DNSEConnector:
             logger.error("DNSE OTP verification did not return trading token: %s", data)
             return False
         self.trading_token = str(token)
+        self._read_auth_blocked_marker = None
         # DNSE docs: trading-token is valid for about 8 hours.
         ttl_seconds = self._configured_token_ttl_seconds()
         ttl_hours = ttl_seconds / 3600.0
@@ -947,6 +950,10 @@ class DNSEConnector:
         if now < self._orders_unavailable_until:
             self._orders_suppressed_errors += 1
             return _cached_rows()
+        auth_marker = (self.api_key, self.trading_token or "")
+        if self._read_auth_blocked_marker == auth_marker:
+            self._orders_suppressed_errors += 1
+            return _cached_rows()
 
         query = {"marketType": market_type, **params}
         ok, data, status_code, message = self._request("GET", f"/accounts/{account_no}/orders", params=query)
@@ -970,6 +977,13 @@ class DNSEConnector:
                     ),
                 )
                 self._orders_unavailable_until = now + backoff
+            if int(status_code or 0) == 401:
+                # Không tiếp tục gọi endpoint riêng tư mỗi vài giây với cùng
+                # trạng thái xác thực. OTP mới hoặc reload setting sẽ mở lại.
+                self._read_auth_blocked_marker = (
+                    self.api_key,
+                    self.trading_token or "",
+                )
 
             should_log = (
                 error_key != self._orders_error_key
@@ -1007,6 +1021,7 @@ class DNSEConnector:
         self._orders_cache = [dict(item) for item in rows if isinstance(item, dict)]
         self._orders_cache_ts = time.time()
         self._orders_unavailable_until = 0.0
+        self._read_auth_blocked_marker = None
         self._orders_error_key = ""
         self._orders_suppressed_errors = 0
         return rows
@@ -1336,6 +1351,9 @@ class DNSEConnector:
         cache_ttl = float(getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 2.0) or 0.0)
         if cache_ttl > 0 and (time.time() - self._positions_cache_ts) < cache_ttl:
             return list(self._positions_cache)
+        auth_marker = (self.api_key, self.trading_token or "")
+        if self._read_auth_blocked_marker == auth_marker:
+            return list(self._positions_cache)
 
         # Reset cờ "mute 403" theo NGÀY (đang mute vĩnh viễn cả session) — để ngày mới thấy lỗi lại.
         today = time.strftime("%Y-%m-%d")
@@ -1363,6 +1381,11 @@ class DNSEConnector:
                 params={"marketType": market_type},
             )
             if not ok:
+                if int(status_code or 0) == 401:
+                    self._read_auth_blocked_marker = (
+                        self.api_key,
+                        self.trading_token or "",
+                    )
                 if status_code == 403:
                     if not DNSEConnector._positions_403_muted:
                         logger.warning("DNSE positions failed [403]: %s. Muting further 403s.", message or data)
@@ -1371,6 +1394,8 @@ class DNSEConnector:
                 if not getattr(self, "_positions_error_logged", False):
                     logger.warning("DNSE positions failed [%s]: %s. Muting further position errors.", status_code, message or data)
                     self._positions_error_logged = True
+                if int(status_code or 0) == 401:
+                    break
                 continue
             had_ok = True
             payload = _unwrap_payload(data, ("positions",))
@@ -1380,14 +1405,11 @@ class DNSEConnector:
                 positions.extend(self._position_from_raw(item) for item in payload if isinstance(item, dict))
 
         if not had_ok:
-            # Cả 2 account đều fail -> bot/UI sẽ tưởng 0 vị thế. Cảnh báo (throttle 60s).
-            now_ts = time.time()
-            if (now_ts - getattr(self, "_positions_allfail_log_ts", 0.0)) > 60.0:
-                logger.error("⚠️ KHÔNG tải được vị thế từ TẤT CẢ tài khoản — có thể tưởng 0 lệnh. Kiểm tra kết nối/token.")
-                self._positions_allfail_log_ts = now_ts
-            self._positions_cache = []
-            self._positions_cache_ts = time.time()
-            return []
+            # Lỗi đầu tiên đã được ghi rõ ở trên. Không lặp thêm cảnh báo tổng
+            # mỗi 60 giây và tuyệt đối không biến lỗi đọc thành "0 vị thế".
+            return list(self._positions_cache)
+        self._positions_error_logged = False
+        self._read_auth_blocked_marker = None
         try:
             settlement_ledger.enrich_positions(self.account_no, positions)
         except Exception as exc:
