@@ -35,11 +35,16 @@ def main() -> None:
             raise RuntimeError("Không xác định được tài khoản đích.")
         target = accounts[0]
 
-    result = import_settings(
-        PUBLIC_COPY_ROOT,
-        target,
-        env_path=PROJECT_ROOT / ".env",
-    )
+    try:
+        result = import_settings(
+            PUBLIC_COPY_ROOT,
+            target,
+            env_path=PROJECT_ROOT / ".env",
+        )
+    except ValueError as exc:
+        raise SystemExit(
+            f"UPDATE STOPPED: PUBLIC package manifest mismatch: {exc}"
+        ) from None
     print(f"Đã cập nhật code và ghi đè {len(result['restored'])} mục PUBLIC vào {target.name}.")
 
 

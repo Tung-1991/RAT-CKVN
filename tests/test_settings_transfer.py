@@ -11,6 +11,12 @@ def _write(path: Path, text="{}"):
     path.write_text(text, encoding="utf-8")
 
 
+def test_checked_in_public_package_manifest_matches_files():
+    package = settings_transfer.PROJECT_ROOT / "data" / "copy" / "public"
+
+    assert settings_transfer.validate_package(package)["valid"] is True
+
+
 def test_export_splits_public_private_and_never_exports_secrets(tmp_path):
     data_root = tmp_path / "data"
     account = data_root / "123456"
