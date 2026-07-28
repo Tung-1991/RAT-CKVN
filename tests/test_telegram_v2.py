@@ -75,7 +75,7 @@ def test_level_validation_rejects_negative_or_wrong_direction():
     assert not validate_advisory_levels("SELL", 10, 12, 14)
 
 
-def test_formatter_has_sections_units_and_dynamic_lego_reason(monkeypatch):
+def test_formatter_is_compact_and_uses_preview_levels(monkeypatch):
     monkeypatch.setattr(opportunity_alerts, "_priority_symbols", lambda: {"TDM"})
     text = opportunity_alerts.format_digest(
         [
@@ -85,12 +85,14 @@ def test_formatter_has_sections_units_and_dynamic_lego_reason(monkeypatch):
         ],
         now=datetime(2026, 7, 27, 9, 30),
     )
-    assert text.index("CKPS") < text.index("PRIORITY") < text.index("CKCS SELL")
-    assert "VN30F1M | SELL @10 (1 HĐ) | SL 12 | TP 7" in text
-    assert "TDM | BUY @10 (100 CP) | CẮT 8 | TP 14" in text
-    assert "AAA | SELL @10 | CẮT 12 | TP 7" in text
-    assert "G0 SELL 4/7 FIX" in text
+    assert text.index("VN30F1M") < text.index("TDM") < text.index("AAA")
+    assert "🔴 VN30F1M SHORT | Entry 10 (1 HĐ) | SL 12 | TP1 7" in text
+    assert "⭐ TDM BUY | Entry 10 (100 CP) | CẮT 8 | TP1 14" in text
+    assert "🔴 AAA SELL | Entry 10 | CẮT 12 | TP1 7" in text
+    assert "G0 SELL 4/7 FIX" not in text
     assert "PAPER" not in text and "REAL" not in text and "BOT_OFF" not in text
+    assert text.startswith("🔴 VN30F1M SHORT")
+    assert "RAT6 GỢI Ý BOT" not in text
 
 
 def test_invalid_levels_are_archived_and_not_queued(monkeypatch, tmp_path):
@@ -208,9 +210,8 @@ def test_volatility_alert_uses_opportunity_chat_even_when_suggestion_feed_is_off
 
     assert result["ok"]
     assert sent[0][0] == "-1002"
-    assert "VN30F1M" in sent[0][1]
-    assert "Giá: 1896.9 → 1891.4" in sent[0][1]
-    assert "Hành động: CHỈ CẢNH BÁO" in sent[0][1]
+    assert sent[0][1] == "🔻 VN30F1M | 1896.9→1891.4 | -5.50 điểm/60s"
+    assert sent[0][2] == ""
 
 
 def test_system_health_sends_once_after_60_seconds_and_once_on_recovery(monkeypatch, tmp_path):

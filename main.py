@@ -388,6 +388,7 @@ class BotUI(ctk.CTk):
             log_cb=lambda msg, error=False: self.log_message(
                 msg, error=error, target="bot"
             ),
+            build_opportunity_plan_cb=self.build_telegram_preview_order,
         )
         self.signal_listener.start()
         try:
@@ -1705,7 +1706,14 @@ class BotUI(ctk.CTk):
                 time.time() - self.ctx_fetch_last.get(sym_up, 0) < 15
             )
 
-    def _resolve_manual_setup_preview(self, symbol, direction, preset_name, context):
+    def _resolve_manual_setup_preview(
+        self,
+        symbol,
+        direction,
+        preset_name,
+        context,
+        manual_values=None,
+    ):
         params = config.PRESETS.get(
             preset_name,
             next(iter(config.PRESETS.values()), {"SL_PERCENT": 0.5, "TP_RR_RATIO": 1.5, "RISK_PERCENT": 0.3}),
@@ -1745,10 +1753,22 @@ class BotUI(ctk.CTk):
         if not tick or not sym_info:
             return {"ready": False, "reason": "NO_TICK_OR_SYMBOL_INFO"}
 
-        manual_entry = self._price_input_to_internal(
-            self.var_manual_entry.get() if hasattr(self, "var_manual_entry") else 0.0,
-            symbol,
-        )
+        manual_values = manual_values if isinstance(manual_values, dict) else None
+        if manual_values is None:
+            manual_entry = self._price_input_to_internal(
+                self.var_manual_entry.get() if hasattr(self, "var_manual_entry") else 0.0,
+                symbol,
+            )
+            manual_lot = self._safe_float(self.var_manual_lot.get() or 0.0)
+            manual_sl = self._price_input_to_internal(self.var_manual_sl.get(), symbol)
+            manual_tp = self._price_input_to_internal(self.var_manual_tp.get(), symbol)
+        else:
+            # Daemon dùng rule Preview đã lưu; không mượn ô nhập tay của mã
+            # đang mở trên giao diện.
+            manual_entry = self._safe_float(manual_values.get("entry", 0.0))
+            manual_lot = self._safe_float(manual_values.get("lot", 0.0))
+            manual_sl = self._safe_float(manual_values.get("sl", 0.0))
+            manual_tp = self._safe_float(manual_values.get("tp", 0.0))
         price = manual_entry if manual_entry > 0 else float(tick.ask if direction == "BUY" else tick.bid)
         c_size = float(getattr(sym_info, "trade_contract_size", 1.0) or 1.0)
         vol_min = float(getattr(sym_info, "volume_min", getattr(config, "MIN_LOT_SIZE", 1.0)) or getattr(config, "MIN_LOT_SIZE", 1.0))
@@ -1756,9 +1776,6 @@ class BotUI(ctk.CTk):
         vol_step = float(getattr(sym_info, "volume_step", getattr(config, "LOT_STEP", 0.01)) or 0.01)
         point = float(getattr(sym_info, "point", 0.00001) or 0.00001)
 
-        manual_lot = self._safe_float(self.var_manual_lot.get() or 0.0)
-        manual_sl = self._price_input_to_internal(self.var_manual_sl.get(), symbol)
-        manual_tp = self._price_input_to_internal(self.var_manual_tp.get(), symbol)
         market_mode = str(context.get("market_mode", "ANY") or "ANY").upper()
 
         sl_source = "PERCENT"
@@ -2061,6 +2078,67 @@ class BotUI(ctk.CTk):
             "swing_low": swing_low,
             "swing_high": swing_high,
             "point": point,
+        }
+
+    def build_telegram_preview_order(self, symbol, side, context=None, market_mode="ANY"):
+        """Rút gọn chính Manual Preview cho gợi ý daemon; không đặt lệnh."""
+        symbol = str(symbol or "").strip().upper()
+        side = str(side or "").strip().upper()
+        if not symbol or side not in {"BUY", "SELL"}:
+            return {"ok": False, "error": "BAD_SIGNAL"}
+        context = context if isinstance(context, dict) else {}
+        if market_mode and not context.get("market_mode"):
+            context = dict(context)
+            context["market_mode"] = str(market_mode).upper()
+        preset = getattr(config, "DEFAULT_PRESET", "SCALPING")
+        try:
+            setup = self._resolve_manual_setup_preview(
+                symbol,
+                side,
+                preset,
+                context,
+                manual_values={"entry": 0.0, "lot": 0.0, "sl": 0.0, "tp": 0.0},
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"PREVIEW_ERROR|{exc}"}
+        if not setup.get("ready"):
+            return {
+                "ok": False,
+                "error": str(setup.get("reason") or "PREVIEW_NOT_READY"),
+                "preview_source": True,
+            }
+
+        is_stock = settlement.is_cash_stock(symbol)
+        display_quantity = float(setup.get("lot", 0.0) or 0.0)
+        if is_stock and side == "SELL":
+            try:
+                display_quantity = float(
+                    self.trade_mgr._stock_settled_long_volume(symbol) or 0.0
+                )
+            except Exception:
+                display_quantity = 0.0
+        targets = [
+            float(value)
+            for value in (setup.get("tp_targets") or [])
+            if self._safe_float(value, 0.0) > 0
+        ][:3]
+        return {
+            "ok": True,
+            "preview_source": True,
+            "symbol": symbol,
+            "side": side,
+            "price": float(setup.get("price", 0.0) or 0.0),
+            "lot": float(setup.get("lot", 0.0) or 0.0),
+            "display_quantity": display_quantity,
+            "quantity_unit": "CP" if is_stock else "HĐ",
+            "analysis_only": bool(is_stock and side == "SELL"),
+            "sl": float(setup.get("sl", 0.0) or 0.0),
+            "tp": float(setup.get("tp", 0.0) or 0.0),
+            "tp_targets": targets,
+            "sl_source": str(setup.get("sl_source") or ""),
+            "tp_source": str(setup.get("tp_source") or ""),
+            "preset": preset,
+            "market_mode": str(context.get("market_mode") or market_mode or "ANY"),
         }
 
     def _make_preview_model(self, key, title, status, reason, setup, source, can_apply=False):
@@ -4632,7 +4710,7 @@ class BotUI(ctk.CTk):
                 side = str(item.get("side", "BUY") or "BUY").upper()
                 count = int(item.get("signal_count", 1) or 1)
                 setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
-                if not setup:
+                if not setup or not setup.get("preview_source"):
                     legacy_opportunities.append(item)
                 setup_ok = bool(setup.get("ok"))
                 entry = float(setup.get("price", detected) or detected or 0.0)
@@ -4700,7 +4778,7 @@ class BotUI(ctk.CTk):
                             symbol = str(legacy.get("symbol", "") or "").upper()
                             side = str(legacy.get("side", "BUY") or "BUY").upper()
                             context = legacy.get("context", {}) if isinstance(legacy.get("context"), dict) else {}
-                            setup = self.trade_mgr.build_telegram_signal_order(
+                            setup = self.build_telegram_preview_order(
                                 symbol,
                                 side,
                                 context=context,

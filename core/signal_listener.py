@@ -50,6 +50,7 @@ class SignalListener:
         ],  # [ĐÃ FIX] Thêm tham số này để không bị Crash
         ui_heartbeat_cb: Callable[[dict], None],
         log_cb: Callable[[str, bool], None],
+        build_opportunity_plan_cb: Callable[..., dict] | None = None,
     ):
         """
         Lắng nghe và điều phối tín hiệu từ Daemon.
@@ -60,6 +61,7 @@ class SignalListener:
         self.get_tsl_mode = get_tsl_mode_cb  # [ĐÃ FIX] Khởi tạo biến
         self.update_ui_heartbeat = ui_heartbeat_cb
         self.log_ui = log_cb
+        self.build_opportunity_plan = build_opportunity_plan_cb
 
         self.running = False
         self.thread = None
@@ -73,6 +75,22 @@ class SignalListener:
         self.last_safeguard_time = {}
         self.last_bot_log_time = {}
         self.last_telegram_signal_proposal_action = {}
+
+    def _build_opportunity_setup(self, symbol, action, context, market_mode):
+        """Build daemon suggestions from the UI Preview source when available."""
+        if callable(self.build_opportunity_plan):
+            return self.build_opportunity_plan(
+                symbol,
+                action,
+                context=context,
+                market_mode=market_mode,
+            )
+        return self.trade_manager.build_telegram_signal_order(
+            symbol,
+            action,
+            context=context,
+            market_mode=market_mode,
+        )
 
     def _auto_trade_for(self, symbol) -> bool:
         """Cờ bật-bot theo nhóm mã. Tương thích ngược:
@@ -394,7 +412,7 @@ class SignalListener:
                 try:
                     from core.signal_opportunities import record_signal
 
-                    order_setup = self.trade_manager.build_telegram_signal_order(
+                    order_setup = self._build_opportunity_setup(
                         symbol,
                         action,
                         context=context,
@@ -508,7 +526,7 @@ class SignalListener:
                     try:
                         from core.signal_opportunities import record_signal
 
-                        order_setup = self.trade_manager.build_telegram_signal_order(
+                        order_setup = self._build_opportunity_setup(
                             symbol,
                             action,
                             context=context,

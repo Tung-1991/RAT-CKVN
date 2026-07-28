@@ -74,8 +74,7 @@ def test_many_symbols_are_sent_as_one_read_only_digest(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert len(sent) == 1
     assert sent[0][0] == "1001234567890"
-    assert "CKCS BUY" in sent[0][1]
-    assert "CK00 | BUY @12.3 (100 CP)" in sent[0][1]
+    assert "🟢 CK00 BUY | Entry 12.3 (100 CP)" in sent[0][1]
     assert "BOT_OFF" not in sent[0][1]
     assert "PAPER" not in sent[0][1]
     assert sent[0][2] == ""
@@ -122,7 +121,7 @@ def test_shortlist_is_one_overwritten_ckcs_markdown(monkeypatch, tmp_path):
     first = open(path, "r", encoding="utf-8").read()
 
     assert "## CKCS BUY" in first
-    assert "AAA | BUY @12.3 (100 CP)" in first
+    assert "AAA BUY | Entry 12.3 (100 CP)" in first
     assert "VN30F1M" not in first
 
     opportunity_alerts.mark_wait("AAA")
@@ -145,7 +144,7 @@ def test_shortlist_still_updates_when_telegram_suggestions_are_disabled(
     assert result["stored"] is True
     assert result["reason"] == "telegram_disabled"
     assert "## CKCS SELL" in content
-    assert "AAA | SELL @12.3 (100 CP)" in content
+    assert "AAA SELL | Entry 12.3 (100 CP)" in content
 
 
 def test_paper_real_do_not_filter_read_only_feed_but_market_toggles_do(monkeypatch, tmp_path):

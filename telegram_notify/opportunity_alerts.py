@@ -202,42 +202,6 @@ def _priority_symbols() -> set[str]:
         return set()
 
 
-def _signal_reason(item: Dict[str, Any]) -> str:
-    context = item.get("context") if isinstance(item.get("context"), dict) else {}
-    details = context.get("group_details") if isinstance(context.get("group_details"), dict) else {}
-    rules = context.get("group_rules") if isinstance(context.get("group_rules"), dict) else {}
-    parts = []
-    for group in ("G0", "G1", "G2", "G3"):
-        detail = details.get(group) if isinstance(details.get(group), dict) else {}
-        status = int(detail.get("status", 0) or 0)
-        rule = str(rules.get(group) or "").upper()
-        if rule == "IGNORE" or (not detail and not rule):
-            continue
-        side = "BUY" if status > 0 else "SELL" if status < 0 else "WAIT"
-        buy = int(detail.get("B", 0) or 0)
-        sell = int(detail.get("S", 0) or 0)
-        wait = int(detail.get("N", 0) or 0)
-        total = buy + sell + wait
-        votes = buy if status > 0 else sell if status < 0 else 0
-        if total:
-            part = f"{group} {side} {votes}/{total}"
-        else:
-            part = f"{group} {side}"
-        if rule in {"FIX", "PASS"}:
-            part += f" {rule}"
-        parts.append(part)
-    if parts:
-        return " | ".join(parts)
-
-    group_signals = context.get("group_signals")
-    if isinstance(group_signals, dict):
-        for group in ("G0", "G1", "G2", "G3"):
-            value = int(group_signals.get(group, 0) or 0)
-            if value:
-                parts.append(f"{group} {'BUY' if value > 0 else 'SELL'}")
-    return " | ".join(parts) or "LEGO SIGNAL"
-
-
 def _valid_setup(item: Dict[str, Any]) -> bool:
     setup = item.get("order_setup") if isinstance(item.get("order_setup"), dict) else {}
     if setup.get("ok") is False:
@@ -254,7 +218,7 @@ def _valid_setup(item: Dict[str, Any]) -> bool:
     return (sl < price < tp) if side == "BUY" else (tp < price < sl)
 
 
-def _line(item: Dict[str, Any]) -> str:
+def _line(item: Dict[str, Any], icon: str = "") -> str:
     setup = item.get("order_setup") if isinstance(item.get("order_setup"), dict) else {}
     symbol = str(item.get("symbol") or "").upper()
     side = str(item.get("side") or "").upper()
@@ -266,9 +230,27 @@ def _line(item: Dict[str, Any]) -> str:
     lot = float(setup.get("display_quantity", setup.get("lot", 0.0)) or 0.0)
     quantity = f" ({_number(lot, 0)} {unit})" if lot > 0 else ""
     level_label = "SL" if market == "CKPS" else "CẮT"
+    direction = (
+        "LONG" if side == "BUY" else "SHORT"
+    ) if market == "CKPS" else side
+    targets = []
+    for value in setup.get("tp_targets") or []:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            targets.append(value)
+    if not targets and tp:
+        targets = [tp]
+    target_text = " | ".join(
+        f"TP{index} {_number(value)}" for index, value in enumerate(targets[:3], 1)
+    )
+    prefix = f"{icon} " if icon else ""
     return (
-        f"{symbol} | {side} @{_number(price)}{quantity} | "
-        f"{level_label} {_number(sl)} | TP {_number(tp)} | {_signal_reason(item)}"
+        f"{prefix}{symbol} {direction} | Entry {_number(price)}{quantity} | "
+        f"{level_label} {_number(sl)}"
+        + (f" | {target_text}" if target_text else "")
     )
 
 
@@ -322,18 +304,35 @@ def format_digest(
     now: Optional[datetime] = None,
 ) -> str:
     now = now or datetime.now()
-    lines = [f"{heading} — {now.strftime('%H:%M')}"]
+    heading_upper = str(heading or "").upper()
+    lines = []
+    if "CUỐI NGÀY" in heading_upper:
+        lines.append(f"📋 CUỐI NGÀY · {now.strftime('%H:%M')}")
+    elif "ĐẦU NGÀY" in heading_upper:
+        lines.append(f"📋 ĐẦU NGÀY · {now.strftime('%H:%M')}")
+
+    section_icons = {
+        "PRIORITY": "⭐",
+        "CKCS BUY": "🟢",
+        "CKCS SELL": "🔴",
+    }
     section_count = 0
     for title, rows in _sections(items):
         if not rows:
             continue
         section_count += len(rows)
-        lines.extend(["", title])
-        lines.extend(_line(item) for item in rows)
+        for item in rows:
+            if title == "CKPS":
+                icon = "🟢" if str(item.get("side") or "").upper() == "BUY" else "🔴"
+            else:
+                icon = section_icons.get(title, "•")
+            lines.append(_line(item, icon=icon))
     if not section_count:
-        lines.extend(["", "Không có tín hiệu BUY/SELL hợp lệ."])
+        if lines:
+            lines.append("")
+        lines.append(f"⏸ Không có tín hiệu BUY/SELL · {now.strftime('%H:%M')}")
     if changes is not None:
-        lines.extend(["", "THAY ĐỔI SO VỚI 09:30"])
+        lines.extend(["", "🔄 THAY ĐỔI"])
         lines.extend(changes or ["Không thay đổi"])
     return "\n".join(lines)
 
@@ -603,7 +602,8 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
     chat_id = str(settings.get("opportunity_chat_id") or "").strip()
     if not chat_id:
         return {"ok": False, "skipped": True, "reason": "missing_chat_id"}
-    direction = "TĂNG" if event.get("direction") == "UP" else "GIẢM"
+    direction_up = event.get("direction") == "UP"
+    direction_icon = "🔺" if direction_up else "🔻"
     value = (
         f"{float(event.get('change_points', 0.0)):+.2f} điểm"
         if event.get("threshold_unit") == "POINTS"
@@ -615,23 +615,23 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
         "BLOCK_NEW_EXPOSURE": "CHẶN BOT TĂNG VỊ THẾ",
         "CLOSE_ALL": "ĐÓNG HẾT + GLOBAL COOLDOWN",
     }.get(action, "CHỈ CẢNH BÁO")
-    lines = [
-        (
-            f"{str(event.get('symbol') or '').upper()} | {direction} {value} / "
-            f"{float(event.get('window_seconds', 0.0)):.0f} giây"
-        )
-    ]
+    symbol = str(event.get("symbol") or "").upper()
+    window = float(event.get("window_seconds", 0.0))
     try:
         reference_price = float(event.get("reference_price") or 0.0)
         current_price = float(event.get("current_price") or 0.0)
     except (TypeError, ValueError):
         reference_price = current_price = 0.0
     if reference_price > 0 and current_price > 0:
-        lines.append(
-            f"Giá: {_number(reference_price)} → {_number(current_price)}"
+        message = (
+            f"{direction_icon} {symbol} | "
+            f"{_number(reference_price)}→{_number(current_price)} | "
+            f"{value}/{window:.0f}s"
         )
-    lines.append(f"Hành động: {action_label}")
-    message = "\n".join(lines)
+    else:
+        message = f"{direction_icon} {symbol} | {value}/{window:.0f}s"
+    if action != "ALERT_ONLY":
+        message += f" | ⛔ {action_label}"
     return TelegramClient(
         token_env=settings.get("bot_token_env", "TELE_BOT_KEY"),
         allow_insecure_ssl=True,
@@ -639,7 +639,7 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
         chat_id,
         message,
         chunk_size=settings.get("chunk_size", 3500),
-        title="RAT6 CẢNH BÁO BIẾN ĐỘNG",
+        title="",
     )
 
 

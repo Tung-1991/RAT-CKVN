@@ -62,3 +62,25 @@ def test_auto_trade_gate_legacy_noarg():
     listener.get_auto_trade = lambda: True
     assert listener._auto_trade_for("VN30F1M") is True
     assert listener._auto_trade_for("FPT") is True
+
+
+def test_opportunity_uses_preview_callback_without_touching_bot():
+    listener = _listener()
+    called = []
+    listener.build_opportunity_plan = lambda symbol, side, **kwargs: (
+        called.append((symbol, side, kwargs))
+        or {"ok": True, "preview_source": True, "price": 10, "sl": 9, "tp": 12}
+    )
+
+    result = listener._build_opportunity_setup(
+        "AAA", "BUY", {"current_price": 10}, "TREND"
+    )
+
+    assert result["preview_source"] is True
+    assert called == [
+        (
+            "AAA",
+            "BUY",
+            {"context": {"current_price": 10}, "market_mode": "TREND"},
+        )
+    ]
