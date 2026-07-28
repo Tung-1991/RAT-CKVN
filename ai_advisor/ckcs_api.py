@@ -23,7 +23,8 @@ logger = logging.getLogger("RAT_CKVN")
 SESSIONS = {"morning", "afternoon"}
 
 CKCS_API_PROMPT = """Bạn là AI phân tích dữ liệu CKCS cho RAT-CKVN.
-Đọc shortlist trước, sau đó chỉ tra RAW của các mã đó và bối cảnh VN30/VN30F trong scan report.
+Đọc shortlist trước, sau đó tra RAW của các mã đó trong scan report.
+Nếu shortlist có CKPS/VN30F, phân tích thành mục riêng theo tín hiệu và cấu hình CKPS; không áp bốn tiêu chí cơ bản hoặc bộ lọc thanh khoản CKCS cho CKPS.
 Đọc private context để áp dụng bốn tiêu chí và trả lời bằng tiếng Việt, rõ ràng, dựa trên dữ liệu.
 Python chỉ thu thập và gửi dữ liệu; không được tuyên bố app đã tự chọn, tự chấm điểm hay tự đặt lệnh.
 Chỉ phân tích module CHECK thực sự xuất hiện. Phân biệt dữ liệu RAT-CKVN với thông tin web mới.

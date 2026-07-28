@@ -112,7 +112,7 @@ def test_unchanged_signal_is_not_resent_but_reversal_is(monkeypatch, tmp_path):
     assert opposite["queued"] is True
 
 
-def test_shortlist_is_one_overwritten_ckcs_markdown(monkeypatch, tmp_path):
+def test_shortlist_is_one_overwritten_market_markdown(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path)
 
     opportunity_alerts.queue_opportunity(_item("VN30F1M", "SELL", market="CKPS"))
@@ -120,15 +120,16 @@ def test_shortlist_is_one_overwritten_ckcs_markdown(monkeypatch, tmp_path):
     path = opportunity_alerts.shortlist_path()
     first = open(path, "r", encoding="utf-8").read()
 
+    assert "## CKPS" in first
+    assert "VN30F1M SHORT | Entry 12.3 (100 HĐ)" in first
     assert "## CKCS BUY" in first
     assert "AAA BUY | Entry 12.3 (100 CP)" in first
-    assert "VN30F1M" not in first
 
     opportunity_alerts.mark_wait("AAA")
     second = open(path, "r", encoding="utf-8").read()
 
     assert "AAA | BUY" not in second
-    assert "Không có mã CKCS BUY/SELL hợp lệ" in second
+    assert "VN30F1M SHORT | Entry 12.3 (100 HĐ)" in second
 
 
 def test_shortlist_still_updates_when_telegram_suggestions_are_disabled(

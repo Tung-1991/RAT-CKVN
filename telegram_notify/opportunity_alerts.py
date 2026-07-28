@@ -72,7 +72,7 @@ def _write_state(state: Dict[str, Any]) -> None:
 
 
 def _shortlist_items(state: Dict[str, Any], settings: Dict[str, Any]) -> list[Dict[str, Any]]:
-    """Return the current CKCS signals that are eligible for the suggestion feed."""
+    """Return current CKPS/CKCS signals eligible for the suggestion feed."""
     now = time.time()
     rows = []
     for current in (state.get("current", {}) or {}).values():
@@ -89,41 +89,40 @@ def _shortlist_items(state: Dict[str, Any], settings: Dict[str, Any]) -> list[Di
         item = current.get("item")
         if not isinstance(item, dict):
             continue
-        if str(item.get("market_type") or "CKCS").upper() == "CKPS":
-            continue
         if _passes_filter(item, settings) and _valid_setup(item):
             rows.append(deepcopy(item))
     return rows
 
 
 def _shortlist_markdown(items: list[Dict[str, Any]], now: Optional[datetime] = None) -> str:
-    """Build the one compact user-facing CKCS shortlist file."""
+    """Build one compact user-facing shortlist for both CKPS and CKCS."""
     now = now or datetime.now()
     sections = {
         title: rows
         for title, rows in _sections(items)
-        if title in {"PRIORITY", "CKCS BUY", "CKCS SELL"} and rows
+        if title in {"CKPS", "PRIORITY", "CKCS BUY", "CKCS SELL"} and rows
     }
     lines = [
-        "# CKCS SHORTLIST",
+        "# SHORTLIST TÍN HIỆU",
         "",
         f"Cập nhật: {now.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         (
-            "Danh sách sơ tuyển từ Gợi ý BOT sau khi kiểm tra tín hiệu Lego, "
-            "mức CẮT/TP và bộ lọc thanh khoản. Đây không phải lệnh giao dịch."
+            "Danh sách CKPS/CKCS từ Gợi ý BOT sau khi kiểm tra tín hiệu Lego "
+            "và mức SL/CẮT/TP. Bộ lọc thanh khoản chỉ áp dụng cho CKCS. "
+            "Đây không phải lệnh giao dịch."
         ),
         "",
     ]
     if not sections:
         lines.extend(
             [
-                "Không có mã CKCS BUY/SELL hợp lệ trong cache hiện tại.",
+                "Không có tín hiệu CKPS/CKCS hợp lệ trong cache hiện tại.",
                 "",
             ]
         )
     else:
-        for title in ("PRIORITY", "CKCS BUY", "CKCS SELL"):
+        for title in ("CKPS", "PRIORITY", "CKCS BUY", "CKCS SELL"):
             rows = sections.get(title, [])
             if not rows:
                 continue
@@ -133,7 +132,7 @@ def _shortlist_markdown(items: list[Dict[str, Any]], now: Optional[datetime] = N
     lines.extend(
         [
             "LLM chỉ phân tích sâu các mã trong file này; dùng scan_report.md để tra RAW nhiều ngày.",
-            "Tăng trưởng 5 năm và định giá cơ bản vẫn phải đối chiếu nguồn công khai trên web.",
+            "Tăng trưởng 5 năm và định giá cơ bản chỉ áp dụng cho CKCS và vẫn phải đối chiếu nguồn công khai trên web.",
             "",
         ]
     )

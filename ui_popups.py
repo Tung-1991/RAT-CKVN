@@ -312,7 +312,7 @@ Khi gửi qua trình duyệt, mở thẳng thư mục advisor và chọn các fi
 
 App tự cập nhật trong phiên:
 - scan_snapshot_cache.json: kho nội bộ theo mã/ngày, giữ mặc định 250 ngày.
-- ckcs_shortlist.md: danh sách CKCS đã qua lọc tín hiệu, mức giá và thanh khoản; luôn ghi đè.
+- ckcs_shortlist.md: danh sách tín hiệu CKPS/CKCS đã qua kiểm tra mức giá; thanh khoản chỉ lọc CKCS; luôn ghi đè.
 
 App tạo/ghi đè báo cáo:
 - 11:35 và 14:50 cùng cập nhật một file `scan_report.md`; lần sau ghi đè lần trước.
@@ -327,7 +327,7 @@ Chỉ có khi bật/gọi API:
 
 RAW chỉ bổ sung bối cảnh thị trường/nghiên cứu CKCS; không sửa BOT và không đặt lệnh.
 Khi gửi qua trình duyệt, chọn ckcs_shortlist.md + scan_report.md + private_context.md.
-LLM đọc shortlist trước, sau đó chỉ tra RAW của các mã đó và VN30/VN30F trong scan_report.md.
+LLM đọc shortlist trước, phân tích riêng CKPS/CKCS, rồi tra RAW nhiều ngày trong scan_report.md.
 Không cần gửi scan_snapshot_cache.json vì đây là kho nội bộ dài.
 
 API là phần nâng cao và mặc định tắt; tắt API không phát sinh request hoặc phí.
@@ -718,7 +718,7 @@ def open_advisor_popup(app):
                 handle.write(
                     "# PRIVATE CONTEXT — LỌC CKCS\n\n"
                     "## Cách dùng 3 file\n\n"
-                    "1. ckcs_shortlist.md: danh sách sơ tuyển cần phân tích.\n"
+                    "1. ckcs_shortlist.md: danh sách tín hiệu CKPS/CKCS cần phân tích.\n"
                     "2. scan_report.md: RAW nhiều ngày; chỉ tra các mã trong shortlist và "
                     "VN30/VN30F làm bối cảnh.\n"
                     "3. private_context.md: bốn tiêu chí và yêu cầu đầu ra dưới đây.\n\n"
@@ -1142,7 +1142,7 @@ def open_advisor_popup(app):
     ctk.CTkLabel(
         ckcs_files_card,
         text=(
-            "Ba file dùng cho LLM: shortlist sơ tuyển, RAW nhiều ngày và hướng dẫn riêng. "
+            "Ba file dùng cho LLM: shortlist CKPS/CKCS, RAW nhiều ngày và hướng dẫn riêng. "
             "Shortlist cùng scan_report luôn được ghi đè bằng dữ liệu mới."
         ),
         font=("Roboto", 9),
