@@ -1058,13 +1058,22 @@ def setup_right_panel(app, parent):
     _preset_tp_group = "DYNAMIC" if "DYNAMIC" in str(_preset_tp_group) else str(_preset_tp_group or "G2")
     _sl_mode = str(config.PRESETS.get(_preset_val, {}).get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
     _tp_mode = str(config.PRESETS.get(_preset_val, {}).get("MANUAL_TP_MODE", "RR") or "RR").upper()
-    _tf_display = {
-        "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
-        "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
-        "G2": f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
-        "G3": f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
-        "DYNAMIC": "DYNAMIC",
-    }
+    try:
+        _preview_symbol = app.cbo_symbol.get()
+        _preview_context = getattr(app, "latest_market_context", {}).get(_preview_symbol, {}) or {}
+        _tf_display = {
+            group: app._group_tf_label(group, _preview_symbol, _preview_context)
+            for group in ("G0", "G1", "G2", "G3")
+        }
+        _tf_display["DYNAMIC"] = "DYNAMIC"
+    except Exception:
+        _tf_display = {
+            "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
+            "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
+            "G2": f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
+            "G3": f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
+            "DYNAMIC": "DYNAMIC",
+        }
     app.var_preview_sl_group = tk.StringVar(value=_tf_display.get(_preset_sl_group, _tf_display["G2"]))
     app.var_preview_tp_group = tk.StringVar(value=_tf_display.get(_preset_tp_group, _tf_display["G2"]))
     _mode_display = {
@@ -1083,13 +1092,7 @@ def setup_right_panel(app, parent):
     app.var_preview_sl_mode = tk.StringVar(value=_mode_display.get(_sl_mode, "Percent"))
     app.var_preview_tp_mode = tk.StringVar(value=_mode_display.get(_tp_mode, "RR"))
     app.var_preview_tf = app.var_preview_sl_group
-    tf_values = [
-        f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
-        f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
-        f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
-        f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
-        "DYNAMIC",
-    ]
+    tf_values = [_tf_display[group] for group in ("G0", "G1", "G2", "G3", "DYNAMIC")]
     selector_row = ctk.CTkFrame(preview_panel, fg_color="#102326", corner_radius=6)
     selector_row.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(2, 5))
     selector_row.grid_columnconfigure(1, weight=1)

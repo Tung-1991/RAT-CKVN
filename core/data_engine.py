@@ -564,6 +564,10 @@ class DataEngine:
         context = {
             "symbol": symbol,
             "current_price": current_price,
+            # Giữ đúng mapping group -> timeframe đã resolve theo từng mã.
+            # UI/Telegram phải đọc mapping này thay vì dán nhãn bằng timeframe
+            # global trong config.py (đặc biệt VN30F1M có symbol override).
+            "group_timeframes": dict(tfs),
             "check_indicator_columns": {
                 grp: copy.deepcopy(df.attrs.get("check_indicator_columns", {}))
                 for grp, df in dfs.items()

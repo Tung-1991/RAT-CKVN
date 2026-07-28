@@ -1558,9 +1558,29 @@ class BotUI(ctk.CTk):
                 return technical_decision
         return evaluate_entry_exit(symbol, direction, price, context, ee_cfg)
 
-    def _group_tf_label(self, group):
+    def _symbol_group_timeframe(self, symbol, group, context=None):
+        group = str(group or "")
+        if not group.startswith("G"):
+            return group
+        context = context or {}
+        resolved = context.get("group_timeframes", {})
+        if isinstance(resolved, dict) and resolved.get(group):
+            return str(resolved[group])
+        try:
+            brain = self.trade_mgr._get_brain_settings(symbol)
+        except Exception:
+            brain = {}
+        return str(
+            (brain or {}).get(
+                f"{group}_TIMEFRAME",
+                getattr(config, f"{group}_TIMEFRAME", group),
+            )
+            or group
+        )
+
+    def _group_tf_label(self, group, symbol=None, context=None):
         group = str(group or "--")
-        tf = getattr(config, f"{group}_TIMEFRAME", group)
+        tf = self._symbol_group_timeframe(symbol, group, context)
         return f"{group} ({tf})" if group.startswith("G") else group
 
     def _resolve_manual_sl_price(self, symbol, direction, price, params, context, manual_sl=0.0):
@@ -2064,7 +2084,7 @@ class BotUI(ctk.CTk):
             "equity": equity,
             "commission": commission,
             "spread_cost": spread_cost,
-            "timeframe": getattr(config, f"{sl_group}_TIMEFRAME", sl_group),
+            "timeframe": self._symbol_group_timeframe(symbol, sl_group, context),
             "group": sl_group,
             "manual_sl_group": sl_group,
             "manual_tp_group": tp_group,
@@ -2420,7 +2440,7 @@ class BotUI(ctk.CTk):
 
         setup = self._resolve_manual_setup_preview(symbol, direction, preset, context)
         setup["preview_group"] = group
-        setup["timeframe"] = getattr(config, f"{group}_TIMEFRAME", group)
+        setup["timeframe"] = self._symbol_group_timeframe(symbol, group, context)
         status = "READY" if setup.get("ready") and mode == "NORMAL" else "BLOCK" if mode != "NORMAL" else "WAIT"
         mode_note = "NORMAL manual only" if mode != "NORMAL" else setup.get("reason", "OK")
         brain = self.trade_mgr._get_brain_settings(symbol)
@@ -2460,12 +2480,12 @@ class BotUI(ctk.CTk):
         tsl_kind = "warn" if "thiếu" in tsl_line2.lower() or "missing" in tsl_line2.lower() else "good"
         manual_sl_group = setup.get("manual_sl_group", setup.get("group", "--"))
         manual_tp_group = setup.get("manual_tp_group", "--")
-        manual_sl_label = self._group_tf_label(manual_sl_group)
-        manual_tp_label = self._group_tf_label(manual_tp_group)
+        manual_sl_label = self._group_tf_label(manual_sl_group, symbol, context)
+        manual_tp_label = self._group_tf_label(manual_tp_group, symbol, context)
         setup["trend"] = trend
         setup["market_mode"] = market_mode
         setup["manual_mode"] = mode
-        setup["entry_signal"] = f"{signal_text} | Trend {self._group_tf_label(group)} {trend}"
+        setup["entry_signal"] = f"{signal_text} | Trend {self._group_tf_label(group, symbol, context)} {trend}"
         setup["sl_rule"] = f"{self._fmt_price(setup.get('sl'))} | {setup.get('sl_source_label', '--')} {manual_sl_label}"
         setup["exit_rule"] = (
             "OFF"
@@ -2474,7 +2494,7 @@ class BotUI(ctk.CTk):
         )
         setup["tsl_rule"] = f"{tsl_line1.replace('TSL: ', '')} | {tsl_line2}"
         setup["chips"] = [
-            self._make_preview_chip("Trend", f"Signal {signal_text} | {self._group_tf_label(group)} {trend} | {market_mode}", trend_kind),
+            self._make_preview_chip("Trend", f"Signal {signal_text} | {self._group_tf_label(group, symbol, context)} {trend} | {market_mode}", trend_kind),
             self._make_preview_chip("ATR", f"SL {manual_sl_label}={self._fmt_price(setup.get('atr'))} | TP {manual_tp_label}", "info"),
             self._make_preview_chip("TSL", tsl_line1.replace("TSL: ", ""), tsl_kind),
             self._make_preview_chip("Entry Filter", setup.get("ee_gate", ee_txt.replace("E/E: ", "")), ee_kind),
@@ -2512,13 +2532,19 @@ class BotUI(ctk.CTk):
             return
         try:
             preset_cfg = config.PRESETS.get(getattr(config, "DEFAULT_PRESET", "SCALPING"), {})
+            symbol = self.cbo_symbol.get() if hasattr(self, "cbo_symbol") else ""
+            context = getattr(self, "latest_market_context", {}).get(symbol, {}) or {}
             tf_display = {
-                "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",
-                "G1": f"G1 ({getattr(config, 'G1_TIMEFRAME', '1h')})",
-                "G2": f"G2 ({getattr(config, 'G2_TIMEFRAME', '15m')})",
-                "G3": f"G3 ({getattr(config, 'G3_TIMEFRAME', '15m')})",
+                "G0": self._group_tf_label("G0", symbol, context),
+                "G1": self._group_tf_label("G1", symbol, context),
+                "G2": self._group_tf_label("G2", symbol, context),
+                "G3": self._group_tf_label("G3", symbol, context),
                 "DYNAMIC": "DYNAMIC",
             }
+            if hasattr(self, "cbo_preview_sl_group"):
+                self.cbo_preview_sl_group.configure(
+                    values=[tf_display[g] for g in ("G0", "G1", "G2", "G3", "DYNAMIC")]
+                )
             if hasattr(self, "var_preview_sl_group"):
                 sl_group = str(preset_cfg.get("MANUAL_SL_GROUP", preset_cfg.get("MANUAL_SWING_SL_GROUP", "G2")) or "G2")
                 sl_group = "DYNAMIC" if "DYNAMIC" in sl_group else sl_group
@@ -2548,7 +2574,11 @@ class BotUI(ctk.CTk):
                 widgets["title"].configure(text=model.get("title", key.upper()), text_color=color)
                 widgets["badge"].configure(text=f"{bias} | {status}", text_color=color)
                 setup = model.get("setup", {}) or {}
-                atr_group = self._group_tf_label(setup.get("manual_sl_group", setup.get("group", "--")))
+                atr_group = self._group_tf_label(
+                    setup.get("manual_sl_group", setup.get("group", "--")),
+                    symbol,
+                    context,
+                )
                 atr_txt = self._fmt_price(setup.get("atr"))
                 trend_raw = str(setup.get("trend", "") or "").upper()
                 meta_color = "#FF5252" if trend_raw == "DOWN" else "#00E676" if trend_raw == "UP" else "#FFD600" if trend_raw in ("NONE", "FLAT", "SIDEWAY") else "#B2EBF2"
