@@ -30,7 +30,7 @@
       },
       "risk_tsl": {
         "base_risk": 0.2,
-        "base_sl": "G0",
+        "base_sl": "G1",
         "tsl_mode": "STATIC",
         "bot_tsl": "BE+SWING",
         "strict_risk": true
