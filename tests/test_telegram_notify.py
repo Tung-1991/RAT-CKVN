@@ -23,7 +23,7 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert loaded["opportunity_daily_digest_enabled"] is False
     assert loaded["opportunity_chat_id"] == ""
     assert loaded["opportunity_duplicate_cooldown_minutes"] == 0.0
-    assert loaded["opportunity_batch_minutes"] == 0.5
+    assert loaded["opportunity_batch_minutes"] == 5.0
     assert loaded["system_alerts_enabled"] is True
     assert loaded["opportunity_mode_filter"] == "ALL"
     assert loaded["owner_user_id"] == ""
@@ -84,9 +84,9 @@ def test_legacy_opportunity_timers_are_migrated():
     )
 
     assert migrated["opportunity_duplicate_cooldown_minutes"] == 0.0
-    assert migrated["opportunity_batch_minutes"] == 0.5
+    assert migrated["opportunity_batch_minutes"] == 5.0
     assert invalid["opportunity_duplicate_cooldown_minutes"] == 0.0
-    assert invalid["opportunity_batch_minutes"] == 0.5
+    assert invalid["opportunity_batch_minutes"] == 5.0
 
 
 def test_chat_id_candidates_accepts_channel_id_without_minus():

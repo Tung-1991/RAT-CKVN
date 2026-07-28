@@ -20,7 +20,7 @@ DEFAULT_SETTINGS = {
     "control_poll_interval_seconds": 2.0,
     "signal_proposal_cooldown_minutes": 15.0,
     "opportunity_duplicate_cooldown_minutes": 0.0,
-    "opportunity_batch_minutes": 0.5,
+    "opportunity_batch_minutes": 5.0,
     "opportunity_mode_filter": "ALL",
     "opportunity_ckps_enabled": True,
     "opportunity_ckcs_enabled": True,
@@ -70,8 +70,6 @@ def normalize_settings(data):
         # Migrate only the two legacy defaults. Custom values are preserved.
         if _is_exact_number(data.get("opportunity_duplicate_cooldown_minutes"), 60.0):
             clean["opportunity_duplicate_cooldown_minutes"] = 0.0
-        if _is_exact_number(data.get("opportunity_batch_minutes"), 5.0):
-            clean["opportunity_batch_minutes"] = 0.5
     clean["enabled"] = bool(clean.get("enabled"))
     clean["system_alerts_enabled"] = bool(clean.get("system_alerts_enabled", True))
     clean["control_enabled"] = bool(clean.get("control_enabled"))

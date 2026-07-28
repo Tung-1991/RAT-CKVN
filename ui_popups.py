@@ -1460,7 +1460,7 @@ def open_advisor_popup(app):
         value=str(tg_settings.get("opportunity_duplicate_cooldown_minutes", 0.0))
     )
     var_tg_opportunity_batch = tk.StringVar(
-        value=str(tg_settings.get("opportunity_batch_minutes", 0.5))
+        value=str(tg_settings.get("opportunity_batch_minutes", 5.0))
     )
     var_tg_opportunity_mode = tk.StringVar(
         value=str(tg_settings.get("opportunity_mode_filter", "ALL"))
@@ -1702,7 +1702,7 @@ def open_advisor_popup(app):
                 str(saved.get("opportunity_duplicate_cooldown_minutes", 0.0))
             )
             var_tg_opportunity_batch.set(
-                str(saved.get("opportunity_batch_minutes", 0.5))
+                str(saved.get("opportunity_batch_minutes", 5.0))
             )
             var_tg_opportunity_mode.set(
                 str(saved.get("opportunity_mode_filter", "ALL"))
@@ -2152,15 +2152,21 @@ def open_advisor_popup(app):
         market_checks, text="CKCS", variable=var_tg_opportunity_ckcs, font=("Roboto", 10, "bold"),
         checkbox_width=18, checkbox_height=18
     ).pack(side="left")
+    compact_field(
+        suggestion_card,
+        5,
+        "Gom gợi ý trong (phút)",
+        var_tg_opportunity_batch,
+    )
     ctk.CTkLabel(
         suggestion_card,
-        text="Chỉ gửi trong phiên khi BUY/SELL hoặc Priority thay đổi; cùng lượt quét gom trong 30 giây.",
+        text="Mặc định 5 phút; chỉ gom gợi ý BOT. Cảnh báo biến động giá vẫn gửi ngay.",
         font=("Roboto", 9),
         text_color="#90CAF9",
         wraplength=300,
         anchor="w",
         justify="left",
-    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(3, 7))
+    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(1, 5))
     ctk.CTkCheckBox(
         suggestion_card,
         text="Gửi thêm bản tổng 09:30 và 14:50",
@@ -2168,7 +2174,7 @@ def open_advisor_popup(app):
         font=("Roboto", 10, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 7))
+    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 7))
     manual_report_actions = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
     manual_report_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 5))
     manual_report_actions.grid_columnconfigure((0, 1), weight=1)

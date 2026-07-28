@@ -469,9 +469,9 @@ def queue_opportunity(item: Dict[str, Any], log_cb=None) -> Dict[str, Any]:
         _PENDING[symbol] = deepcopy(item)
         delay = max(
             1.0,
-            float(settings.get("opportunity_batch_minutes", 0.5)) * 60.0,
+            float(settings.get("opportunity_batch_minutes", 5.0)) * 60.0,
         )
-        # Debounce thật: 30 giây tính từ thay đổi cuối của cùng lượt quét.
+        # Debounce theo cấu hình: gom các thay đổi gần nhau thành một bản tin.
         if _TIMER is not None:
             _TIMER.cancel()
         _TIMER = threading.Timer(delay, flush_now, kwargs={"log_cb": log_cb})
