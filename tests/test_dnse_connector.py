@@ -151,6 +151,49 @@ def test_orders_account_repository_400_keeps_cache_and_backs_off(monkeypatch):
     assert conn._orders_suppressed_errors == 1
 
 
+def test_orders_backend_500_keeps_cache_and_backs_off(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_ACCOUNT_REPOSITORY_BACKOFF_SECONDS", 60.0, raising=False)
+    session = FakeSession(
+        [FakeResponse(500, {"message": "Error in backend service"})]
+    )
+    conn = _connector(session)
+    conn._orders_cache = [{"id": "O-CACHED", "symbol": "VN30F1M"}]
+
+    first = conn.get_orders(symbol="VN30F1M", orderCategory="NORMAL")
+    second = conn.get_orders(symbol="VN30F1M", orderCategory="NORMAL")
+
+    assert [item["id"] for item in first] == ["O-CACHED"]
+    assert [item["id"] for item in second] == ["O-CACHED"]
+    assert len(session.calls) == 1
+    assert conn._orders_unavailable_until > time.time()
+    assert conn._orders_failure_streak == 1
+    assert conn._orders_suppressed_errors == 1
+
+
+def test_balances_network_failure_keeps_last_good_cache_and_backs_off(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_ACCOUNT_CACHE_TTL_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(config, "DNSE_BROKER_BACKOFF_SECONDS", 60.0, raising=False)
+    session = FakeSession([ConnectionResetError(10054, "remote closed")])
+    conn = _connector(session)
+    conn._account_cache = {
+        "login": "ACC1",
+        "balance": 100_000_000.0,
+        "equity": 100_000_000.0,
+    }
+    conn._account_cache_ts = 0.0
+
+    first = conn.get_account_info()
+    second = conn.get_account_info()
+
+    assert first["balance"] == 100_000_000.0
+    assert second["balance"] == 100_000_000.0
+    assert len(session.calls) == 1
+    assert conn._account_unavailable_until > time.time()
+    assert conn._account_failure_streak == 1
+
+
 def test_reset_session_caches_clears_orders():
     conn = _connector(FakeSession([]))
     conn._orders_cache = [{"id": "OLD"}]
@@ -188,6 +231,56 @@ def test_send_order_builds_derivative_payload_and_uses_trading_token(monkeypatch
     assert call["json"]["stopLoss"] == 1200
     assert call["json"]["takeProfit"] == 1220
     assert call["headers"]["trading-token"] == "tok"
+
+
+def test_send_order_without_trading_token_never_calls_or_reconciles(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
+    session = FakeSession([])
+    conn = _connector(session)
+    conn._symbol_map = {"VN30F1M": "41I1G6000"}
+    conn._symbol_map_ts = time.time()
+
+    result = conn.send_order(
+        "VN30F1M",
+        "BUY",
+        1,
+        price=1800.0,
+        sl=1795.0,
+        tp=1810.0,
+        comment="[BOT]",
+    )
+
+    assert result.ok is False
+    assert "TRADING_TOKEN_REQUIRED" in result.error
+    assert result.status != "UNKNOWN"
+    assert session.calls == []
+
+
+def test_account_repository_400_does_not_mark_broker_api_live():
+    conn = DNSEConnector()
+
+    for _ in range(3):
+        conn._record_api_request(
+            "GET",
+            "/accounts/ACC1/orders",
+            500,
+            1.0,
+            "Error in backend service",
+        )
+    assert conn.get_api_health_snapshot()["broker_api_state"] == "BROKER_API_DOWN"
+
+    conn._record_api_request(
+        "GET",
+        "/accounts/ACC1/orders",
+        400,
+        1.0,
+        "AccountRepository: cannot find object with id: ACC1",
+    )
+    assert conn.get_api_health_snapshot()["broker_api_state"] == "BROKER_API_DOWN"
+
+    conn._record_api_request("GET", "/accounts/ACC1/orders", 200, 1.0, "")
+    assert conn.get_api_health_snapshot()["broker_api_state"] == "LIVE"
 
 
 def test_positions_are_mapped_to_broker_position(monkeypatch):
@@ -250,6 +343,48 @@ def test_positions_read_failure_keeps_last_known_cache(monkeypatch):
     assert len(session.calls) == 1
 
 
+def test_positions_backend_failure_backs_off_and_keeps_full_cache(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 0.0)
+    monkeypatch.setattr(config, "DNSE_BROKER_BACKOFF_SECONDS", 60.0, raising=False)
+    session = FakeSession(
+        [FakeResponse(500, {"message": "Error in backend service"})]
+    )
+    conn = _connector(session)
+    cached = [
+        SimpleNamespace(ticket="PS-CACHED"),
+        SimpleNamespace(ticket="CS-CACHED"),
+    ]
+    conn._positions_cache = list(cached)
+
+    assert conn.get_positions() == cached
+    assert conn.get_positions() == cached
+    assert len(session.calls) == 1
+    assert conn._positions_unavailable_until > time.time()
+    assert conn._positions_suppressed_errors == 1
+
+
+def test_positions_partial_market_response_never_replaces_full_cache(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 0.0)
+    session = FakeSession(
+        [
+            FakeResponse(200, {"positions": []}),
+            FakeResponse(500, {"message": "Error in backend service"}),
+        ]
+    )
+    conn = _connector(session)
+    cached = [
+        SimpleNamespace(ticket="PS-CACHED"),
+        SimpleNamespace(ticket="CS-CACHED"),
+    ]
+    conn._positions_cache = list(cached)
+
+    assert conn.get_positions() == cached
+    assert conn._positions_cache == cached
+    assert len(session.calls) == 2
+
+
 def test_orders_401_is_not_retried_until_auth_changes(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     session = FakeSession(
@@ -269,6 +404,17 @@ def test_orders_401_is_not_retried_until_auth_changes(monkeypatch):
     rows = conn.get_orders(symbol="VN30F1M")
     assert [item["id"] for item in rows] == ["O1"]
     assert len(session.calls) == 2
+
+
+def test_orders_success_uses_short_cache_ttl(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(config, "DNSE_ORDERS_CACHE_TTL_SECONDS", 5.0, raising=False)
+    session = FakeSession([FakeResponse(200, {"orders": []})])
+    conn = _connector(session)
+
+    assert conn.get_orders(symbol="VN30F1M") == []
+    assert conn.get_orders(symbol="VN30F1M") == []
+    assert len(session.calls) == 1
 
 
 def test_stock_symbol_uses_stock_profile_account_and_fee_rate(monkeypatch):
@@ -621,6 +767,7 @@ def test_real_403_returns_account_pending_and_mutes(monkeypatch, caplog):
     second = conn.get_account_info()
 
     assert first["status"] == "ACCOUNT_PENDING"
+    assert first["balance"] == 0.0
     assert second["status"] == "ACCOUNT_PENDING"
     assert caplog.text.count("DNSE balances failed [403]") <= 1
 

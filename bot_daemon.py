@@ -328,7 +328,7 @@ class StandaloneBotDaemon:
             pass
         return {}
 
-    def _tick_symbols(self):
+    def _tick_symbols(self, cache_seconds=15.0):
         """Chọn mã cần tick real-time 2s = mã ĐANG GIỮ VỊ THẾ MỞ (để canh SL/TSL).
 
         [FIX 429 v2] Bản trước tick vô điều kiện toàn bộ mã CKPS -> VN30F1M (scan-only,
@@ -339,7 +339,7 @@ class StandaloneBotDaemon:
         """
         now = time.time()
         cached = getattr(self, "_tick_symbols_cache", None)
-        if cached and (now - cached[0]) < 15.0:
+        if cached and (now - cached[0]) < max(1.0, float(cache_seconds or 15.0)):
             return cached[1]
 
         picked = []
@@ -841,13 +841,30 @@ class StandaloneBotDaemon:
                     logger.debug("market calendar refresh lỗi: %s", exc)
 
                 market_data_window = is_any_network_window_open(symbols or None, include_preopen=True)
+                private_sync_seconds = (
+                    15.0
+                    if market_data_window
+                    else max(
+                        60.0,
+                        float(
+                            getattr(
+                                config,
+                                "DNSE_CLOSED_PRIVATE_SYNC_SECONDS",
+                                300.0,
+                            )
+                            or 300.0
+                        ),
+                    )
+                )
                 try:
                     # Chỉ stream nhóm cần realtime. Danh sách RAW DATA vẫn được quét
                     # OHLC theo chu kỳ nhưng không ép mở tick cho hàng chục mã.
-                    data_engine.set_stream_symbols(self._tick_symbols())
+                    data_engine.set_stream_symbols(
+                        self._tick_symbols(cache_seconds=private_sync_seconds)
+                    )
                 except Exception:
                     pass
-                if acc_info is None or (now - last_acc_check > 15.0):
+                if acc_info is None or (now - last_acc_check > private_sync_seconds):
                     acc_info = self.connector.get_account_info()
                     last_acc_check = now
                     if acc_info is None:

@@ -1004,8 +1004,8 @@ class BotUI(ctk.CTk):
         if requested_paper == old_paper:
             return
 
-        # Đổi chế độ luôn thu hồi quyền tự mở lệnh. Người dùng phải bật BOT lại
-        # trong đúng mode mới; quản lý/đóng các vị thế đang có vẫn chạy như cũ.
+        # Đổi chế độ luôn thu hồi quyền tự mở lệnh. Runtime chỉ quản lý vị thế
+        # thuộc mode đang chọn; không đổi mode khi mode cũ còn vị thế cần tự quản lý.
         self._mode_switching = True
         self.set_auto_trade_enabled(False, reason="Đổi PAPER/REAL")
         config.PAPER_TRADING = requested_paper
@@ -3775,10 +3775,62 @@ class BotUI(ctk.CTk):
             cached_acc = getattr(self.connector, "_account_cache", None)
             cached_positions = list(getattr(self.connector, "_positions_cache", []) or [])
             cached_orders = list(getattr(self.connector, "_orders_cache", []) or [])
-            try:
-                acc = self.connector.get_account_info() or cached_acc
-            except Exception:
+            # Ngoài phiên chỉ đồng bộ private REST theo nhịp chậm. Bản cũ gọi
+            # balances/positions/orders mỗi 5 giây dù tên hàm là "render cache",
+            # làm DNSE maintenance cuối ngày tạo retry/log không cần thiết.
+            now = time.time()
+            closed_sync_seconds = max(
+                60.0,
+                float(
+                    getattr(config, "DNSE_CLOSED_PRIVATE_SYNC_SECONDS", 300.0)
+                    or 300.0
+                ),
+            )
+            refresh_private = (
+                now
+                - float(self.__dict__.get("_closed_private_sync_ts", 0.0) or 0.0)
+                >= closed_sync_seconds
+            )
+            if refresh_private:
+                self._closed_private_sync_ts = now
+                try:
+                    acc = self.connector.get_account_info() or cached_acc
+                except Exception:
+                    acc = cached_acc
+                try:
+                    all_positions = list(self.connector.get_all_open_positions() or [])
+                except Exception:
+                    all_positions = cached_positions
+                try:
+                    refreshed_orders = list(
+                        self.connector.get_orders(
+                            symbol=sym,
+                            orderCategory=getattr(
+                                self.connector, "order_category", "NORMAL"
+                            ),
+                        )
+                        if hasattr(self.connector, "get_orders")
+                        else []
+                    )
+                    open_orders = refreshed_orders
+                except Exception:
+                    open_orders = [
+                        order
+                        for order in cached_orders
+                        if not sym
+                        or str(order.get("symbol", "")).upper()
+                        == str(sym).upper()
+                    ]
+            else:
                 acc = cached_acc
+                all_positions = cached_positions
+                open_orders = [
+                    order
+                    for order in cached_orders
+                    if not sym
+                    or str(order.get("symbol", "")).upper()
+                    == str(sym).upper()
+                ]
             acc = acc or {
                 "login": getattr(self.connector, "account_no", ""),
                 "balance": 0.0,
@@ -3786,24 +3838,6 @@ class BotUI(ctk.CTk):
                 "margin": 0.0,
                 "free_margin": 0.0,
             }
-            try:
-                all_positions = list(self.connector.get_all_open_positions() or [])
-            except Exception:
-                all_positions = cached_positions
-            try:
-                open_orders = list(
-                    self.connector.get_orders(
-                        symbol=sym,
-                        orderCategory=getattr(self.connector, "order_category", "NORMAL"),
-                    )
-                    if hasattr(self.connector, "get_orders")
-                    else []
-                )
-            except Exception:
-                open_orders = [
-                    order for order in cached_orders
-                    if not sym or str(order.get("symbol", "")).upper() == str(sym).upper()
-                ]
 
         tick_data = data_engine.fetch_realtime_tick(sym)  # outside session: cache-only by contract
         if not tick_data:

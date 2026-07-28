@@ -29,8 +29,9 @@
         }
       },
       "risk_tsl": {
-        "base_risk": 0.2,
+        "base_risk": 1.0,
         "base_sl": "G1",
+        "sl_atr_multiplier": 0.2,
         "tsl_mode": "STATIC",
         "bot_tsl": "BE+SWING",
         "strict_risk": true

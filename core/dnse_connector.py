@@ -264,14 +264,22 @@ class DNSEConnector:
         self._endpoint_throttle_until: Dict[str, float] = {}
         self._endpoint_request_locks: Dict[str, threading.Lock] = {}
         self._rate_limit_strikes: Dict[str, int] = {}
+        self._network_error_active: set[str] = set()
         self.last_latency_ms = 0.0
         self.market_type = os.getenv("DNSE_MARKET_TYPE", "DERIVATIVE")
         self.order_category = os.getenv("DNSE_ORDER_CATEGORY", "NORMAL")
         self._paper_broker = None
         self._account_cache: Optional[Dict[str, Any]] = None
         self._account_cache_ts: float = 0.0
+        self._account_unavailable_until: float = 0.0
+        self._account_failure_streak: int = 0
+        self._account_outage_logged: bool = False
         self._positions_cache: List[BrokerPosition] = []
         self._positions_cache_ts: float = 0.0
+        self._positions_unavailable_until: float = 0.0
+        self._positions_failure_streak: int = 0
+        self._positions_outage_logged: bool = False
+        self._positions_suppressed_errors: int = 0
         self._orders_cache: List[Dict[str, Any]] = []
         self._orders_cache_ts: float = 0.0
         # DNSE order service may temporarily return
@@ -282,6 +290,8 @@ class DNSEConnector:
         self._orders_error_log_ts: float = 0.0
         self._orders_error_key: str = ""
         self._orders_suppressed_errors: int = 0
+        self._orders_failure_streak: int = 0
+        self._orders_outage_logged: bool = False
         self._read_auth_blocked_marker = None
         self._fee_profile_cache: Dict[str, BrokerFeeProfile] = {}
         self._fee_profile_cache_ts: Dict[str, float] = {}
@@ -368,11 +378,21 @@ class DNSEConnector:
         (không cần restart app). Token + market-data cache giữ nguyên."""
         self._account_cache = None
         self._account_cache_ts = 0.0
+        self._account_unavailable_until = 0.0
+        self._account_failure_streak = 0
+        self._account_outage_logged = False
         self._positions_cache = []
         self._positions_cache_ts = 0.0
+        self._positions_unavailable_until = 0.0
+        self._positions_failure_streak = 0
+        self._positions_outage_logged = False
+        self._positions_suppressed_errors = 0
         self._orders_cache = []
         self._orders_cache_ts = 0.0
         self._orders_unavailable_until = 0.0
+        self._orders_failure_streak = 0
+        self._orders_outage_logged = False
+        self._orders_suppressed_errors = 0
         self._read_auth_blocked_marker = None
 
     def set_market_data_provider(self, tick_provider=None, state_provider=None):
@@ -453,7 +473,9 @@ class DNSEConnector:
             logger.warning("Nạp trading-token lỗi: %s", exc)
 
     def _account_pending_info(self, reason: str = "") -> Dict[str, Any]:
-        pending_balance = float(getattr(config, "PAPER_INITIAL_BALANCE", 100000000.0))
+        # REAL chưa đọc được DNSE thì phải hiển thị chưa xác nhận/0, tuyệt đối
+        # không mượn vốn PAPER 100 triệu làm số dư tạm.
+        pending_balance = 0.0
         return {
             "login": self.account_no,
             "server": "DNSE_API_REAL_PENDING",
@@ -485,10 +507,23 @@ class DNSEConnector:
         self.api_stats["last_error"] = error or ""
         self.api_stats["last_latency_ms"] = float(latency_ms or 0.0)
         if not self._is_market_price_path(path):
-            if 200 <= int(status_code or 0) < 500 and int(status_code or 0) != 429:
+            status = int(status_code or 0)
+            error_text = str(error or "").lower()
+            transient_backend_error = (
+                status == 0
+                or status >= 500
+                or (
+                    status == 400
+                    and (
+                        "accountrepository" in error_text
+                        or "backend service" in error_text
+                    )
+                )
+            )
+            if 200 <= status < 500 and status != 429 and not transient_backend_error:
                 self.api_stats["broker_api_consecutive_failures"] = 0
                 self.api_stats["broker_api_state"] = "LIVE"
-            elif int(status_code or 0) == 0 or int(status_code or 0) >= 500:
+            elif transient_backend_error:
                 failures = int(self.api_stats.get("broker_api_consecutive_failures", 0) or 0) + 1
                 self.api_stats["broker_api_consecutive_failures"] = failures
                 if failures >= 3:
@@ -635,6 +670,10 @@ class DNSEConnector:
     ) -> Tuple[bool, Any, int, str]:
         if not self.is_connected and not self.connect():
             return False, None, 0, "NOT_CONNECTED"
+        if require_trading_token and not self.has_trading_token():
+            message = "TRADING_TOKEN_REQUIRED: verify OTP before changing orders or positions."
+            self._record_api_request(method, path, 401, 0.0, message)
+            return False, None, 401, message
         throttle_seconds = self._endpoint_throttle_seconds(method, path)
         if throttle_seconds > 0:
             message = f"LOCAL_RATE_LIMIT: retry after {throttle_seconds:.1f}s"
@@ -664,6 +703,9 @@ class DNSEConnector:
                 if 200 <= response.status_code < 300:
                     family = self._endpoint_family(method, path)
                     self._rate_limit_strikes.pop(family, None)
+                    if family in self._network_error_active:
+                        logger.info("DNSE %s recovered.", family)
+                        self._network_error_active.discard(family)
                     self._record_api_request(method, path, response.status_code, self.last_latency_ms)
                     return True, data, response.status_code, ""
                 # [24/7] Dính rate-limit (429): chờ theo Retry-After rồi thử lại tối đa N lần.
@@ -711,13 +753,10 @@ class DNSEConnector:
                 return False, data, response.status_code, message or response.text
         except Exception as exc:
             self._record_api_request(method, path, 0, 0.0, str(exc))
-            now = time.time()
             log_key = self._endpoint_family(method, path)
-            last_logs = getattr(self, "_network_error_log_ts", {})
-            if now - float(last_logs.get(log_key, 0.0) or 0.0) >= 60.0:
+            if log_key not in self._network_error_active:
                 logger.error("DNSE %s failed: %s", log_key, exc)
-                last_logs[log_key] = now
-                self._network_error_log_ts = last_logs
+                self._network_error_active.add(log_key)
             return False, None, 0, str(exc)
 
     def has_trading_token(self) -> bool:
@@ -767,26 +806,62 @@ class DNSEConnector:
         use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
         if use_paper:
             return self._paper().get_account_info()
+        now = time.time()
+        if now < self._account_unavailable_until:
+            if self._account_cache is not None:
+                return dict(self._account_cache)
+            return self._account_pending_info("DNSE balances đang chờ thử lại.")
         cache_ttl = float(getattr(config, "DNSE_ACCOUNT_CACHE_TTL_SECONDS", 5.0) or 0.0)
-        if self._account_cache is not None and cache_ttl > 0 and (time.time() - self._account_cache_ts) < cache_ttl:
+        if self._account_cache is not None and cache_ttl > 0 and (now - self._account_cache_ts) < cache_ttl:
             return dict(self._account_cache)
+        stale_info = dict(self._account_cache) if self._account_cache is not None else None
         ok, data, status_code, message = self._request("GET", f"/accounts/{self.account_no}/balances")
         if not ok:
+            self._account_failure_streak += 1
+            base_backoff = max(
+                30.0,
+                float(getattr(config, "DNSE_BROKER_BACKOFF_SECONDS", 60.0) or 60.0),
+            )
+            backoff = min(300.0, base_backoff * (2 ** min(3, self._account_failure_streak - 1)))
+            self._account_unavailable_until = now + backoff
             if status_code == 403:
                 if not DNSEConnector._balances_403_muted:
-                    logger.warning("DNSE balances failed [403]: %s. Muting further 403s.", message or data)
+                    logger.warning(
+                        "DNSE balances unavailable [403]: %s. Retry in %.0fs.",
+                        message or data,
+                        backoff,
+                    )
                     DNSEConnector._balances_403_muted = True
+                if stale_info is not None:
+                    return stale_info
                 info = self._account_pending_info(message or "DNSE account access pending.")
                 self._account_cache = dict(info)
                 self._account_cache_ts = time.time()
                 return info
-            if not getattr(self, "_balances_error_logged", False):
-                logger.warning("DNSE balances failed [%s]: %s. Muting further 403s.", status_code, message or data)
+            if not self._account_outage_logged:
+                # Network exceptions are already logged once by _request(); only
+                # add this line for an HTTP response from the broker.
+                if int(status_code or 0) != 0:
+                    logger.warning(
+                        "DNSE balances temporarily unavailable [%s]: %s. Retry in %.0fs.",
+                        status_code,
+                        message or data,
+                        backoff,
+                    )
+                self._account_outage_logged = True
                 self._balances_error_logged = True
+            if stale_info is not None:
+                return stale_info
             info = self._account_pending_info(message or "DNSE account unavailable.")
             self._account_cache = dict(info)
             self._account_cache_ts = time.time()
             return info
+        if self._account_outage_logged or self._account_failure_streak:
+            logger.info("DNSE balances recovered.")
+        self._account_unavailable_until = 0.0
+        self._account_failure_streak = 0
+        self._account_outage_logged = False
+        self._balances_error_logged = False
         payload = _unwrap_payload(data)
         if isinstance(payload, list):
             payload = payload[0] if payload else {}
@@ -942,6 +1017,15 @@ class DNSEConnector:
         reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 300.0) or 300.0)
         if ws_connected and self._orders_cache_ts and (time.time() - self._orders_cache_ts) < reconcile:
             return _cached_rows()
+        cache_ttl = float(
+            getattr(config, "DNSE_ORDERS_CACHE_TTL_SECONDS", 5.0) or 0.0
+        )
+        if (
+            cache_ttl > 0
+            and self._orders_cache_ts
+            and (time.time() - self._orders_cache_ts) < cache_ttl
+        ):
+            return _cached_rows()
 
         # A known temporary DNSE order-repository outage is not an account
         # configuration error. Keep the last known rows and retry at a measured
@@ -964,9 +1048,15 @@ class DNSEConnector:
                 int(status_code or 0) == 400
                 and "accountrepository" in error_text.lower()
             )
-            if account_repo_unavailable:
-                backoff = max(
-                    15.0,
+            backend_unavailable = (
+                int(status_code or 0) in (0, 408, 425, 429, 500, 502, 503, 504)
+                or account_repo_unavailable
+                or "error in backend service" in error_text.lower()
+            )
+            if backend_unavailable:
+                self._orders_failure_streak += 1
+                base_backoff = max(
+                    30.0,
                     float(
                         getattr(
                             config,
@@ -975,6 +1065,10 @@ class DNSEConnector:
                         )
                         or 60.0
                     ),
+                )
+                backoff = min(
+                    300.0,
+                    base_backoff * (2 ** min(3, self._orders_failure_streak - 1)),
                 )
                 self._orders_unavailable_until = now + backoff
             if int(status_code or 0) == 401:
@@ -985,42 +1079,48 @@ class DNSEConnector:
                     self.trading_token or "",
                 )
 
-            should_log = (
-                error_key != self._orders_error_key
-                or (now - self._orders_error_log_ts) >= 60.0
-            )
-            if should_log:
-                suppressed = self._orders_suppressed_errors
-                self._orders_suppressed_errors = 0
+            if backend_unavailable:
+                if not self._orders_outage_logged:
+                    # Transport exception status=0 was already logged once in
+                    # _request(); do not print a second line for the same outage.
+                    if int(status_code or 0) != 0:
+                        logger.warning(
+                            "DNSE orders temporarily unavailable [%s] account=%s "
+                            "market=%s; keep cache and retry with backoff %.0fs.",
+                            status_code,
+                            account_no,
+                            market_type,
+                            self._orders_unavailable_until - now,
+                        )
+                    self._orders_outage_logged = True
                 self._orders_error_key = error_key
                 self._orders_error_log_ts = now
-                if account_repo_unavailable:
-                    logger.warning(
-                        "DNSE order repository temporarily unavailable "
-                        "[400] account=%s market=%s; keep cached orders and "
-                        "retry in %.0fs%s.",
-                        account_no,
-                        market_type,
-                        self._orders_unavailable_until - now,
-                        f" ({suppressed} repeated checks suppressed)" if suppressed else "",
-                    )
-                else:
+            elif error_key != self._orders_error_key:
+                if int(status_code or 0) != 401 or self._read_auth_blocked_marker:
                     logger.error(
-                        "DNSE get orders failed [%s] account=%s market=%s: %s%s",
+                        "DNSE get orders failed [%s] account=%s market=%s: %s",
                         status_code,
                         account_no,
                         market_type,
                         error_text,
-                        f" ({suppressed} repeated checks suppressed)" if suppressed else "",
                     )
-            else:
-                self._orders_suppressed_errors += 1
+                self._orders_error_key = error_key
+                self._orders_error_log_ts = now
             return _cached_rows()
         payload = _unwrap_payload(data, ("orders",))
         rows = payload if isinstance(payload, list) else []
+        if self._orders_outage_logged:
+            logger.info(
+                "DNSE orders recovered account=%s market=%s (%d internal checks suppressed).",
+                account_no,
+                market_type,
+                self._orders_suppressed_errors,
+            )
         self._orders_cache = [dict(item) for item in rows if isinstance(item, dict)]
         self._orders_cache_ts = time.time()
         self._orders_unavailable_until = 0.0
+        self._orders_failure_streak = 0
+        self._orders_outage_logged = False
         self._read_auth_blocked_marker = None
         self._orders_error_key = ""
         self._orders_suppressed_errors = 0
@@ -1351,8 +1451,13 @@ class DNSEConnector:
         cache_ttl = float(getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 2.0) or 0.0)
         if cache_ttl > 0 and (time.time() - self._positions_cache_ts) < cache_ttl:
             return list(self._positions_cache)
+        now = time.time()
+        if now < self._positions_unavailable_until:
+            self._positions_suppressed_errors += 1
+            return list(self._positions_cache)
         auth_marker = (self.api_key, self.trading_token or "")
         if self._read_auth_blocked_marker == auth_marker:
+            self._positions_suppressed_errors += 1
             return list(self._positions_cache)
 
         # Reset cờ "mute 403" theo NGÀY (đang mute vĩnh viễn cả session) — để ngày mới thấy lỗi lại.
@@ -1373,7 +1478,9 @@ class DNSEConnector:
                 query_targets.append((market_type, account_no))
 
         positions: List[BrokerPosition] = []
-        had_ok = False
+        completed_targets = 0
+        failure_status = 0
+        failure_message = ""
         for market_type, account_no in query_targets:
             ok, data, status_code, message = self._request(
                 "GET",
@@ -1381,33 +1488,58 @@ class DNSEConnector:
                 params={"marketType": market_type},
             )
             if not ok:
+                failure_status = int(status_code or 0)
+                failure_message = str(message or data or "")
                 if int(status_code or 0) == 401:
                     self._read_auth_blocked_marker = (
                         self.api_key,
                         self.trading_token or "",
                     )
-                if status_code == 403:
-                    if not DNSEConnector._positions_403_muted:
-                        logger.warning("DNSE positions failed [403]: %s. Muting further 403s.", message or data)
-                        DNSEConnector._positions_403_muted = True
-                    continue
-                if not getattr(self, "_positions_error_logged", False):
-                    logger.warning("DNSE positions failed [%s]: %s. Muting further position errors.", status_code, message or data)
-                    self._positions_error_logged = True
-                if int(status_code or 0) == 401:
-                    break
-                continue
-            had_ok = True
+                break
+            completed_targets += 1
             payload = _unwrap_payload(data, ("positions",))
             if isinstance(payload, dict):
                 payload = [payload]
             if isinstance(payload, list):
                 positions.extend(self._position_from_raw(item) for item in payload if isinstance(item, dict))
 
-        if not had_ok:
-            # Lỗi đầu tiên đã được ghi rõ ở trên. Không lặp thêm cảnh báo tổng
-            # mỗi 60 giây và tuyệt đối không biến lỗi đọc thành "0 vị thế".
+        if completed_targets != len(query_targets):
+            self._positions_failure_streak += 1
+            base_backoff = max(
+                30.0,
+                float(getattr(config, "DNSE_BROKER_BACKOFF_SECONDS", 60.0) or 60.0),
+            )
+            backoff = min(
+                300.0,
+                base_backoff * (2 ** min(3, self._positions_failure_streak - 1)),
+            )
+            self._positions_unavailable_until = now + backoff
+            if failure_status == 403:
+                DNSEConnector._positions_403_muted = True
+            if not self._positions_outage_logged:
+                # Network exceptions were already logged once by _request().
+                if failure_status != 0:
+                    logger.warning(
+                        "DNSE positions temporarily unavailable [%s]: %s. "
+                        "Keep full cache and retry in %.0fs.",
+                        failure_status,
+                        failure_message,
+                        backoff,
+                    )
+                self._positions_outage_logged = True
+                self._positions_error_logged = True
+            # Không bao giờ ghi đè cache bằng kết quả một phần. Nếu DERIVATIVE lỗi
+            # nhưng STOCK thành công (hoặc ngược lại), vị thế cũ phải được giữ nguyên.
             return list(self._positions_cache)
+        if self._positions_outage_logged or self._positions_failure_streak:
+            logger.info(
+                "DNSE positions recovered (%d internal checks suppressed).",
+                self._positions_suppressed_errors,
+            )
+        self._positions_unavailable_until = 0.0
+        self._positions_failure_streak = 0
+        self._positions_outage_logged = False
+        self._positions_suppressed_errors = 0
         self._positions_error_logged = False
         self._read_auth_blocked_marker = None
         try:
@@ -1750,7 +1882,8 @@ class DNSEConnector:
             },
         )
         if not ok:
-            logger.error("DNSE OHLC failed [%s]: %s", status_code, message or data)
+            # DataEngine chịu trách nhiệm gộp/throttle cảnh báo theo mã + khung.
+            # Không log lại tại connector vì một lượt quét nhiều mã sẽ nhân đôi log.
             return None
         return data if isinstance(data, dict) else None
 

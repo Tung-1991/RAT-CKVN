@@ -119,7 +119,7 @@
     }
   },
   "risk_tsl": {
-    "base_risk": 0.3,
+    "base_risk": 1.0,
     "base_sl": "G0",
     "sl_atr_multiplier": 1.5,
     "tsl_mode": "STATIC",
@@ -782,14 +782,14 @@
     "ckcs_last_afternoon_date": ""
   },
   "bot_safeguard": {
-    "MAX_DAILY_LOSS_PERCENT": 2.5,
+    "MAX_DAILY_LOSS_PERCENT": 10.0,
     "BOT_ORDER_MODE": "NORMAL",
     "BOT_ENTRY_ORDER_TYPE": "MARKET",
     "BOT_ATC_EXIT": false,
     "PENDING_ORDER_EXPIRE_HOURS": 24.0,
-    "MAX_OPEN_POSITIONS": 6,
+    "MAX_OPEN_POSITIONS": 1,
     "MAX_TRADES_PER_DAY": 3,
-    "MAX_LOSING_STREAK": 3,
+    "MAX_LOSING_STREAK": 2,
     "VOLATILITY_BRAKE_ENABLED": true,
     "VOLATILITY_BRAKE_SYMBOLS": [
       "VN30F1M"
@@ -803,16 +803,16 @@
     "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
     "FORCE_MIN_LOT": false,
     "STOCK_MAX_ORDER_NAV_PCT": 20.0,
-    "RISK_GATE_MAX_PCT_PS": 10.0,
+    "RISK_GATE_MAX_PCT_PS": 8.0,
     "RISK_GATE_MAX_PCT_CS": 3.0,
     "LOSS_COUNT_MODE": "TOTAL",
-    "COOLDOWN_MINUTES": 1,
+    "COOLDOWN_MINUTES": 5,
     "NUM_H1_BARS": 100,
     "NUM_M15_BARS": 100,
     "CHECK_PING": true,
     "MAX_PING_MS": 150,
     "CHECK_SPREAD": true,
-    "MAX_SPREAD_POINTS": 150.0,
+    "MAX_SPREAD_POINTS": 1.0,
     "DAEMON_LOOP_DELAY": 15.0,
     "DCA_PCA_SCAN_INTERVAL": 2.0,
     "LOG_COOLDOWN_MINUTES": 60.0,
@@ -907,5 +907,22 @@
     "ANTI_CASH_REENTRY_LOCK_SEC": 900
   },
   "TSL_LOGIC_MODE": "STATIC",
-  "symbol_configs": {}
+  "symbol_configs": {
+    "VN30F1M": {
+      "max_orders": 1,
+      "max_same_direction_orders": 1,
+      "max_spread": 1,
+      "max_ping": 150,
+      "fixed_lot": 0.0,
+      "max_lot_cap": 1.0,
+      "watermark_trigger": 0.0,
+      "watermark_trigger_unit": "USD",
+      "watermark_drawdown": 0.0,
+      "watermark_drawdown_unit": "USD",
+      "min_sl_points": 0,
+      "max_basket_drawdown": 0.0,
+      "max_basket_drawdown_unit": "USD",
+      "reject_on_max_lot": false
+    }
+  }
 }
