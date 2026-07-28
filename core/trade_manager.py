@@ -586,6 +586,17 @@ class TradeManager:
     def _get_brain_settings(self, symbol=None):
         return get_brain_settings_for_symbol(symbol)
 
+    def _resolve_base_sl_group(self, symbol=None, context=None, risk_tsl=None, fallback="G2"):
+        """Resolve the effective SL group from the symbol's own risk settings."""
+        if risk_tsl is None:
+            brain = self._get_brain_settings(symbol)
+            risk_tsl = (brain or {}).get("risk_tsl", {}) or {}
+        group = str((risk_tsl or {}).get("base_sl") or fallback or "G2")
+        if "DYNAMIC" in group.upper():
+            market_mode = str((context or {}).get("market_mode", "ANY") or "ANY").upper()
+            return "G1" if market_mode in ("TREND", "BREAKOUT") else "G2"
+        return group
+
     def _sync_state_lifecycle(self):
         apply_state_defaults(self.state)
         changed = rollover_daily_session(self.state)
@@ -920,9 +931,12 @@ class TradeManager:
                     return f"SAFEGUARD_FAIL|EntryExit_{ee_decision.get('status')}|{ee_decision.get('reason', 'Entry/Exit blocked')}"
 
         # TÍNH TOÁN SMART SL TỪ CẤU HÌNH BRAIN
-        sl_group = risk_tsl.get("base_sl", "G2")
-        if "DYNAMIC" in sl_group:
-            sl_group = "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
+        sl_group = self._resolve_base_sl_group(
+            symbol,
+            context,
+            risk_tsl=risk_tsl,
+            fallback=getattr(config, "BOT_BASE_SL", "G2"),
+        )
 
         atr_key = f"atr_{sl_group}"
         swing_l_key = f"swing_low_{sl_group}"
@@ -1405,12 +1419,12 @@ class TradeManager:
         elif sl_mode == "SANDBOX" and context:
             brain = self._get_brain_settings(symbol)
             risk_tsl = brain.get("risk_tsl", {}) or {}
-            sl_group = resolve_manual_group("MANUAL_SL_GROUP")
-            if not sl_group:
-                sl_group = str(risk_tsl.get("base_sl", getattr(config, "BOT_BASE_SL", "G2")) or "G2")
-            if "DYNAMIC" in sl_group:
-                market_mode = (context or {}).get("market_mode", "ANY")
-                sl_group = "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
+            sl_group = self._resolve_base_sl_group(
+                symbol,
+                context,
+                risk_tsl=risk_tsl,
+                fallback=getattr(config, "BOT_BASE_SL", "G2"),
+            )
 
             sh = context.get(f"swing_high_{sl_group}")
             sl_val = context.get(f"swing_low_{sl_group}")
@@ -1863,9 +1877,12 @@ class TradeManager:
         except Exception:
             ee_decision = None
 
-        sl_group = risk_tsl.get("base_sl", "G2")
-        if "DYNAMIC" in str(sl_group).upper():
-            sl_group = "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
+        sl_group = self._resolve_base_sl_group(
+            symbol,
+            context,
+            risk_tsl=risk_tsl,
+            fallback=getattr(config, "BOT_BASE_SL", "G2"),
+        )
         atr_key = f"atr_{sl_group}"
         swing_l_key = f"swing_low_{sl_group}"
         swing_h_key = f"swing_high_{sl_group}"

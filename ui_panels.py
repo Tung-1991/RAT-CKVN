@@ -1066,6 +1066,12 @@ def setup_right_panel(app, parent):
             for group in ("G0", "G1", "G2", "G3")
         }
         _tf_display["DYNAMIC"] = "DYNAMIC"
+        if _sl_mode == "SANDBOX":
+            _preset_sl_group = app._sandbox_sl_group_for_symbol(
+                _preview_symbol,
+                _preview_context,
+                _preset_sl_group,
+            )
     except Exception:
         _tf_display = {
             "G0": f"G0 ({getattr(config, 'G0_TIMEFRAME', '1d')})",

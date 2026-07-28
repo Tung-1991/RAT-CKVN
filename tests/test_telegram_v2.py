@@ -210,8 +210,23 @@ def test_volatility_alert_uses_opportunity_chat_even_when_suggestion_feed_is_off
 
     assert result["ok"]
     assert sent[0][0] == "-1002"
-    assert sent[0][1] == "🔻 VN30F1M | 1896.9→1891.4 | -5.50 điểm/60s"
+    assert sent[0][1] == "🔴 VN30F1M | 1896.9→1891.4 | -5.50 điểm/60s"
     assert sent[0][2] == ""
+
+    result_up = opportunity_alerts.send_volatility_event(
+        {
+            "symbol": "VN30F1M",
+            "direction": "UP",
+            "change_points": 5.1,
+            "threshold_unit": "POINTS",
+            "window_seconds": 58,
+            "reference_price": 1829.4,
+            "current_price": 1834.5,
+            "action": "ALERT_ONLY",
+        }
+    )
+    assert result_up["ok"]
+    assert sent[1][1] == "🟢 VN30F1M | 1829.4→1834.5 | +5.10 điểm/58s"
 
 
 def test_system_health_sends_once_after_60_seconds_and_once_on_recovery(monkeypatch, tmp_path):

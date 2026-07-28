@@ -16,6 +16,7 @@ class Shim:
     _safe_float = main.BotUI._safe_float
     _manual_rule_mode = main.BotUI._manual_rule_mode
     _resolve_manual_preset_group = main.BotUI._resolve_manual_preset_group
+    _sandbox_sl_group_for_symbol = main.BotUI._sandbox_sl_group_for_symbol
     _manual_context_ready = main.BotUI._manual_context_ready
     _resolve_manual_sl_price = main.BotUI._resolve_manual_sl_price
     trade_mgr = _TradeMgrStub()
@@ -140,3 +141,55 @@ def test_manual_sl_input_bypasses_guard():
     )
     assert label == "MANUAL"
     assert sl == 33.0
+
+
+class _OverrideTradeMgrStub:
+    def _get_brain_settings(self, symbol):
+        return {
+            "risk_tsl": {
+                "base_sl": "G1",
+                "sl_atr_multiplier": 0.2,
+            }
+        }
+
+
+class OverrideShim(Shim):
+    trade_mgr = _OverrideTradeMgrStub()
+
+
+OVERRIDE_APP = OverrideShim()
+
+
+def test_sandbox_symbol_base_sl_overrides_global_preset_group():
+    params = {
+        "MANUAL_SL_MODE": "SANDBOX",
+        "MANUAL_SL_GROUP": "G0",
+        "SL_PERCENT": 0.5,
+    }
+    context = {
+        "atr_G0": 10.0,
+        "swing_low_G0": 1700.0,
+        "swing_high_G0": 1900.0,
+        "atr_G1": 2.0,
+        "swing_low_G1": 1815.0,
+        "swing_high_G1": 1825.0,
+    }
+    sl, _, label, missing = OVERRIDE_APP._resolve_manual_sl_price(
+        "VN30F1M",
+        "BUY",
+        1820.0,
+        params,
+        context,
+    )
+    assert label == "SANDBOX:G1"
+    assert missing is False
+    assert sl == 1814.6
+
+
+def test_context_readiness_uses_symbol_base_sl_group():
+    params = {"MANUAL_SL_MODE": "SANDBOX", "MANUAL_SL_GROUP": "G0"}
+    assert OVERRIDE_APP._manual_context_ready(
+        params,
+        CTX_G1_FULL,
+        "VN30F1M",
+    ) is True

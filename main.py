@@ -1362,6 +1362,22 @@ class BotUI(ctk.CTk):
             return "G1" if mode in ("TREND", "BREAKOUT") else "G2"
         return group
 
+    def _sandbox_sl_group_for_symbol(self, symbol, context, fallback="G2"):
+        """SL Sandbox luôn đọc base_sl hiệu lực của đúng mã."""
+        resolver = getattr(self.trade_mgr, "_resolve_base_sl_group", None)
+        if callable(resolver):
+            return resolver(symbol, context, fallback=fallback)
+        try:
+            brain = self.trade_mgr._get_brain_settings(symbol)
+        except Exception:
+            brain = {}
+        risk_tsl = (brain or {}).get("risk_tsl", {}) or {}
+        group = str(risk_tsl.get("base_sl") or fallback or "G2")
+        if "DYNAMIC" in group.upper():
+            mode = str((context or {}).get("market_mode", "ANY") or "ANY").upper()
+            return "G1" if mode in ("TREND", "BREAKOUT") else "G2"
+        return group
+
     def _manual_rule_mode(self, params, mode_key, legacy_key, default):
         mode = str((params or {}).get(mode_key, "") or "").upper()
         if mode:
@@ -1596,9 +1612,11 @@ class BotUI(ctk.CTk):
         if sl_mode == "SANDBOX":
             brain = self.trade_mgr._get_brain_settings(symbol)
             risk_tsl = brain.get("risk_tsl", {}) or {}
-            sandbox_group = str(sl_group or risk_tsl.get("base_sl", getattr(config, "BOT_BASE_SL", "G2")) or "G2")
-            if "DYNAMIC" in sandbox_group:
-                sandbox_group = "G1" if market_mode in ("TREND", "BREAKOUT") else "G2"
+            sandbox_group = self._sandbox_sl_group_for_symbol(
+                symbol,
+                context,
+                sl_group or getattr(config, "BOT_BASE_SL", "G2"),
+            )
             atr_val = self._safe_float(context.get(f"atr_{sandbox_group}", context.get("atr_entry", 0.0)))
             swing_low = self._safe_float(context.get(f"swing_low_{sandbox_group}", 0.0))
             swing_high = self._safe_float(context.get(f"swing_high_{sandbox_group}", 0.0))
@@ -1635,7 +1653,7 @@ class BotUI(ctk.CTk):
 
     # --- [SANDBOX-FETCH] On-demand context cho mã dashboard (CKCS không nằm trong BOT_ACTIVE_SYMBOLS) ---
 
-    def _manual_context_ready(self, params, context):
+    def _manual_context_ready(self, params, context, symbol=None):
         """True nếu context đã đủ key kỹ thuật (atr/swing theo group) cho SL/TP mode của preset."""
         params = params or {}
         context = context or {}
@@ -1645,7 +1663,12 @@ class BotUI(ctk.CTk):
         tp_mode = self._manual_rule_mode(params, "MANUAL_TP_MODE", "USE_SWING_TP", "RR")
         if sl_mode in tech_modes:
             key = "MANUAL_SL_GROUP" if "MANUAL_SL_GROUP" in params else "MANUAL_SWING_SL_GROUP"
-            needed.add(self._resolve_manual_preset_group(params, key, context))
+            preset_group = self._resolve_manual_preset_group(params, key, context)
+            needed.add(
+                self._sandbox_sl_group_for_symbol(symbol, context, preset_group)
+                if sl_mode == "SANDBOX" and symbol
+                else preset_group
+            )
         if tp_mode in tech_modes:
             key = "MANUAL_TP_GROUP" if "MANUAL_TP_GROUP" in params else "MANUAL_SWING_TP_GROUP"
             needed.add(self._resolve_manual_preset_group(params, key, context))
@@ -1805,7 +1828,14 @@ class BotUI(ctk.CTk):
         if "MANUAL_TP_GROUP" not in params and "MANUAL_SWING_TP_GROUP" in params:
             params = dict(params)
             params["MANUAL_TP_GROUP"] = params.get("MANUAL_SWING_TP_GROUP")
-        sl_group = self._resolve_manual_preset_group(params, "MANUAL_SL_GROUP", context)
+        sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
+        tp_mode = self._manual_rule_mode(params, "MANUAL_TP_MODE", "USE_SWING_TP", "RR")
+        preset_sl_group = self._resolve_manual_preset_group(params, "MANUAL_SL_GROUP", context)
+        sl_group = (
+            self._sandbox_sl_group_for_symbol(symbol, context, preset_sl_group)
+            if sl_mode == "SANDBOX"
+            else preset_sl_group
+        )
         tp_group = self._resolve_manual_preset_group(params, "MANUAL_TP_GROUP", context)
         atr_key = f"atr_{sl_group}"
         swing_low_key = f"swing_low_{sl_group}"
@@ -1813,18 +1843,17 @@ class BotUI(ctk.CTk):
         atr_val = self._safe_float(context.get(atr_key, context.get("atr", 0.0)))
         swing_low = self._safe_float(context.get(swing_low_key, 0.0))
         swing_high = self._safe_float(context.get(swing_high_key, 0.0))
-        sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
-        tp_mode = self._manual_rule_mode(params, "MANUAL_TP_MODE", "USE_SWING_TP", "RR")
-
         if manual_sl > 0:
             sl_price = manual_sl
             sl_source = "MANUAL_SL"
         elif sl_mode == "SANDBOX":
             brain = self.trade_mgr._get_brain_settings(symbol)
             risk_tsl = brain.get("risk_tsl", {}) or {}
-            sandbox_group = str(sl_group or risk_tsl.get("base_sl", getattr(config, "BOT_BASE_SL", "G2")) or "G2")
-            if "DYNAMIC" in sandbox_group:
-                sandbox_group = "G1" if market_mode in ("TREND", "BREAKOUT") else "G2"
+            sandbox_group = self._sandbox_sl_group_for_symbol(
+                symbol,
+                context,
+                sl_group or getattr(config, "BOT_BASE_SL", "G2"),
+            )
             sandbox_atr = self._safe_float(context.get(f"atr_{sandbox_group}", context.get("atr_entry", 0.0)))
             sandbox_low = self._safe_float(context.get(f"swing_low_{sandbox_group}", 0.0))
             sandbox_high = self._safe_float(context.get(f"swing_high_{sandbox_group}", 0.0))
@@ -2546,7 +2575,19 @@ class BotUI(ctk.CTk):
                     values=[tf_display[g] for g in ("G0", "G1", "G2", "G3", "DYNAMIC")]
                 )
             if hasattr(self, "var_preview_sl_group"):
-                sl_group = str(preset_cfg.get("MANUAL_SL_GROUP", preset_cfg.get("MANUAL_SWING_SL_GROUP", "G2")) or "G2")
+                sl_mode = str(preset_cfg.get("MANUAL_SL_MODE", "PERCENT") or "PERCENT").upper()
+                preset_sl_group = str(
+                    preset_cfg.get(
+                        "MANUAL_SL_GROUP",
+                        preset_cfg.get("MANUAL_SWING_SL_GROUP", "G2"),
+                    )
+                    or "G2"
+                )
+                sl_group = (
+                    self._sandbox_sl_group_for_symbol(symbol, context, preset_sl_group)
+                    if sl_mode == "SANDBOX"
+                    else preset_sl_group
+                )
                 sl_group = "DYNAMIC" if "DYNAMIC" in sl_group else sl_group
                 self.var_preview_sl_group.set(tf_display.get(sl_group, tf_display["G2"]))
                 if getattr(self, "var_preview_tp_group", None) is getattr(self, "var_preview_sl_group", None):
@@ -4017,7 +4058,7 @@ class BotUI(ctk.CTk):
             if (
                 sym
                 and is_symbol_trade_window_open(sym)[0]
-                and not self._manual_context_ready(_params_active, sym_ctx)
+                and not self._manual_context_ready(_params_active, sym_ctx, sym)
             ):
                 self._schedule_symbol_context_fetch(sym)
         except Exception:
@@ -4379,7 +4420,7 @@ class BotUI(ctk.CTk):
                 and _sl_head == "PERCENT"
             )
             if _sl_fallback:
-                if self._manual_context_ready(params, sym_ctx):
+                if self._manual_context_ready(params, sym_ctx, sym):
                     # Data đủ mà vẫn fallback -> swing nằm sai phía so với giá
                     _state = "SL swing sai phía → Percent"
                 elif self._ctx_fetch_pending(sym):

@@ -603,7 +603,7 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
     if not chat_id:
         return {"ok": False, "skipped": True, "reason": "missing_chat_id"}
     direction_up = event.get("direction") == "UP"
-    direction_icon = "🔺" if direction_up else "🔻"
+    direction_icon = "🟢" if direction_up else "🔴"
     value = (
         f"{float(event.get('change_points', 0.0)):+.2f} điểm"
         if event.get("threshold_unit") == "POINTS"

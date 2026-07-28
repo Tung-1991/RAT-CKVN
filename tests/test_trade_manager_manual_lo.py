@@ -46,6 +46,33 @@ class DummyConnector:
         return SimpleNamespace(ok=True, order_id="O1", position_id="P1")
 
 
+def test_symbol_base_sl_group_overrides_manual_preset_group(monkeypatch):
+    mgr = object.__new__(TradeManager)
+    monkeypatch.setattr(
+        mgr,
+        "_get_brain_settings",
+        lambda _symbol=None: {"risk_tsl": {"base_sl": "G1"}},
+    )
+
+    assert mgr._resolve_base_sl_group("VN30F1M", {}, fallback="G0") == "G1"
+
+
+def test_dynamic_base_sl_group_follows_market_mode():
+    mgr = object.__new__(TradeManager)
+    risk_tsl = {"base_sl": "DYNAMIC"}
+
+    assert mgr._resolve_base_sl_group(
+        "VN30F1M",
+        {"market_mode": "TREND"},
+        risk_tsl=risk_tsl,
+    ) == "G1"
+    assert mgr._resolve_base_sl_group(
+        "VN30F1M",
+        {"market_mode": "RANGE"},
+        risk_tsl=risk_tsl,
+    ) == "G2"
+
+
 def test_manual_entry_price_flows_to_connector_and_state(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(trade_manager_module, "is_symbol_trade_window_open", lambda _symbol: (True, ""))
