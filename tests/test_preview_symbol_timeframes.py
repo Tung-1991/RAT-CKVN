@@ -173,6 +173,124 @@ def test_strategy_preview_accepts_legacy_context_without_fingerprint():
     )
 
 
+def test_preview_lists_configured_simple_breakout_when_legacy_cache_has_no_details():
+    brain = {
+        "indicators": {
+            "simple_breakout": {
+                "active": True,
+                "groups": ["G2"],
+                "is_trend": True,
+            },
+            "volume": {
+                "active": False,
+                "groups": ["G2"],
+            },
+        }
+    }
+
+    rows = ui_bot_strategy.BotStrategyUI._configured_group_indicator_placeholders(
+        brain,
+        "G2",
+        stale=True,
+    )
+
+    assert rows == ["○ [CHƯA TÍNH] SIMPLE BREAKOUT [CACHE CŨ]"]
+
+
+def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypatch):
+    class _Scroll:
+        def __init__(self):
+            self.labels = []
+
+        def winfo_children(self):
+            return []
+
+    class _Label:
+        def __init__(self, parent, text="", **_kwargs):
+            parent.labels.append(text)
+
+        def pack(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(ui_bot_strategy.ctk, "CTkLabel", _Label)
+
+    brain = {
+        "MASTER_EVAL_MODE": "VETO",
+        "G2_TIMEFRAME": "5m",
+        "voting_rules": {
+            group: {"master_rule": "PASS", "max_opposite": 0, "max_none": 1}
+            for group in ("G0", "G1", "G2", "G3")
+        },
+        "indicators": {
+            "simple_breakout": {
+                "active": True,
+                "groups": ["G2"],
+                "is_trend": True,
+            }
+        },
+    }
+    context = {
+        "group_details": {
+            group: {"B": 0, "S": 0, "N": 0, "status": 0, "inds": []}
+            for group in ("G0", "G1", "G2", "G3")
+        },
+        "trend_G0": "NONE",
+        "trend_G1": "NONE",
+        "trend_G2": "UP",
+        "trend_G3": "NONE",
+        "latest_signal": 0,
+        "market_mode": "ANY",
+        "mode_source": "G2",
+        "macro_direction": 0,
+        "block_reason": "WAIT",
+    }
+    cards = {}
+    for group in ("G0", "G1", "G2", "G3"):
+        cards[group] = {
+            "title": _Widget(),
+            "summary": _Widget(),
+            "trend": _Widget(),
+            "prev": _Widget(),
+            "scroll_f": _Scroll(),
+            "last_data": "__force_render__",
+        }
+    ui = SimpleNamespace(
+        master=SimpleNamespace(latest_market_context={"VN30F1M": context}),
+        override_symbol="VN30F1M",
+        preview_symbol_var=None,
+        preview_last_symbol="VN30F1M",
+        preview_status_cache={},
+        preview_cards=cards,
+        preview_last_render_error="",
+        master_action_lbl=_Widget(),
+        market_mode_lbl=_Widget(),
+        master_reason_lbl=_Widget(),
+        entry_exit_preview_lbl=_Widget(),
+        master_eval_var=SimpleNamespace(get=lambda: "VETO"),
+        _context_for_symbol=lambda contexts, symbol: contexts.get(symbol, {}),
+        _effective_preview_brain=lambda _symbol: brain,
+        _context_ready_for_preview=lambda cached, effective: (
+            ui_bot_strategy.BotStrategyUI._context_ready_for_preview(
+                None,
+                cached,
+                effective,
+            )
+        ),
+        _schedule_preview_context_fetch=lambda _symbol: None,
+        _update_preview_status_timer=lambda *_args: ("0m", "Trước: --"),
+        _group_label_for_brain=lambda group, _brain: group,
+        _entry_exit_preview_text=lambda *_args: "E/E",
+        update_preview=lambda: None,
+        after=lambda *_args: None,
+    )
+
+    ui_bot_strategy.BotStrategyUI.update_preview(ui)
+
+    assert cards["G2"]["scroll_f"].labels == [
+        "○ [CHƯA TÍNH] SIMPLE BREAKOUT [CACHE CŨ]"
+    ]
+
+
 def test_strategy_preview_renders_stale_cached_votes_instead_of_blanking_them():
     brain = {
         "MASTER_EVAL_MODE": "VETO",

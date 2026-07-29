@@ -806,6 +806,14 @@ class BotStrategyUI(ctk.CTkToplevel):
                 card["prev"].configure(text=prev_duration)
                 
                 inds_list = data.get("inds", [])
+                if not isinstance(inds_list, list):
+                    inds_list = []
+                if not inds_list:
+                    inds_list = BotStrategyUI._configured_group_indicator_placeholders(
+                        preview_brain,
+                        grp,
+                        stale=context_strategy_stale,
+                    )
                 
                 # Chống flicker: Chỉ vẽ lại khi dữ liệu thay đổi
                 current_data_str = json.dumps(inds_list)
@@ -989,6 +997,21 @@ class BotStrategyUI(ctk.CTkToplevel):
         # liệu indicator hợp lệ và phải được hiển thị ngoài phiên; update_preview sẽ
         # gắn nhãn CACHE CŨ và âm thầm yêu cầu tính lại ở lượt quét kế tiếp.
         return any(context.get(f"trend_G{i}") for i in range(4))
+
+    @staticmethod
+    def _configured_group_indicator_placeholders(brain, group, stale=False):
+        """Show configured modules when an old cache has no detailed votes."""
+        placeholders = []
+        for name, cfg in ((brain or {}).get("indicators", {}) or {}).items():
+            if not isinstance(cfg, dict) or not cfg.get("active", False):
+                continue
+            groups = cfg.get("groups", [cfg.get("group", "G2")])
+            if group not in groups:
+                continue
+            label = str(name or "").replace("_", " ").upper()
+            suffix = "CACHE CŨ" if stale else "CHƯA CÓ DỮ LIỆU"
+            placeholders.append(f"○ [CHƯA TÍNH] {label} [{suffix}]")
+        return placeholders
 
     def _schedule_preview_context_fetch(self, symbol):
         symbol = str(symbol or "").strip().upper()

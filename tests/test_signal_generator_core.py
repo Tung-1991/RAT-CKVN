@@ -316,6 +316,56 @@ def test_generate_signal_veto_pipeline(monkeypatch):
     assert context["strategy_fingerprint"] == brain_strategy_fingerprint(settings)
 
 
+def test_generate_signal_keeps_details_for_all_groups_before_fix_veto(monkeypatch):
+    generator = SignalGenerator()
+    generator.indicator_map = {
+        "g0_probe": lambda *_args: -1,
+        "g1_probe": lambda *_args: 0,
+        "simple_breakout": lambda *_args: 1,
+    }
+    settings = {
+        "FORCE_ANY_MODE": True,
+        "MASTER_EVAL_MODE": "VETO",
+        "MIN_MATCHING_VOTES": 1,
+        "indicators": {
+            "g0_probe": {
+                "active": True,
+                "groups": ["G0"],
+                "active_modes": ["ANY"],
+                "params": {},
+            },
+            "g1_probe": {
+                "active": True,
+                "groups": ["G1"],
+                "active_modes": ["ANY"],
+                "params": {},
+            },
+            "simple_breakout": {
+                "active": True,
+                "groups": ["G2"],
+                "active_modes": ["ANY"],
+                "params": {},
+            },
+        },
+        "voting_rules": {
+            "G0": {"master_rule": "PASS", "max_opposite": 0, "max_none": 0},
+            "G1": {"master_rule": "FIX", "max_opposite": 0, "max_none": 0},
+            "G2": {"master_rule": "PASS", "max_opposite": 0, "max_none": 0},
+            "G3": {"master_rule": "IGNORE", "max_opposite": 0, "max_none": 0},
+        },
+    }
+    monkeypatch.setattr(generator, "_get_brain_settings", lambda _symbol=None: settings)
+    frames = {group: _ohlcv(20) for group in ("G0", "G1", "G2", "G3")}
+    context = {}
+
+    assert generator.generate_signal_v4(frames, context, symbol="VN30F1M") == 0
+    assert len(context["group_details"]["G0"]["inds"]) == 1
+    assert len(context["group_details"]["G1"]["inds"]) == 1
+    assert context["group_details"]["G2"]["inds"] == [
+        "● [BUY]  SIMPLE BREAKOUT [NONE|ANY]"
+    ]
+
+
 def test_generate_signal_voting_requires_configured_group_count(monkeypatch):
     generator = SignalGenerator()
     generator.indicator_map = {"probe": lambda _frame, _params: 1}
