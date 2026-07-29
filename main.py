@@ -1837,6 +1837,12 @@ class BotUI(ctk.CTk):
             else preset_sl_group
         )
         tp_group = self._resolve_manual_preset_group(params, "MANUAL_TP_GROUP", context)
+        # Khi SL/TP trong preset đang liên kết cùng một group, symbol override
+        # (ví dụ VN30F: base_sl=G1/15m) phải dịch cả TP Retest/FIB theo cùng
+        # khung hiệu lực. Chỉ giữ group TP riêng khi người dùng đã cấu hình
+        # nó khác group SL.
+        if tp_group == preset_sl_group and sl_group != preset_sl_group:
+            tp_group = sl_group
         atr_key = f"atr_{sl_group}"
         swing_low_key = f"swing_low_{sl_group}"
         swing_high_key = f"swing_high_{sl_group}"

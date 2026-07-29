@@ -328,6 +328,63 @@ def test_swing_tp_uses_real_swing_target_then_fib_display_targets(monkeypatch):
     assert setup["tp_target_sources"] == ["S", "F", "F"]
 
 
+def test_default_retest_tp_follows_effective_symbol_group_then_fib(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "LINKED_RETEST_TEST",
+        {
+            "MANUAL_SL_MODE": "SANDBOX",
+            "MANUAL_TP_MODE": "SWING_REJECTION",
+            "MANUAL_SL_GROUP": "G0",
+            "MANUAL_TP_GROUP": "G0",
+            "MANUAL_SWING_TP_ATR_MULT": 0.2,
+            "MANUAL_FIB_TP_LEVELS": "1.272,1.618,2.0",
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    app = _PreviewShim()
+
+    setup = app._resolve_manual_setup_preview(
+        "VN30F1M",
+        "BUY",
+        "LINKED_RETEST_TEST",
+        {
+            "current_price": 1800.0,
+            "bid": 1800.0,
+            "ask": 1800.0,
+            "atr_G0": 30.0,
+            "swing_low_G0": 1700.0,
+            "swing_high_G0": 1900.0,
+            "atr_G1": 5.0,
+            "swing_low_G1": 1790.0,
+            "swing_high_G1": 1810.0,
+        },
+        manual_values={"entry": 0.0, "lot": 1.0, "sl": 0.0, "tp": 0.0},
+    )
+
+    assert setup["manual_sl_group"] == "G1"
+    assert setup["manual_tp_group"] == "G1"
+    assert setup["tp_targets"] == pytest.approx([1809.0, 1815.44, 1822.36])
+    assert setup["tp_target_sources"] == ["S", "F", "F"]
+
+    monkeypatch.setattr(config, "DEFAULT_PRESET", "LINKED_RETEST_TEST")
+    telegram = app.build_telegram_preview_order(
+        "VN30F1M",
+        "BUY",
+        context={
+            "current_price": 1800.0,
+            "bid": 1800.0,
+            "ask": 1800.0,
+            "atr_G1": 5.0,
+            "swing_low_G1": 1790.0,
+            "swing_high_G1": 1810.0,
+        },
+    )
+    assert telegram["ok"] is True
+    assert telegram["tp_targets"] == pytest.approx([1809.0, 1815.44, 1822.36])
+    assert telegram["tp_target_sources"] == ["S", "F", "F"]
+
+
 def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
