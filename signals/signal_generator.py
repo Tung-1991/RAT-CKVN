@@ -59,7 +59,8 @@ class SignalGenerator:
         for target_grp in ["G0", "G1", "G2", "G3"]:
             trend_votes = []
             for ind_name, cfg in inds_config.items():
-                if cfg.get("is_trend", False):
+                # is_trend chỉ mô tả vai trò, không đồng nghĩa với bật module.
+                if cfg.get("active", False) and cfg.get("is_trend", False):
                     groups = cfg.get("groups", [cfg.get("group", "G2")])
                     
                     # CHỈ lấy phiếu bầu của Indicator nếu nó thuộc Group đang xét

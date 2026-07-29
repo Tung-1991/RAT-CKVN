@@ -120,3 +120,23 @@ def test_generate_signal_voting_requires_configured_group_count(monkeypatch):
     frames = {group: _ohlcv(20) for group in ("G1", "G2", "G3")}
 
     assert generator.generate_signal_v4(frames, {}, symbol="FPT") == 1
+
+
+def test_inactive_trend_indicator_never_votes():
+    generator = SignalGenerator()
+    generator.indicator_map = {"trend_probe": lambda _frame, _params: -1}
+    context = {}
+    trends = generator._detect_dynamic_trend(
+        {"G0": _ohlcv(20)},
+        context,
+        {
+            "trend_probe": {
+                "active": False,
+                "is_trend": True,
+                "groups": ["G0"],
+                "params": {},
+            }
+        },
+    )
+
+    assert trends["G0"] == "NONE"

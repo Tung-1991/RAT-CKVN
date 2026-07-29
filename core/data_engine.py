@@ -199,7 +199,7 @@ class DataEngine:
         try:
             def needs(name):
                 cfg = inds_config.get(name, {}) or {}
-                return bool(cfg.get("active") or cfg.get("is_trend"))
+                return bool(cfg.get("active"))
 
             # ADX
             if needs("adx"):
@@ -309,9 +309,7 @@ class DataEngine:
         """Resolve params cho đúng group nhưng không thay đổi config gốc."""
         resolved = {}
         for name, raw_cfg in (indicators or {}).items():
-            if not isinstance(raw_cfg, dict) or not (
-                raw_cfg.get("active", False) or (include_trend and raw_cfg.get("is_trend", False))
-            ):
+            if not isinstance(raw_cfg, dict) or not raw_cfg.get("active", False):
                 continue
             groups = raw_cfg.get("groups", [raw_cfg.get("group", "G2")])
             if isinstance(groups, str):
@@ -338,7 +336,7 @@ class DataEngine:
 
         for source, indicators in (("trade", trade_config), ("check", check_config)):
             for name, cfg in (indicators or {}).items():
-                if not isinstance(cfg, dict) or not (cfg.get("active") or cfg.get("is_trend")):
+                if not isinstance(cfg, dict) or not cfg.get("active"):
                     continue
                 signature = self._indicator_signature(name, cfg)
                 if signature not in calculated:

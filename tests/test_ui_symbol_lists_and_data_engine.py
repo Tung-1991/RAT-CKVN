@@ -32,6 +32,23 @@ def test_fetch_bars_returns_empty_when_ohlc_t_is_none(monkeypatch):
     assert df.empty
 
 
+def test_inactive_trend_role_does_not_activate_indicator():
+    indicators = {
+        "simple_breakout": {
+            "active": False,
+            "is_trend": True,
+            "groups": ["G2"],
+            "params": {"lookback": 2},
+        }
+    }
+
+    assert DataEngine._effective_group_indicators(
+        indicators,
+        "G2",
+        include_trend=True,
+    ) == {}
+
+
 def test_old_paper_receipt_is_visible_as_history_row(monkeypatch):
     monkeypatch.setattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0, raising=False)
     row = ui_popups._paper_closed_trade_history_row(

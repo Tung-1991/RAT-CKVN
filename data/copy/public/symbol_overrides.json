@@ -8,24 +8,99 @@
       "G3_TIMEFRAME": "1m",
       "voting_rules": {
         "G0": {
-          "max_opposite": 0,
-          "max_none": 3,
-          "master_rule": "FIX"
+          "max_opposite": 1,
+          "max_none": 1,
+          "master_rule": "PASS"
         },
         "G1": {
           "max_opposite": 0,
-          "max_none": 0,
-          "master_rule": "PASS"
+          "max_none": 1,
+          "master_rule": "FIX"
         },
         "G2": {
           "max_opposite": 0,
           "max_none": 1,
-          "master_rule": "IGNORE"
+          "master_rule": "PASS"
         },
         "G3": {
           "max_opposite": 0,
           "max_none": 1,
           "master_rule": "IGNORE"
+        }
+      },
+      "indicators": {
+        "adx": {
+          "active": true,
+          "groups": [
+            "G0",
+            "G1"
+          ],
+          "trigger_mode": "REALTIME_TICK",
+          "params": {
+            "period": 14,
+            "strong": 20
+          }
+        },
+        "ema": {
+          "active": true,
+          "groups": [
+            "G0",
+            "G1"
+          ],
+          "is_trend": true,
+          "trigger_mode": "REALTIME_TICK",
+          "params": {
+            "period": 20
+          }
+        },
+        "supertrend": {
+          "active": true,
+          "groups": [
+            "G0",
+            "G1"
+          ],
+          "is_trend": true,
+          "trigger_mode": "REALTIME_TICK",
+          "params": {
+            "period": 10,
+            "multiplier": 2.0
+          }
+        },
+        "macd": {
+          "active": true,
+          "groups": [
+            "G1"
+          ],
+          "trigger_mode": "REALTIME_TICK",
+          "params": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9
+          }
+        },
+        "simple_breakout": {
+          "active": true,
+          "groups": [
+            "G2"
+          ],
+          "is_trend": true,
+          "trigger_mode": "REALTIME_TICK",
+          "params": {
+            "lookback": 2,
+            "atr_buffer": 0.0
+          }
+        },
+        "ema_cross": {
+          "active": false
+        },
+        "volume": {
+          "active": false
+        },
+        "rsi": {
+          "active": false
+        },
+        "swing_point": {
+          "active": false
         }
       },
       "risk_tsl": {

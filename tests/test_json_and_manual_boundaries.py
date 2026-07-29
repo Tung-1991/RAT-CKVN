@@ -46,6 +46,39 @@ class JsonAndManualBoundaryTests(unittest.TestCase):
         self.assertEqual(raw, loaded)
         self.assertTrue(loaded["ETHUSD"]["entry_exit"]["enabled"])
 
+    def test_symbol_indicator_override_merges_and_entry_exit_stays_preview_only(self):
+        base = {
+            "entry_exit": {"enabled": True, "preview_only": False},
+            "indicators": {
+                "ema": {"active": True, "params": {"period": 50}},
+                "rsi": {"active": True, "params": {"period": 14}},
+            },
+        }
+        overrides = {
+            "VN30F1M": {
+                "sandbox": {
+                    "indicators": {
+                        "ema": {
+                            "groups": ["G0", "G1"],
+                            "params": {"period": 20},
+                        }
+                    }
+                }
+            }
+        }
+        storage_manager._cache_merged.clear()
+        with patch.object(storage_manager, "_load_brain_cached", return_value=base), patch.object(
+            storage_manager,
+            "_load_overrides_cached",
+            return_value=overrides,
+        ):
+            loaded = storage_manager.get_brain_settings_for_symbol("VN30F1M")
+        storage_manager._cache_merged.clear()
+
+        self.assertEqual(loaded["indicators"]["ema"]["params"]["period"], 20)
+        self.assertTrue(loaded["indicators"]["rsi"]["active"])
+        self.assertTrue(loaded["entry_exit"]["preview_only"])
+
     def test_manual_checklist_counts_manual_positions_only(self):
         manual_pos = SimpleNamespace(magic=22, comment="[USER]_SCALPING")
         bot_pos = SimpleNamespace(magic=11, comment="[BOT]_AUTO_ENTRY")

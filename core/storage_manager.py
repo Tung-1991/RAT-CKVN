@@ -1176,6 +1176,12 @@ def _normalize_brain_settings_shape(data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         data["opportunity_settings"] = copy.deepcopy(getattr(config, "BOT_OPPORTUNITY_DEFAULT", {}))
 
+    # Entry/Exit là lớp Preview/quan sát; cấu hình legacy không được biến nó
+    # thành cổng chặn lệnh BOT.
+    entry_exit = data.get("entry_exit")
+    if isinstance(entry_exit, dict):
+        entry_exit["preview_only"] = True
+
     indicators = data.get("indicators", {})
     if not isinstance(indicators, dict):
         data["indicators"] = {}
@@ -1390,7 +1396,14 @@ def get_brain_settings_for_symbol(symbol: str = None) -> Dict[str, Any]:
                 
             if "indicators" in sb:
                 if "indicators" not in base_brain: base_brain["indicators"] = {}
-                base_brain["indicators"] = sb["indicators"]
+                for ind_name, ind_cfg in (sb["indicators"] or {}).items():
+                    if (
+                        isinstance(ind_cfg, dict)
+                        and isinstance(base_brain["indicators"].get(ind_name), dict)
+                    ):
+                        base_brain["indicators"][ind_name].update(copy.deepcopy(ind_cfg))
+                    else:
+                        base_brain["indicators"][ind_name] = copy.deepcopy(ind_cfg)
 
             if "check_indicators" in sb:
                 base_brain["check_indicators"] = copy.deepcopy(sb["check_indicators"])

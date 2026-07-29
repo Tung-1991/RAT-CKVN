@@ -24,7 +24,7 @@
   },
   "sha256": {
     "brain_settings.json": "e8e77138c589f7620f51548a17a0a1ec5e5307ffe426efee0dc2cc45b578ca94",
-    "symbol_overrides.json": "bdfd3ee861f95cf9a72e3158d7dbc0f77646795c0d569b8d9da76b12bc5e2635",
+    "symbol_overrides.json": "f84d79b6f062b25daffc92cf61f73e7fe15ee8c307317b91fa1c115d36650572",
     "tsl_settings.json": "308e85ba4ca9069fe7c1be80ad192bebf6a55810857270c104ab6be0a9d220b6",
     "presets_config.json": "dcf17c27d6ce5e6d9169e21238ec780c0ede893f7bb1f8c7fe5fbb97d6a2e3b7",
     "advisor_prompt.md": "28dd8278ca35a2a56711b127544a4a7a45c5b32cc2f1a65d0243730746fab573",

@@ -468,6 +468,25 @@ class BotStrategyUI(ctk.CTkToplevel):
     def _group_label(self, grp):
         return f"{grp}({self._format_tf_label(self._get_group_timeframe(grp))})"
 
+    def _effective_preview_brain(self, symbol):
+        """Cấu hình thực tế mà engine dùng cho mã đang Preview."""
+        if getattr(self, "override_symbol", None):
+            return self.brain_data
+        symbol = str(symbol or "").strip().upper()
+        if not symbol:
+            return self.brain_data
+        try:
+            from core.storage_manager import get_brain_settings_for_symbol
+
+            return get_brain_settings_for_symbol(symbol)
+        except Exception:
+            return self.brain_data
+
+    def _group_label_for_brain(self, grp, brain):
+        brain = brain if isinstance(brain, dict) else {}
+        timeframe = brain.get(f"{grp}_TIMEFRAME", self._get_group_timeframe(grp))
+        return f"{grp}({self._format_tf_label(timeframe)})"
+
     def _format_duration(self, seconds):
         seconds = max(0, int(seconds or 0))
         minutes = seconds // 60
@@ -548,11 +567,14 @@ class BotStrategyUI(ctk.CTkToplevel):
             direction = "BUY" if final_sig == 1 else "SELL" if final_sig == -1 else None
             price = context.get("current_price") or context.get("price") or context.get("last_price")
             if not direction or not price:
-                state = "ON" if cfg.get("enabled") and cfg.get("active_tactics") else "OFF"
+                state = "PREVIEW" if cfg.get("enabled") and cfg.get("active_tactics") else "OFF"
                 tactics = ", ".join(cfg.get("active_tactics", [])) or "none"
                 return f"E/E: {state} | Tactics: {tactics}\nWAITING: cần signal BUY/SELL và giá live để preview vùng Entry/Exit."
             decision = evaluate_entry_exit(symbol or "---", direction, float(price), context, cfg)
-            return format_decision(decision)
+            text = format_decision(decision)
+            if cfg.get("preview_only", True) and text.startswith("E/E:"):
+                text = text.replace("E/E:", "E/E PREVIEW:", 1)
+            return text
         except Exception as exc:
             return f"E/E: ERROR | {exc}"
 
@@ -719,6 +741,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                 self.preview_status_cache.clear()
 
             group_details = context.get("group_details", {})
+            preview_brain = self._effective_preview_brain(active_symbol)
 
 
             # Cập nhật 4 cột Grid
@@ -731,7 +754,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                 data = group_details.get(grp, {"B": 0, "S": 0, "N": 0, "inds": [], "status": 0})
                 
                 # [NEW] Lấy luật để hiển thị làm Hint
-                rules_cfg = self.brain_data.get("voting_rules", {}).get(grp, {})
+                rules_cfg = preview_brain.get("voting_rules", {}).get(grp, {})
                 m_rule = rules_cfg.get("master_rule", "FIX")
                 max_o = rules_cfg.get("max_opposite", 0)
                 max_n = rules_cfg.get("max_none", 0)
@@ -742,12 +765,13 @@ class BotStrategyUI(ctk.CTkToplevel):
                     current_duration, prev_duration = "0m", "Trước: --"
                 else:
                     current_duration, prev_duration = self._update_preview_status_timer(active_symbol, grp, status_val)
-                title_text = f"{self._group_label(grp)}: {texts.get(status_val, 'WAIT')} - {current_duration}\n{rule_hint}"
+                group_label = self._group_label_for_brain(grp, preview_brain)
+                title_text = f"{group_label}: {texts.get(status_val, 'WAIT')} - {current_duration}\n{rule_hint}"
                 card["title"].configure(text=title_text, fg_color=colors.get(status_val, "#333"))
                 card["summary"].configure(text=f"B: {data.get('B', 0)}  |  S: {data.get('S', 0)}  |  N: {data.get('N', 0)}")
                 trend_state = str(context.get(f"trend_{grp}", "NONE") or "NONE").upper()
                 trend_names = []
-                for ind_name, cfg in (self.brain_data.get("indicators", {}) or {}).items():
+                for ind_name, cfg in (preview_brain.get("indicators", {}) or {}).items():
                     groups = cfg.get("groups", [cfg.get("group", "G2")])
                     if cfg.get("is_trend", False) and grp in groups:
                         trend_names.append(ind_name.upper())
@@ -799,7 +823,13 @@ class BotStrategyUI(ctk.CTkToplevel):
             dir_text = "UP" if m_dir == 1 else "DOWN" if m_dir == -1 else "NONE"
             
             # [FIX] Lấy Evaluation Mode trực tiếp từ biến UI để cập nhật Realtime
-            eval_mode = self.master_eval_var.get()
+            eval_mode = str(
+                preview_brain.get(
+                    "MASTER_EVAL_MODE",
+                    self.master_eval_var.get(),
+                )
+                or self.master_eval_var.get()
+            )
             
             mode_color = "#00E676" if m_mode in ["TREND", "BREAKOUT"] else "#FFB300"
             self.market_mode_lbl.configure(
@@ -1482,7 +1512,8 @@ class BotStrategyUI(ctk.CTkToplevel):
                 "SWING_STRUCTURE",
             )
             cfg["enabled"] = bool(active)
-            cfg["preview_only"] = not bool(active)
+            # Tactic tại màn này chỉ phục vụ Preview; không chặn lệnh BOT.
+            cfg["preview_only"] = True
         return cfg
 
     def _build_risk_tab(self):
