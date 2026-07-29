@@ -101,7 +101,7 @@ def test_strategy_preview_loads_effective_settings_for_selected_symbol(monkeypat
     )
 
 
-def test_strategy_preview_keeps_cached_context_from_old_strategy():
+def test_strategy_preview_rejects_cached_context_from_old_strategy():
     brain = {
         "G0_TIMEFRAME": "1h",
         "voting_rules": {"G0": {"master_rule": "PASS"}},
@@ -125,7 +125,7 @@ def test_strategy_preview_keeps_cached_context_from_old_strategy():
             context,
             brain,
         )
-        is True
+        is False
     )
 
     context["strategy_fingerprint"] = brain_strategy_fingerprint(brain)
@@ -139,7 +139,7 @@ def test_strategy_preview_keeps_cached_context_from_old_strategy():
     )
 
 
-def test_strategy_preview_accepts_legacy_context_without_fingerprint():
+def test_strategy_preview_rejects_legacy_context_without_fingerprint():
     brain = {
         "G0_TIMEFRAME": "1h",
         "voting_rules": {"G0": {"master_rule": "PASS"}},
@@ -169,7 +169,7 @@ def test_strategy_preview_accepts_legacy_context_without_fingerprint():
             context,
             brain,
         )
-        is True
+        is False
     )
 
 
@@ -191,10 +191,33 @@ def test_preview_lists_configured_simple_breakout_when_legacy_cache_has_no_detai
     rows = ui_bot_strategy.BotStrategyUI._configured_group_indicator_placeholders(
         brain,
         "G2",
+        trend_state="UP",
         stale=True,
     )
 
-    assert rows == ["○ [CHƯA TÍNH] SIMPLE BREAKOUT [CACHE CŨ]"]
+    assert rows == ["○ [WAIT] SIMPLE BREAKOUT [NONE|ANY]"]
+
+
+def test_preview_data_age_uses_context_timestamp_instead_of_persisted_wait_timer():
+    text = ui_bot_strategy.BotStrategyUI._preview_data_age_text(
+        {"timestamp": 1_700_000_000},
+        now=1_700_000_125,
+    )
+
+    assert text.startswith("UPDATED:")
+    assert text.endswith("2m ago")
+    assert "6d" not in text
+
+
+def test_preview_data_age_marks_strategy_cache_as_stale():
+    text = ui_bot_strategy.BotStrategyUI._preview_data_age_text(
+        {"timestamp": 1_700_000_000},
+        stale=True,
+        now=1_700_000_030,
+    )
+
+    assert text.startswith("STALE DATA:")
+    assert text.endswith("just now")
 
 
 def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypatch):
@@ -230,6 +253,7 @@ def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypat
         },
     }
     context = {
+        "strategy_fingerprint": brain_strategy_fingerprint(brain),
         "group_details": {
             group: {"B": 0, "S": 0, "N": 0, "status": 0, "inds": []}
             for group in ("G0", "G1", "G2", "G3")
@@ -287,11 +311,11 @@ def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypat
     ui_bot_strategy.BotStrategyUI.update_preview(ui)
 
     assert cards["G2"]["scroll_f"].labels == [
-        "○ [CHƯA TÍNH] SIMPLE BREAKOUT [CACHE CŨ]"
+        "○ [WAIT] SIMPLE BREAKOUT [NONE|ANY]"
     ]
 
 
-def test_strategy_preview_renders_stale_cached_votes_instead_of_blanking_them():
+def test_strategy_preview_blanks_votes_from_stale_strategy():
     brain = {
         "MASTER_EVAL_MODE": "VETO",
         "G0_TIMEFRAME": "1h",
@@ -334,7 +358,7 @@ def test_strategy_preview_renders_stale_cached_votes_instead_of_blanking_them():
             "prev": _Widget(),
             "scroll_f": SimpleNamespace(),
             "last_data": (
-                '["[SELL] EMA [BASE|ANY]"]'
+                '["\\u25cb [WAIT] EMA [NONE|ANY]"]'
                 if group == "G0"
                 else "[]"
             ),
@@ -372,8 +396,9 @@ def test_strategy_preview_renders_stale_cached_votes_instead_of_blanking_them():
 
     ui_bot_strategy.BotStrategyUI.update_preview(ui)
 
-    assert cards["G0"]["summary"].options["text"] == "B: 0  |  S: 1  |  N: 0"
-    assert cards["G0"]["trend"].options["text"] == "Trend: DOWN | EMA"
+    assert cards["G0"]["summary"].options["text"] == "B: 0  |  S: 0  |  N: 0"
+    assert cards["G0"]["trend"].options["text"] == "TREND: NONE | EMA"
+    assert ui.master_action_lbl.options["text"] == "MASTER ACTION: WAIT"
     assert "CACHE CŨ" in ui.master_reason_lbl.options["text"]
     assert scheduled == ["VN30F1M"]
 

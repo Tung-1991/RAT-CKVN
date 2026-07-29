@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 import config
 from core.money import (
     money_input_from_display,
@@ -488,7 +489,8 @@ class BotStrategyUI(ctk.CTkToplevel):
         timeframe = brain.get(f"{grp}_TIMEFRAME", self._get_group_timeframe(grp))
         return f"{grp}({self._format_tf_label(timeframe)})"
 
-    def _format_duration(self, seconds):
+    @staticmethod
+    def _format_duration(seconds):
         seconds = max(0, int(seconds or 0))
         minutes = seconds // 60
         hours = minutes // 60
@@ -501,6 +503,29 @@ class BotStrategyUI(ctk.CTkToplevel):
         if minutes:
             return f"{minutes}m"
         return "0m"
+
+    @staticmethod
+    def _preview_data_age_text(context, stale=False, now=None):
+        """Describe when the displayed indicator context was actually calculated."""
+        context = context if isinstance(context, dict) else {}
+        timestamp = context.get("timestamp", context.get("tick_timestamp"))
+        try:
+            timestamp = float(timestamp or 0.0)
+        except (TypeError, ValueError):
+            timestamp = 0.0
+        if timestamp <= 0:
+            return "DATA: N/A"
+
+        now = time.time() if now is None else float(now)
+        age_seconds = max(0.0, now - timestamp)
+        stamp = datetime.fromtimestamp(timestamp).strftime("%d/%m %H:%M:%S")
+        age_text = (
+            "just now"
+            if age_seconds < 60
+            else f"{BotStrategyUI._format_duration(age_seconds)} ago"
+        )
+        prefix = "STALE DATA" if stale else "UPDATED"
+        return f"{prefix}: {stamp} · {age_text}"
 
     def _status_text(self, status):
         return {1: "BUY", -1: "SELL", 0: "WAIT"}.get(status, "WAIT")
@@ -570,7 +595,10 @@ class BotStrategyUI(ctk.CTkToplevel):
             if not direction or not price:
                 state = "PREVIEW" if cfg.get("enabled") and cfg.get("active_tactics") else "OFF"
                 tactics = ", ".join(cfg.get("active_tactics", [])) or "none"
-                return f"E/E: {state} | Tactics: {tactics}\nWAITING: cần signal BUY/SELL và giá live để preview vùng Entry/Exit."
+                return (
+                    f"E/E: {state} | TACTICS: {tactics}\n"
+                    "WAITING: BUY/SELL signal and live price are required."
+                )
             decision = evaluate_entry_exit(symbol or "---", direction, float(price), context, cfg)
             text = format_decision(decision)
             if cfg.get("preview_only", True) and text.startswith("E/E:"):
@@ -585,8 +613,8 @@ class BotStrategyUI(ctk.CTkToplevel):
 
         self._add_hint_box(
             f,
-            "- Preview chỉ đọc context live, không tự quyết định lệnh.\n"
-            "- B/S/N là phiếu BUY/SELL/NONE sau khi lọc theo Mode.\n"
+            "- Preview only reads live context; it never places orders.\n"
+            "- B/S/N = BUY/SELL/NONE votes after Mode filtering.\n"
             "- Master Action = final result after group rules + Master Mode.\n"
             "- FIX = required, PASS = allows WAIT but blocks opposite, IGNORE = skipped.",
             padx=5,
@@ -613,13 +641,14 @@ class BotStrategyUI(ctk.CTkToplevel):
             ctk.CTkLabel(
                 picker_f,
                 text="Preview Symbol:",
-                font=("Roboto", 12, "bold"),
+                font=("Roboto", 14, "bold"),
             ).pack(side="left", padx=(5, 8))
             ctk.CTkComboBox(
                 picker_f,
                 values=symbols,
                 variable=self.preview_symbol_var,
                 width=140,
+                font=("Roboto", 14),
             ).pack(side="left")
 
         # Header: Master Action
@@ -635,10 +664,10 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.master_action_lbl = ctk.CTkLabel(header_f, text="MASTER ACTION: WAITING", font=("Roboto", 18, "bold"), text_color="#FFF")
         self.master_action_lbl.pack(pady=(10, 5))
         
-        self.market_mode_lbl = ctk.CTkLabel(header_f, text="MODE: --- | XU HƯỚNG CHÍNH (BASE): ---", font=("Roboto", 14, "bold"), text_color="#29B6F6")
+        self.market_mode_lbl = ctk.CTkLabel(header_f, text="MARKET MODE: --- | BASE TREND: --- | RULE: ---", font=("Roboto", 15, "bold"), text_color="#29B6F6")
         self.market_mode_lbl.pack(pady=5)
         
-        self.master_reason_lbl = ctk.CTkLabel(header_f, text="Trạng thái: Đang chờ tín hiệu...", font=("Roboto", 12), text_color="#AAA")
+        self.master_reason_lbl = ctk.CTkLabel(header_f, text="REASON: Waiting for signal...", font=("Roboto", 14), text_color="#AAA")
         self.master_reason_lbl.pack(pady=(0, 10))
 
         entry_exit_f = ctk.CTkFrame(
@@ -652,13 +681,13 @@ class BotStrategyUI(ctk.CTkToplevel):
         ctk.CTkLabel(
             entry_exit_f,
             text="ENTRY/EXIT PREVIEW",
-            font=("Roboto", 13, "bold"),
+            font=("Roboto", 16, "bold"),
             text_color="#29B6F6",
         ).pack(anchor="w", padx=10, pady=(8, 2))
         self.entry_exit_preview_lbl = ctk.CTkLabel(
             entry_exit_f,
             text=self._entry_exit_preview_text(),
-            font=("Consolas", 12),
+            font=("Consolas", 14),
             text_color="#B0BEC5",
             justify="left",
             anchor="w",
@@ -683,17 +712,17 @@ class BotStrategyUI(ctk.CTkToplevel):
             col.pack(side="left", fill="both", expand=True, padx=5)
 
             # Title
-            lbl_title = ctk.CTkLabel(col, text=f"{grp} STATUS", font=("Roboto", 14, "bold"), fg_color="#333", corner_radius=4)
+            lbl_title = ctk.CTkLabel(col, text=f"{grp} STATUS", font=("Roboto", 15, "bold"), fg_color="#333", corner_radius=4)
             lbl_title.pack(fill="x", padx=5, pady=5)
 
             # B/S/N summary
-            lbl_summary = ctk.CTkLabel(col, text="B: 0 | S: 0 | N: 0", font=("Roboto", 12, "bold"), text_color="#FFF")
+            lbl_summary = ctk.CTkLabel(col, text="B: 0 | S: 0 | N: 0", font=("Roboto", 14, "bold"), text_color="#FFF")
             lbl_summary.pack(pady=(4, 1))
 
-            lbl_trend = ctk.CTkLabel(col, text="Trend: NONE | --", font=("Consolas", 11, "bold"), text_color="#FFD600")
+            lbl_trend = ctk.CTkLabel(col, text="TREND: NONE | --", font=("Consolas", 14, "bold"), text_color="#FFD600")
             lbl_trend.pack(pady=(0, 3))
 
-            lbl_prev = ctk.CTkLabel(col, text="Trước: --", font=("Roboto", 11), text_color="#BDBDBD")
+            lbl_prev = ctk.CTkLabel(col, text="DATA: N/A", font=("Roboto", 13), text_color="#BDBDBD")
             lbl_prev.pack(pady=(0, 5))
 
             # Details List (Scrollable)
@@ -732,7 +761,6 @@ class BotStrategyUI(ctk.CTkToplevel):
                 context = self._context_for_symbol(all_ctx, active_symbol) if active_symbol else {}
 
             preview_brain = self._effective_preview_brain(active_symbol)
-            context_ready = self._context_ready_for_preview(context, preview_brain)
             context_strategy_stale = False
             if active_symbol:
                 try:
@@ -742,19 +770,22 @@ class BotStrategyUI(ctk.CTkToplevel):
                         (context or {}).get("strategy_fingerprint") or ""
                     )
                     expected_fingerprint = brain_strategy_fingerprint(preview_brain)
-                    if (
+                    context_strategy_stale = bool(context) and (
                         not actual_fingerprint
                         or actual_fingerprint != expected_fingerprint
-                    ):
-                        context_strategy_stale = bool(context_ready)
+                    )
+                    if context_strategy_stale:
                         self._schedule_preview_context_fetch(active_symbol)
                 except Exception:
-                    context_strategy_stale = bool(context_ready)
+                    context_strategy_stale = bool(context)
                     self._schedule_preview_context_fetch(active_symbol)
 
+            context_ready = self._context_ready_for_preview(context, preview_brain)
             if active_symbol and not context_ready:
-                # Chưa có context indicator hợp lệ. Worker sẽ thử tính đúng
-                # symbol; cache hợp lệ nhưng cũ vẫn được giữ và gắn nhãn riêng.
+                # Không ghép phiếu indicator cũ với setting mới. Trong lúc chờ lượt
+                # quét mới, UI chỉ hiển thị cấu hình hiện tại ở trạng thái WAIT.
+                if not context_strategy_stale:
+                    self._schedule_preview_context_fetch(active_symbol)
                 context = {}
 
             if active_symbol != self.preview_last_symbol:
@@ -784,12 +815,8 @@ class BotStrategyUI(ctk.CTkToplevel):
                 rule_hint = f"[{m_rule} | O:{max_o}, N:{max_n}]"
                 
                 status_val = data.get("status", 0)
-                if no_context:
-                    current_duration, prev_duration = "0m", "Trước: --"
-                else:
-                    current_duration, prev_duration = self._update_preview_status_timer(active_symbol, grp, status_val)
                 group_label = self._group_label_for_brain(grp, preview_brain)
-                title_text = f"{group_label}: {texts.get(status_val, 'WAIT')} - {current_duration}\n{rule_hint}"
+                title_text = f"{group_label}: {texts.get(status_val, 'WAIT')}\n{rule_hint}"
                 card["title"].configure(text=title_text, fg_color=colors.get(status_val, "#333"))
                 card["summary"].configure(text=f"B: {data.get('B', 0)}  |  S: {data.get('S', 0)}  |  N: {data.get('N', 0)}")
                 trend_state = str(context.get(f"trend_{grp}", "NONE") or "NONE").upper()
@@ -800,10 +827,15 @@ class BotStrategyUI(ctk.CTkToplevel):
                         trend_names.append(ind_name.upper())
                 trend_color = "#00E676" if trend_state == "UP" else "#FF5252" if trend_state == "DOWN" else "#FFD600"
                 card["trend"].configure(
-                    text=f"Trend: {trend_state} | {','.join(trend_names) if trend_names else '--'}",
+                    text=f"TREND: {trend_state} | {','.join(trend_names) if trend_names else '--'}",
                     text_color=trend_color,
                 )
-                card["prev"].configure(text=prev_duration)
+                card["prev"].configure(
+                    text=BotStrategyUI._preview_data_age_text(
+                        context,
+                        stale=context_strategy_stale,
+                    )
+                )
                 
                 inds_list = data.get("inds", [])
                 if not isinstance(inds_list, list):
@@ -812,6 +844,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                     inds_list = BotStrategyUI._configured_group_indicator_placeholders(
                         preview_brain,
                         grp,
+                        trend_state=trend_state,
                         stale=context_strategy_stale,
                     )
                 
@@ -823,12 +856,14 @@ class BotStrategyUI(ctk.CTkToplevel):
                         widget.destroy()
                         
                     if not inds_list:
-                        ctk.CTkLabel(card["scroll_f"], text="-- Chờ dữ liệu --", font=("Roboto", 11), text_color="gray").pack(fill="x", pady=10)
+                        ctk.CTkLabel(card["scroll_f"], text="-- NO DATA --", font=("Roboto", 14), text_color="gray").pack(fill="x", pady=10)
                     else:
                         for line in inds_list:
                             t_color = "#999" # Mặc định xám
-                            if "[BUY]" in line: t_color = "#00C853" # Xanh lá vibrance
-                            elif "[SELL]" in line: t_color = "#FF3D00" # Đỏ rực
+                            if "[BUY]" in line:
+                                t_color = "#00C853" # Xanh lá vibrance
+                            elif "[SELL]" in line:
+                                t_color = "#FF3D00" # Đỏ rực
                             
                             ctk.CTkLabel(
                                 card["scroll_f"], 
@@ -864,7 +899,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             
             mode_color = "#00E676" if m_mode in ["TREND", "BREAKOUT"] else "#FFB300"
             self.market_mode_lbl.configure(
-                text=f"MARKET MODE: {m_mode} (by {m_src}) | XU HƯỚNG CHÍNH (BASE): {dir_text} | LUẬT: {eval_mode}",
+                text=f"MARKET MODE: {m_mode} (by {m_src}) | BASE TREND: {dir_text} | RULE: {eval_mode}",
                 text_color=mode_color
             )
 
@@ -873,7 +908,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             if context_strategy_stale:
                 block_reason = "CACHE CŨ — chờ lượt quét theo setting mới"
             reason_color = "#00C853" if "OK" in block_reason else "#FFAB00"
-            self.master_reason_lbl.configure(text=f"Lý do: {block_reason}", text_color=reason_color)
+            self.master_reason_lbl.configure(text=f"REASON: {block_reason}", text_color=reason_color)
             if hasattr(self, "entry_exit_preview_lbl"):
                 self.entry_exit_preview_lbl.configure(
                     text=self._entry_exit_preview_text(active_symbol, context)
@@ -993,14 +1028,27 @@ class BotStrategyUI(ctk.CTkToplevel):
         group_details = context.get("group_details")
         if not isinstance(group_details, dict) or not group_details:
             return False
-        # Fingerprint chỉ cho biết cache được tính từ setting nào. Cache cũ vẫn là dữ
-        # liệu indicator hợp lệ và phải được hiển thị ngoài phiên; update_preview sẽ
-        # gắn nhãn CACHE CŨ và âm thầm yêu cầu tính lại ở lượt quét kế tiếp.
+        if isinstance(brain, dict) and brain:
+            try:
+                from core.storage_manager import brain_strategy_fingerprint
+
+                actual = str(context.get("strategy_fingerprint") or "")
+                expected = brain_strategy_fingerprint(brain)
+                if not actual or actual != expected:
+                    return False
+            except Exception:
+                return False
         return any(context.get(f"trend_G{i}") for i in range(4))
 
     @staticmethod
-    def _configured_group_indicator_placeholders(brain, group, stale=False):
-        """Show configured modules when an old cache has no detailed votes."""
+    def _configured_group_indicator_placeholders(
+        brain,
+        group,
+        trend_state="NONE",
+        stale=False,
+    ):
+        """List current settings without inventing votes before recompute."""
+        state_label = "WAIT"
         placeholders = []
         for name, cfg in ((brain or {}).get("indicators", {}) or {}).items():
             if not isinstance(cfg, dict) or not cfg.get("active", False):
@@ -1009,8 +1057,16 @@ class BotStrategyUI(ctk.CTkToplevel):
             if group not in groups:
                 continue
             label = str(name or "").replace("_", " ").upper()
-            suffix = "CACHE CŨ" if stale else "CHƯA CÓ DỮ LIỆU"
-            placeholders.append(f"○ [CHƯA TÍNH] {label} [{suffix}]")
+            macro_role = str(cfg.get("macro_role", "NONE") or "NONE").upper()
+            active_modes = cfg.get("active_modes", ["ANY"])
+            if not isinstance(active_modes, (list, tuple)):
+                active_modes = [active_modes]
+            mode_text = ",".join(str(mode or "ANY").upper() for mode in active_modes)
+            bullet = "○"
+            spacing = " "
+            placeholders.append(
+                f"{bullet} [{state_label}]{spacing}{label} [{macro_role}|{mode_text}]"
+            )
         return placeholders
 
     def _schedule_preview_context_fetch(self, symbol):
