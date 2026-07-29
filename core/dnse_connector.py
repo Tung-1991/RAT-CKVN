@@ -2048,8 +2048,8 @@ class DNSEConnector:
         strict_fee_per_lot: float = 0.0,
         entry_price: Optional[float] = None,
     ) -> Tuple[Optional[float], float]:
-        tick = self.get_tick(symbol)
         if entry_price is None:
+            tick = self.get_tick(symbol)
             if tick:
                 entry_price = tick.ask if self._normalize_side(order_type) == "NB" else tick.bid
             else:
@@ -2057,12 +2057,14 @@ class DNSEConnector:
         distance = abs(float(entry_price or 0.0) - float(sl_price or 0.0))
         if distance <= 0:
             return None, sl_price
-        point_value = float(self.get_symbol_info(symbol).trade_contract_size or 1.0)
+        # Chỉ cần thông số hợp đồng; giá vào đã có thì không được phát sinh thêm
+        # lượt lấy tick/quote từ Preview hoặc các màn hình chỉ đọc.
+        info = self.get_symbol_info(symbol, poll_tick=False)
+        point_value = float(info.trade_contract_size or 1.0)
         risk_per_contract = (distance * point_value) + float(strict_fee_per_lot or 0.0)
         if risk_per_contract <= 0:
             return None, sl_price
         raw_qty = float(risk_value) / risk_per_contract
-        info = self.get_symbol_info(symbol)
         step = max(float(info.volume_step or 1.0), 1.0)
         qty = round(raw_qty / step) * step
         qty = max(float(info.volume_min), min(float(qty), float(info.volume_max)))

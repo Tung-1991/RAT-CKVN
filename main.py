@@ -2023,16 +2023,38 @@ class BotUI(ctk.CTk):
             lot_size = self._normalize_contracts(manual_lot, vol_min, vol_max)
             lot_source = "MANUAL_LOT"
         else:
-            risk_usd = risk_base_amount * (risk_pct / 100.0)
-            calc_loss = None
+            risk_budget = risk_base_amount * (risk_pct / 100.0)
+            lot_size = None
             try:
-                calc_loss = 0.0
+                lot_size, safe_sl = self.connector.calculate_lot_size(
+                    symbol,
+                    risk_budget,
+                    sl_price,
+                    order_type,
+                    strict_fee,
+                    entry_price=price,
+                )
+                if lot_size is not None:
+                    sl_price = float(safe_sl)
+                    sl_distance = abs(price - sl_price)
             except Exception:
-                calc_loss = None
-            loss_per_lot = abs(float(calc_loss)) if calc_loss is not None and calc_loss < 0 else sl_distance * c_size
-            lot_size = risk_usd / (loss_per_lot + strict_fee) if loss_per_lot + strict_fee > 0 else 0.0
-            if vol_step > 0:
-                lot_size = round(lot_size / vol_step) * vol_step
+                lot_size = None
+            # Fallback chỉ dành cho connector giả/test. Cùng quy tắc với BOT:
+            # làm tròn theo bước rồi ép volume_min nếu ngân sách > 0.
+            if lot_size is None:
+                loss_per_lot = sl_distance * c_size
+                raw_lot = (
+                    risk_budget / (loss_per_lot + strict_fee)
+                    if loss_per_lot + strict_fee > 0
+                    else 0.0
+                )
+                lot_size = (
+                    round(raw_lot / vol_step) * vol_step
+                    if raw_lot > 0 and vol_step > 0
+                    else raw_lot
+                )
+                if raw_lot > 0:
+                    lot_size = max(vol_min, min(float(lot_size), vol_max))
             lot_size = self._normalize_contracts(lot_size, vol_min, vol_max)
             lot_source = f"AUTO_RISK:{risk_pct:g}%"
 
@@ -2080,6 +2102,11 @@ class BotUI(ctk.CTk):
         spread_cost = spread_cost_per_lot * lot_size
         risk_usd = sl_distance * lot_size * c_size if lot_size > 0 else 0.0
         reward_usd = abs(tp_price - price) * lot_size * c_size if lot_size > 0 and tp_price > 0 else 0.0
+        actual_risk_pct = (
+            risk_usd / risk_base_amount * 100.0
+            if risk_base_amount > 0
+            else 0.0
+        )
         rr_actual = reward_usd / risk_usd if risk_usd > 0 else 0.0
         valid_sl = (direction == "BUY" and sl_price < price) or (direction == "SELL" and sl_price > price)
         valid_tp = tp_price <= 0 or (direction == "BUY" and tp_price > price) or (direction == "SELL" and tp_price < price)
@@ -2102,7 +2129,8 @@ class BotUI(ctk.CTk):
             "manual_sl_mode": sl_mode,
             "manual_tp_mode": tp_mode,
             "risk_usd": risk_usd,
-            "risk_pct": risk_pct,
+            "risk_pct": actual_risk_pct,
+            "target_risk_pct": risk_pct,
             "risk_base": risk_base_label,
             "risk_base_amount": risk_base_amount,
             "risk_base_warning": risk_base_warning,

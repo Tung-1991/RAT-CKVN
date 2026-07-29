@@ -56,6 +56,12 @@ class DummyConnector:
 def _manager(monkeypatch, tmp_path, positions=None, brain=None):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(trade_manager_module, "is_symbol_trade_window_open", lambda _symbol: (True, ""))
+    # Các test này chỉ kiểm tra long-only/T+2; không để giờ chạy test trước
+    # 09:30 làm rule chờ sau ATO che mất kết quả cần kiểm tra.
+    monkeypatch.setattr(
+        "core.market_calendar.bot_entry_block_reason",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "core.storage_manager.get_magic_numbers",
         lambda: {"bot_magic": 9999, "manual_magic": 8888},

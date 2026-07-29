@@ -1,0 +1,244 @@
+# -*- coding: utf-8 -*-
+"""Manual Preview must size and report risk exactly like the BOT."""
+
+from types import SimpleNamespace
+
+import pytest
+
+import config
+import main
+from core.dnse_connector import DNSEConnector
+from telegram_notify.opportunity_alerts import format_digest
+
+
+class _Connector:
+    calculate_lot_size = DNSEConnector.calculate_lot_size
+
+    def __init__(self):
+        self.tick_reads = 0
+
+    def get_tick(self, _symbol):
+        self.tick_reads += 1
+        raise AssertionError("entry_price đã có thì không được đọc tick lần nữa")
+
+    def get_symbol_info(self, symbol, poll_tick=True):
+        if str(symbol).upper().startswith("VN30F"):
+            return SimpleNamespace(
+                trade_contract_size=100000.0,
+                volume_min=1.0,
+                volume_max=200.0,
+                volume_step=1.0,
+                point=0.1,
+            )
+        return SimpleNamespace(
+            trade_contract_size=1000.0,
+            volume_min=100.0,
+            volume_max=1_000_000.0,
+            volume_step=100.0,
+            point=0.01,
+        )
+
+    def get_account_info(self):
+        return {"equity": 100_000_000.0, "balance": 100_000_000.0}
+
+
+class _TradeManager:
+    def _get_brain_settings(self, _symbol):
+        return {
+            "G0_TIMEFRAME": "1h",
+            "G1_TIMEFRAME": "15m",
+            "risk_tsl": {"base_sl": "G1", "sl_atr_multiplier": 0.2},
+            "symbol_configs": {"VN30F1M": {"max_lot_cap": 1}},
+        }
+
+    @staticmethod
+    def _stock_settled_long_volume(_symbol):
+        return 300.0
+
+
+class _PreviewShim:
+    _resolve_manual_setup_preview = main.BotUI._resolve_manual_setup_preview
+    build_telegram_preview_order = main.BotUI.build_telegram_preview_order
+    _safe_float = main.BotUI._safe_float
+    _manual_rule_mode = main.BotUI._manual_rule_mode
+    _resolve_manual_preset_group = main.BotUI._resolve_manual_preset_group
+    _sandbox_sl_group_for_symbol = main.BotUI._sandbox_sl_group_for_symbol
+    _normalize_contracts = main.BotUI._normalize_contracts
+    _manual_source_label = main.BotUI._manual_source_label
+    _symbol_group_timeframe = main.BotUI._symbol_group_timeframe
+
+    connector = _Connector()
+    trade_mgr = _TradeManager()
+
+    @staticmethod
+    def _is_derivative_symbol(symbol):
+        return str(symbol).upper().startswith("VN30F")
+
+    @staticmethod
+    def calculate_round_trip_trade_fee(*_args, **_kwargs):
+        return 0.0
+
+    @staticmethod
+    def calculate_trade_fee(*_args, **_kwargs):
+        return 0.0
+
+
+def test_manual_preview_clamps_fractional_derivative_lot_and_reports_actual_risk(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "PREVIEW_RISK_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "RR",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 0.5,
+            "TP_RR_RATIO": 1.5,
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    app = _PreviewShim()
+    app.connector.tick_reads = 0
+
+    setup = app._resolve_manual_setup_preview(
+        "VN30F1M",
+        "BUY",
+        "PREVIEW_RISK_TEST",
+        {"current_price": 1823.0, "bid": 1823.0, "ask": 1823.0},
+        manual_values={
+            "entry": 1823.0,
+            "lot": 0.0,
+            "sl": 1794.62,
+            "tp": 1865.57,
+        },
+    )
+
+    assert setup["ready"] is True
+    assert setup["lot"] == 1.0
+    assert setup["risk_usd"] == pytest.approx(2_838_000.0)
+    assert setup["reward_usd"] == pytest.approx(4_257_000.0)
+    assert setup["target_risk_pct"] == 1.0
+    assert setup["risk_pct"] == pytest.approx(2.838)
+    assert app.connector.tick_reads == 0
+
+
+def test_telegram_preview_uses_same_stock_lot_and_full_tp_ladder(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "TELEGRAM_STOCK_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "RR",
+            "MANUAL_SL_GROUP": "G0",
+            "MANUAL_TP_GROUP": "G0",
+            "SL_PERCENT": 5.0,
+            "TP_RR_RATIO": 1.5,
+            # 0,1% NAV chỉ cho raw lot 40 CP; DNSE/BOT phải ép thành 100 CP.
+            "RISK_PERCENT": 0.1,
+        },
+    )
+    monkeypatch.setattr(config, "DEFAULT_PRESET", "TELEGRAM_STOCK_TEST")
+    app = _PreviewShim()
+
+    stock_setup = app._resolve_manual_setup_preview(
+        "FPT",
+        "BUY",
+        "TELEGRAM_STOCK_TEST",
+        {"current_price": 50.0, "bid": 50.0, "ask": 50.0},
+        manual_values={
+            "entry": 50.0,
+            "lot": 0.0,
+            "sl": 47.5,
+            "tp": 53.75,
+        },
+    )
+    buy = app.build_telegram_preview_order(
+        "FPT",
+        "BUY",
+        context={"current_price": 50.0, "bid": 50.0, "ask": 50.0},
+    )
+    sell = app.build_telegram_preview_order(
+        "MBS",
+        "SELL",
+        context={"current_price": 50.0, "bid": 50.0, "ask": 50.0},
+    )
+
+    assert stock_setup["lot"] == 100.0
+    assert stock_setup["risk_usd"] == pytest.approx(250_000.0)
+    assert stock_setup["target_risk_pct"] == 0.1
+    assert stock_setup["risk_pct"] == pytest.approx(0.25)
+    assert buy["ok"] is True
+    assert buy["lot"] == 100.0
+    assert buy["display_quantity"] == 100.0
+    assert buy["quantity_unit"] == "CP"
+    assert buy["tp_targets"] == pytest.approx([53.75, 57.5, 61.25])
+
+    assert sell["ok"] is True
+    assert sell["analysis_only"] is True
+    assert sell["display_quantity"] == 300.0
+    assert sell["quantity_unit"] == "CP"
+    assert sell["tp_targets"] == pytest.approx([46.25, 42.5, 38.75])
+
+    text = format_digest(
+        [
+            {
+                "symbol": "FPT",
+                "side": "BUY",
+                "market_type": "CKCS",
+                "order_setup": buy,
+            },
+            {
+                "symbol": "MBS",
+                "side": "SELL",
+                "market_type": "CKCS",
+                "order_setup": sell,
+            },
+        ]
+    )
+    assert "FPT BUY | Entry 50 (100 CP) | CẮT 47.5 | TP1 53.75 | TP2 57.5 | TP3 61.25" in text
+    assert "MBS SELL | Entry 50 (300 CP) | CẮT 52.5 | TP1 46.25 | TP2 42.5 | TP3 38.75" in text
+
+
+def test_telegram_preview_derivative_uses_one_contract_and_full_tp_ladder(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "TELEGRAM_CKPS_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "RR",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 0.5,
+            "TP_RR_RATIO": 1.5,
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    monkeypatch.setattr(config, "DEFAULT_PRESET", "TELEGRAM_CKPS_TEST")
+    app = _PreviewShim()
+
+    order = app.build_telegram_preview_order(
+        "VN30F1M",
+        "BUY",
+        context={"current_price": 1800.0, "bid": 1800.0, "ask": 1800.0},
+    )
+
+    assert order["ok"] is True
+    assert order["lot"] == 1.0
+    assert order["display_quantity"] == 1.0
+    assert order["quantity_unit"] == "HĐ"
+    assert order["tp_targets"] == pytest.approx([1813.5, 1827.0, 1840.5])
+
+    text = format_digest(
+        [
+            {
+                "symbol": "VN30F1M",
+                "side": "BUY",
+                "market_type": "CKPS",
+                "order_setup": order,
+            }
+        ]
+    )
+    assert (
+        "🟢 VN30F1M LONG | Entry 1800 (1 HĐ) | SL 1791 | "
+        "TP1 1813.5 | TP2 1827 | TP3 1840.5"
+    ) in text
