@@ -23,7 +23,7 @@
     "advisor_api_settings.json": "advisor_api_settings.json"
   },
   "sha256": {
-    "brain_settings.json": "1c322e19d3f51aa5c1055ad706e1bea401301b65bb44eb43c4a36507639298d9",
+    "brain_settings.json": "e8e77138c589f7620f51548a17a0a1ec5e5307ffe426efee0dc2cc45b578ca94",
     "symbol_overrides.json": "bdfd3ee861f95cf9a72e3158d7dbc0f77646795c0d569b8d9da76b12bc5e2635",
     "tsl_settings.json": "308e85ba4ca9069fe7c1be80ad192bebf6a55810857270c104ab6be0a9d220b6",
     "presets_config.json": "e2f8a0dd6889662475f3257ab3b5eb14810a16ea09b79164d95ed82dd44d9ced",

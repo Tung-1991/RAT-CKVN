@@ -1926,10 +1926,15 @@ class BotUI(ctk.CTk):
         tp_targets = [None, None, None]
         def _rr_ladder(rr_value):
             rr_value = float(rr_value or 1.5)
-            return [
-                price + sl_distance * rr_value * idx if direction == "BUY" else price - sl_distance * rr_value * idx
-                for idx in (1, 2, 3)
-            ]
+            # RR trong preset chỉ cấu hình đúng một mục tiêu (ví dụ 1.5R).
+            # Không tự bịa TP2=2*RR và TP3=3*RR vì BOT thực tế cũng chỉ
+            # gửi một TP theo TP_RR_RATIO.
+            target = (
+                price + sl_distance * rr_value
+                if direction == "BUY"
+                else price - sl_distance * rr_value
+            )
+            return [target, None, None]
         if manual_tp > 0:
             tp_price = manual_tp
             tp_source = "MANUAL_TP"
@@ -1948,11 +1953,9 @@ class BotUI(ctk.CTk):
                 tp_mult = float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))) or 0.2)
                 buffer = tp_atr * tp_mult
                 tp_price = tp_high - buffer if direction == "BUY" else tp_low + buffer
-                step = abs(tp_price - price)
-                tp_targets = [
-                    price + step * idx if direction == "BUY" else price - step * idx
-                    for idx in (1, 2, 3)
-                ] if step > 0 else [tp_price, None, None]
+                # Swing chỉ cung cấp một mốc đích thật. Không kéo dài khoảng
+                # cách đó thành TP2/TP3 giả.
+                tp_targets = [tp_price, None, None]
                 tp_source = f"MANUAL_{'SWING_STRUCTURE' if tp_mode == 'SWING_STRUCTURE' else 'SWING_RETEST'}:{tp_group}"
             else:
                 rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
@@ -1981,9 +1984,13 @@ class BotUI(ctk.CTk):
             zone, pull_atr, pull_src = self._pullback_zone_from_context(direction, context, tp_group, params)
             mult = float(params.get("MANUAL_PULLBACK_TP_ATR_MULT", 1.5) or 1.5)
             if pull_atr > 0:
+                # Pullback cấu hình một ATR multiplier nên chỉ có một TP.
                 tp_targets = [
-                    price + pull_atr * mult * idx if direction == "BUY" else price - pull_atr * mult * idx
-                    for idx in (1, 2, 3)
+                    price + pull_atr * mult
+                    if direction == "BUY"
+                    else price - pull_atr * mult,
+                    None,
+                    None,
                 ]
                 tp_price = tp_targets[0]
                 tp_source = f"MANUAL_{pull_src}:{tp_group}"
@@ -2199,12 +2206,42 @@ class BotUI(ctk.CTk):
             for value in (setup.get("tp_targets") or [])
             if self._safe_float(value, 0.0) > 0
         ][:3]
+        current_price = float(setup.get("price", 0.0) or 0.0)
+        entry_zone = None
+        entry_status = "OFF"
+        entry_tactic = "OFF"
+        try:
+            brain = self.trade_mgr._get_brain_settings(symbol)
+            ee_cfg = self._manual_preview_entry_exit_cfg(
+                (brain or {}).get("entry_exit", {}) or {}
+            )
+            ee_decision = self._preview_entry_exit_decision(
+                symbol, side, current_price, context, ee_cfg
+            )
+            zone_decision = self._entry_zone_decision(ee_decision)
+            raw_zone = (zone_decision or {}).get("entry_zone")
+            if raw_zone and len(raw_zone) >= 2:
+                lo, hi = float(raw_zone[0]), float(raw_zone[1])
+                if lo > 0 and hi > 0:
+                    entry_zone = [min(lo, hi), max(lo, hi)]
+            entry_status = str((ee_decision or {}).get("status") or "OFF").upper()
+            entry_tactic = str(
+                (zone_decision or ee_decision or {}).get("entry_tactic") or "OFF"
+            ).upper()
+        except Exception:
+            # E/E chỉ là lớp quan sát; thiếu dữ liệu E/E không được làm mất gợi ý.
+            pass
         return {
             "ok": True,
             "preview_source": True,
             "symbol": symbol,
             "side": side,
-            "price": float(setup.get("price", 0.0) or 0.0),
+            "price": current_price,
+            "current_price": current_price,
+            "entry_price": current_price,
+            "entry_zone": entry_zone,
+            "entry_status": entry_status,
+            "entry_tactic": entry_tactic,
             "lot": float(setup.get("lot", 0.0) or 0.0),
             "display_quantity": display_quantity,
             "quantity_unit": "CP" if is_stock else "HĐ",
@@ -2393,43 +2430,21 @@ class BotUI(ctk.CTk):
             if len(targets) < 3:
                 source = f"{source} ({len(targets)} lv)"
         elif exit_tactic == "PULLBACK_ZONE" or tp_source == "PULLBACK":
-            pull = ee_cfg.get("pullback_zone", {}) or {}
-            group = self._resolve_preview_group_name(ee_cfg.get("sl_source_group", "G2"), context)
-            atr = self._safe_float(context.get(f"atr_{group}", context.get("atr_entry", 0.0)))
-            mult = self._safe_float(pull.get("tp_atr_multiplier", 1.5), 1.5)
-            if price > 0 and atr > 0:
-                targets.extend(
-                    price + atr * mult * idx if direction == "BUY" else price - atr * mult * idx
-                    for idx in (1, 2, 3)
-                )
-            source = f"PULL {mult:g}ATR ({len(targets)} lv)"
+            tp = self._safe_float((ee_decision or {}).get("tp", 0.0))
+            if tp > 0:
+                targets.append(tp)
+            source = "PULL"
         elif exit_tactic in ("SWING_REJECTION", "SWING_STRUCTURE") or tp_source == "SWING":
-            group = self._resolve_preview_group_name(ee_cfg.get("sl_source_group", "G2"), context)
-            sh = self._safe_float(context.get(f"swing_high_{group}", 0.0))
-            sl = self._safe_float(context.get(f"swing_low_{group}", 0.0))
-            atr = self._safe_float(context.get(f"atr_{group}", 0.0))
-            buffer = atr * self._safe_float((ee_cfg.get("swing_rejection", {}) or {}).get("sl_atr_buffer", 0.2), 0.2)
-            if sh > 0 and sl > 0:
-                first = sh - buffer if direction == "BUY" else sl + buffer
-                step = abs(first - price)
-                if step > 0:
-                    targets.extend(
-                        price + step * idx if direction == "BUY" else price - step * idx
-                        for idx in (1, 2, 3)
-                    )
-                else:
-                    targets.append(first)
-            source = f"SWING {group} ({len(targets)} lv)"
+            tp = self._safe_float((ee_decision or {}).get("tp", 0.0))
+            if tp > 0:
+                targets.append(tp)
+            source = "SWING"
         elif exit_tactic in ("FALLBACK_R", "R", "AUTO") or tp_source in ("R", "--"):
             rr = self._safe_float((ee_cfg.get("default_exit", {}) or {}).get("tp_rr_ratio", 1.5), 1.5)
-            sl = self._safe_float(setup.get("sl", 0.0))
-            dist = abs(price - sl) if price > 0 and sl > 0 else 0.0
-            if dist > 0:
-                targets.extend(
-                    price + dist * rr * idx if direction == "BUY" else price - dist * rr * idx
-                    for idx in (1, 2, 3)
-                )
-            source = f"{rr:g}R ({len(targets)} lv)"
+            tp = self._safe_float((ee_decision or {}).get("tp", 0.0))
+            if tp > 0:
+                targets.append(tp)
+            source = f"{rr:g}R"
         else:
             tp = self._safe_float((ee_decision or {}).get("tp", 0.0))
             if tp > 0:

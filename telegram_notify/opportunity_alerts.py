@@ -223,6 +223,10 @@ def _line(item: Dict[str, Any], icon: str = "") -> str:
     side = str(item.get("side") or "").upper()
     market = str(item.get("market_type") or "CKCS").upper()
     price = setup.get("price") or item.get("last_price") or item.get("detected_price") or 0.0
+    current_price = setup.get("current_price") or price
+    entry_price = setup.get("entry_price") or price
+    entry_zone = setup.get("entry_zone")
+    entry_tactic = str(setup.get("entry_tactic") or "OFF").upper()
     sl = setup.get("sl")
     tp = setup.get("tp")
     unit = str(setup.get("quantity_unit") or ("HĐ" if market == "CKPS" else "CP"))
@@ -242,12 +246,30 @@ def _line(item: Dict[str, Any], icon: str = "") -> str:
             targets.append(value)
     if not targets and tp:
         targets = [tp]
+    target_slots = targets[:3] + [None] * max(0, 3 - len(targets))
     target_text = " | ".join(
-        f"TP{index} {_number(value)}" for index, value in enumerate(targets[:3], 1)
+        f"TP{index} {_number(value) if value is not None else '--'}"
+        for index, value in enumerate(target_slots, 1)
     )
+    entry_label = {
+        "SWING_REJECTION": "RETEST",
+        "SWING_RETEST": "RETEST",
+        "SWING_STRUCTURE": "STRUCT",
+        "FIB_RETRACE": "FIB",
+        "PULLBACK_ZONE": "PULL",
+    }.get(entry_tactic, "NOW")
+    entry_text = f"{entry_label} @{_number(entry_price)}"
+    try:
+        if entry_zone and len(entry_zone) >= 2:
+            lo, hi = sorted((float(entry_zone[0]), float(entry_zone[1])))
+            if lo > 0 and hi > 0:
+                entry_text = f"{entry_label} {_number(lo)}-{_number(hi)}"
+    except (TypeError, ValueError):
+        pass
     prefix = f"{icon} " if icon else ""
     return (
-        f"{prefix}{symbol} {direction} | Entry {_number(price)}{quantity} | "
+        f"{prefix}{symbol} {direction} | Giá {_number(current_price)} | "
+        f"Entry {entry_text}{quantity} | "
         f"{level_label} {_number(sl)}"
         + (f" | {target_text}" if target_text else "")
     )

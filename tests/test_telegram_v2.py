@@ -86,13 +86,25 @@ def test_formatter_is_compact_and_uses_preview_levels(monkeypatch):
         now=datetime(2026, 7, 27, 9, 30),
     )
     assert text.index("VN30F1M") < text.index("TDM") < text.index("AAA")
-    assert "🔴 VN30F1M SHORT | Entry 10 (1 HĐ) | SL 12 | TP1 7" in text
-    assert "⭐ TDM BUY | Entry 10 (100 CP) | CẮT 8 | TP1 14" in text
-    assert "🔴 AAA SELL | Entry 10 | CẮT 12 | TP1 7" in text
+    assert "🔴 VN30F1M SHORT | Giá 10 | Entry NOW @10 (1 HĐ) | SL 12 | TP1 7" in text
+    assert "⭐ TDM BUY | Giá 10 | Entry NOW @10 (100 CP) | CẮT 8 | TP1 14" in text
+    assert "🔴 AAA SELL | Giá 10 | Entry NOW @10 | CẮT 12 | TP1 7" in text
     assert "G0 SELL 4/7 FIX" not in text
     assert "PAPER" not in text and "REAL" not in text and "BOT_OFF" not in text
     assert text.startswith("🔴 VN30F1M SHORT")
     assert "RAT6 GỢI Ý BOT" not in text
+
+
+def test_formatter_separates_current_price_from_entry_zone(monkeypatch):
+    monkeypatch.setattr(opportunity_alerts, "_priority_symbols", lambda: set())
+    item = _item("AAA", "BUY", "CKCS", 100)
+    item["order_setup"]["current_price"] = 10.2
+    item["order_setup"]["entry_price"] = 10.0
+    item["order_setup"]["entry_zone"] = [9.8, 10.0]
+
+    text = opportunity_alerts.format_digest([item])
+
+    assert "AAA BUY | Giá 10.2 | Entry NOW 9.8-10 (100 CP)" in text
 
 
 def test_invalid_levels_are_archived_and_not_queued(monkeypatch, tmp_path):

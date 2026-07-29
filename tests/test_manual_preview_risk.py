@@ -66,6 +66,7 @@ class _PreviewShim:
     _normalize_contracts = main.BotUI._normalize_contracts
     _manual_source_label = main.BotUI._manual_source_label
     _symbol_group_timeframe = main.BotUI._symbol_group_timeframe
+    _parse_preview_levels = main.BotUI._parse_preview_levels
 
     connector = _Connector()
     trade_mgr = _TradeManager()
@@ -122,7 +123,7 @@ def test_manual_preview_clamps_fractional_derivative_lot_and_reports_actual_risk
     assert app.connector.tick_reads == 0
 
 
-def test_telegram_preview_uses_same_stock_lot_and_full_tp_ladder(monkeypatch):
+def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_STOCK_TEST",
@@ -171,13 +172,13 @@ def test_telegram_preview_uses_same_stock_lot_and_full_tp_ladder(monkeypatch):
     assert buy["lot"] == 100.0
     assert buy["display_quantity"] == 100.0
     assert buy["quantity_unit"] == "CP"
-    assert buy["tp_targets"] == pytest.approx([53.75, 57.5, 61.25])
+    assert buy["tp_targets"] == pytest.approx([53.75])
 
     assert sell["ok"] is True
     assert sell["analysis_only"] is True
     assert sell["display_quantity"] == 300.0
     assert sell["quantity_unit"] == "CP"
-    assert sell["tp_targets"] == pytest.approx([46.25, 42.5, 38.75])
+    assert sell["tp_targets"] == pytest.approx([46.25])
 
     text = format_digest(
         [
@@ -195,11 +196,12 @@ def test_telegram_preview_uses_same_stock_lot_and_full_tp_ladder(monkeypatch):
             },
         ]
     )
-    assert "FPT BUY | Entry 50 (100 CP) | CẮT 47.5 | TP1 53.75 | TP2 57.5 | TP3 61.25" in text
-    assert "MBS SELL | Entry 50 (300 CP) | CẮT 52.5 | TP1 46.25 | TP2 42.5 | TP3 38.75" in text
+    assert "FPT BUY | Giá 50 | Entry NOW @50 (100 CP) | CẮT 47.5 | TP1 53.75" in text
+    assert "TP2 -- | TP3 --" in text
+    assert "MBS SELL | Giá 50 | Entry NOW @50 (300 CP) | CẮT 52.5 | TP1 46.25" in text
 
 
-def test_telegram_preview_derivative_uses_one_contract_and_full_tp_ladder(monkeypatch):
+def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_target(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_CKPS_TEST",
@@ -226,7 +228,7 @@ def test_telegram_preview_derivative_uses_one_contract_and_full_tp_ladder(monkey
     assert order["lot"] == 1.0
     assert order["display_quantity"] == 1.0
     assert order["quantity_unit"] == "HĐ"
-    assert order["tp_targets"] == pytest.approx([1813.5, 1827.0, 1840.5])
+    assert order["tp_targets"] == pytest.approx([1813.5])
 
     text = format_digest(
         [
@@ -239,6 +241,79 @@ def test_telegram_preview_derivative_uses_one_contract_and_full_tp_ladder(monkey
         ]
     )
     assert (
-        "🟢 VN30F1M LONG | Entry 1800 (1 HĐ) | SL 1791 | "
-        "TP1 1813.5 | TP2 1827 | TP3 1840.5"
+        "🟢 VN30F1M LONG | Giá 1800 | Entry NOW @1800 (1 HĐ) | SL 1791 | "
+        "TP1 1813.5"
     ) in text
+    assert "TP2 -- | TP3 --" in text
+
+
+def test_swing_tp_exposes_only_the_real_swing_target(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "SWING_TARGET_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "SWING_REJECTION",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 5.0,
+            "MANUAL_SWING_TP_ATR_MULT": 0.2,
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    app = _PreviewShim()
+
+    setup = app._resolve_manual_setup_preview(
+        "FPT",
+        "BUY",
+        "SWING_TARGET_TEST",
+        {
+            "current_price": 50.0,
+            "bid": 50.0,
+            "ask": 50.0,
+            "atr_G1": 2.0,
+            "swing_low_G1": 45.0,
+            "swing_high_G1": 55.0,
+        },
+        manual_values={"entry": 0.0, "lot": 100.0, "sl": 0.0, "tp": 0.0},
+    )
+
+    assert setup["ready"] is True
+    assert setup["tp"] == pytest.approx(54.6)
+    assert setup["tp_targets"][0] == pytest.approx(54.6)
+    assert setup["tp_targets"][1:] == [None, None]
+
+
+def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "FIB_TARGET_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "FIB",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 5.0,
+            "MANUAL_FIB_TP_LEVELS": "1.272,1.618,2.0",
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    app = _PreviewShim()
+
+    setup = app._resolve_manual_setup_preview(
+        "FPT",
+        "BUY",
+        "FIB_TARGET_TEST",
+        {
+            "current_price": 50.0,
+            "bid": 50.0,
+            "ask": 50.0,
+            "atr_G1": 2.0,
+            "swing_low_G1": 45.0,
+            "swing_high_G1": 50.0,
+        },
+        manual_values={"entry": 0.0, "lot": 100.0, "sl": 0.0, "tp": 0.0},
+    )
+
+    assert setup["ready"] is True
+    assert setup["tp_targets"] == pytest.approx([51.36, 53.09, 55.0])
