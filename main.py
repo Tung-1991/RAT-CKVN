@@ -2468,6 +2468,14 @@ class BotUI(ctk.CTk):
             "tp_target_sources": target_sources,
             "sl_source": str(setup.get("sl_source") or ""),
             "tp_source": str(setup.get("tp_source") or ""),
+            "risk_amount": float(setup.get("risk_usd", 0.0) or 0.0),
+            "reward_amount": float(setup.get("reward_usd", 0.0) or 0.0),
+            "risk_pct": float(setup.get("risk_pct", 0.0) or 0.0),
+            "tactic": str(
+                ((brain or {}).get("risk_tsl", {}) or {}).get("bot_tsl")
+                or getattr(config, "BOT_DEFAULT_TSL", "OFF")
+                or "OFF"
+            ),
             "preset": preset,
             "market_mode": str(context.get("market_mode") or market_mode or "ANY"),
             "sl_distance_atr": sl_distance_atr,

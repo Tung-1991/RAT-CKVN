@@ -394,6 +394,23 @@ class SignalListener:
         except Exception as e:
             logger.error(f"[Listener] Lỗi Reverse Check: {e}")
 
+        # Dùng đúng giá daemon đã có để theo dõi gợi ý giả lập; không gọi thêm API
+        # và hoàn toàn không tạo lệnh PAPER/REAL.
+        try:
+            from core.signal_opportunities import observe_price
+
+            observed_price = float(
+                context.get(
+                    "current_price",
+                    context.get("last", context.get("bid", context.get("ask", 0.0))),
+                )
+                or 0.0
+            )
+            if observed_price > 0:
+                observe_price(symbol, observed_price)
+        except Exception:
+            pass
+
         if action == "NONE":
             self.last_telegram_signal_proposal_action.pop(str(symbol or "").upper(), None)
             self._save_telegram_signal_phase(symbol, "")

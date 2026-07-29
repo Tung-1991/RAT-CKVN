@@ -31,6 +31,121 @@ DEFAULT_SETTINGS = {
 _LOCK = threading.RLock()
 
 
+def _float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _valid_setup(side: str, setup: Any) -> bool:
+    if not isinstance(setup, dict) or setup.get("ok") is not True:
+        return False
+    side = str(side or "").upper()
+    price = _float(setup.get("entry_price", setup.get("price")))
+    sl = _float(setup.get("sl"))
+    tp = _float(setup.get("tp"))
+    if min(price, sl, tp) <= 0:
+        return False
+    return (sl < price < tp) if side == "BUY" else (tp < price < sl)
+
+
+def _start_tracking(item: Dict[str, Any], now: float) -> bool:
+    """Freeze the first valid Preview plan as one read-only virtual trade."""
+    if isinstance(item.get("simulation"), dict):
+        return False
+    setup = item.get("order_setup")
+    side = str(item.get("side") or "").upper()
+    if not _valid_setup(side, setup):
+        return False
+    targets = []
+    for value in setup.get("tp_targets") or [setup.get("tp")]:
+        target = _float(value)
+        if target > 0:
+            targets.append(target)
+    if not targets:
+        return False
+    entry = _float(setup.get("entry_price", setup.get("price")))
+    quantity = _float(setup.get("display_quantity"))
+    if quantity <= 0:
+        quantity = _float(setup.get("lot"))
+    item["simulation"] = {
+        "status": "OPEN",
+        "started_at": float(now),
+        "entry": entry,
+        "sl": _float(setup.get("sl")),
+        "tp1": targets[0],
+        "tp_targets": targets[:3],
+        "quantity": quantity,
+        "unit": str(setup.get("quantity_unit") or ("HĐ" if item.get("market_type") == "CKPS" else "CP")),
+        "last_price": entry,
+        "best_price": entry,
+        "worst_price": entry,
+    }
+    return True
+
+
+def _observe_item(item: Dict[str, Any], price: float, now: float) -> bool:
+    simulation = item.get("simulation")
+    if not isinstance(simulation, dict) or simulation.get("status") != "OPEN":
+        return False
+    price = _float(price)
+    if price <= 0:
+        return False
+    side = str(item.get("side") or "").upper()
+    entry = _float(simulation.get("entry"))
+    sl = _float(simulation.get("sl"))
+    tp1 = _float(simulation.get("tp1"))
+    if min(entry, sl, tp1) <= 0:
+        return False
+
+    simulation["last_price"] = price
+    simulation["last_seen_at"] = float(now)
+    simulation["best_price"] = (
+        max(_float(simulation.get("best_price"), entry), price)
+        if side == "BUY"
+        else min(_float(simulation.get("best_price"), entry), price)
+    )
+    simulation["worst_price"] = (
+        min(_float(simulation.get("worst_price"), entry), price)
+        if side == "BUY"
+        else max(_float(simulation.get("worst_price"), entry), price)
+    )
+
+    outcome = ""
+    close_price = price
+    if side == "BUY":
+        if price <= sl:
+            outcome, close_price = "LOSS", sl
+        elif price >= tp1:
+            outcome, close_price = "WIN", tp1
+    else:
+        if price >= sl:
+            outcome, close_price = "LOSS", sl
+        elif price <= tp1:
+            outcome, close_price = "WIN", tp1
+    if not outcome:
+        return True
+
+    quantity = _float(simulation.get("quantity"))
+    point_value = (
+        _float(getattr(config, "DNSE_POINT_VALUE", 100000.0), 100000.0)
+        if str(item.get("market_type") or "").upper() == "CKPS"
+        else _float(getattr(config, "DNSE_STOCK_PRICE_VALUE", 1000.0), 1000.0)
+    )
+    delta = close_price - entry if side == "BUY" else entry - close_price
+    simulation.update(
+        {
+            "status": outcome,
+            "result": "TP1" if outcome == "WIN" else "SL",
+            "closed_at": float(now),
+            "close_price": close_price,
+            "pnl": delta * quantity * point_value,
+        }
+    )
+    return True
+
+
 def normalize_settings(value=None) -> Dict[str, Any]:
     result = dict(DEFAULT_SETTINGS)
     if isinstance(value, dict):
@@ -175,6 +290,8 @@ def record_signal(
                 "context": context,
                 "order_setup": deepcopy(order_setup) if isinstance(order_setup, dict) else {},
             }
+            _start_tracking(found, now)
+            _observe_item(found, detected_price, now)
             items.append(found)
         else:
             found["last_seen_at"] = now
@@ -185,7 +302,21 @@ def record_signal(
             found["market_mode"] = str(signal.get("market_mode") or context.get("market_mode") or found.get("market_mode") or "ANY")
             found["context"] = context
             if isinstance(order_setup, dict):
-                found["order_setup"] = deepcopy(order_setup)
+                current_setup = found.get("order_setup")
+                current_version = int(_float((current_setup or {}).get("preview_version")))
+                new_version = int(_float(order_setup.get("preview_version")))
+                # Once a virtual trade starts, its entry/SL/TP must never move with price.
+                # Before that point, allow a missing/legacy plan to be replaced by a valid one.
+                if (
+                    not isinstance(found.get("simulation"), dict)
+                    and (
+                        not _valid_setup(side, current_setup)
+                        or new_version > current_version
+                    )
+                ):
+                    found["order_setup"] = deepcopy(order_setup)
+            _start_tracking(found, now)
+            _observe_item(found, detected_price, now)
         _write(active_path(), items)
         return deepcopy(found)
 
@@ -209,12 +340,37 @@ def update_active(opportunity_id: str, **updates: Any) -> bool:
         changed = False
         for row in rows:
             if str(row.get("id")) == str(opportunity_id):
-                row.update(deepcopy(updates))
+                safe_updates = deepcopy(updates)
+                if isinstance(row.get("simulation"), dict):
+                    safe_updates.pop("order_setup", None)
+                row.update(safe_updates)
+                if "order_setup" in safe_updates:
+                    _start_tracking(row, time.time())
                 changed = True
                 break
         if changed:
             _write(active_path(), rows)
         return changed
+
+
+def observe_price(symbol: str, price: float, now: Optional[float] = None) -> int:
+    """Update virtual suggestions from an already available daemon price."""
+    symbol = str(symbol or "").strip().upper()
+    price = _float(price)
+    if not symbol or price <= 0:
+        return 0
+    now = time.time() if now is None else float(now)
+    changed = 0
+    with _LOCK:
+        rows = _read(active_path())
+        for row in rows:
+            if str(row.get("symbol") or "").upper() != symbol:
+                continue
+            if _observe_item(row, price, now):
+                changed += 1
+        if changed:
+            _write(active_path(), rows)
+    return changed
 
 
 def finalize(opportunity_id: str, status: str, result: str = "", **updates: Any) -> Optional[Dict[str, Any]]:

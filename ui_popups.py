@@ -7123,6 +7123,20 @@ def show_history_popup(app):
         "First", "Last", "Mode", "Market", "Symbol", "Side", "Price", "Qty",
         "SL", "TP", "Risk / Reward", "TSL", "Count", "Blocked", "Result",
     )
+    opp_toolbar = ctk.CTkFrame(opportunity_tab, fg_color="transparent")
+    opp_toolbar.pack(fill="x", padx=6, pady=(4, 0))
+    ctk.CTkLabel(
+        opp_toolbar,
+        text="Gợi ý hợp lệ được theo dõi giả lập bằng giá daemon; không đặt lệnh.",
+        text_color="#90CAF9",
+    ).pack(side="left", padx=4)
+    ctk.CTkButton(
+        opp_toolbar,
+        text="⟳ LÀM MỚI",
+        width=120,
+        height=28,
+        command=lambda: load_data(),
+    ).pack(side="right", padx=4)
     opp_frame = ctk.CTkFrame(opportunity_tab, fg_color="transparent")
     opp_frame.pack(fill="both", expand=True, padx=6, pady=6)
     opportunity_tree = ttk.Treeview(opp_frame, columns=opp_cols, show="tree headings", style="History.Treeview")
@@ -7230,18 +7244,67 @@ def show_history_popup(app):
                 by_day.setdefault(day, []).append(item)
             for day in sorted(by_day, reverse=True):
                 rows = by_day[day]
-                parent = opportunity_tree.insert("", "end", text=f"{day} — {len(rows)} gợi ý", open=(day == sorted(by_day, reverse=True)[0]))
+                outcomes = [
+                    str((item.get("simulation") or {}).get("status") or "").upper()
+                    for item in rows
+                    if isinstance(item.get("simulation"), dict)
+                ]
+                wins = outcomes.count("WIN")
+                losses = outcomes.count("LOSS")
+                opens = outcomes.count("OPEN")
+                decided = wins + losses
+                summary = (
+                    f"{day} — {len(rows)} gợi ý | OPEN {opens} | "
+                    f"WIN {wins} | LOSS {losses}"
+                )
+                if decided:
+                    summary += f" | Winrate {wins / decided * 100.0:.1f}%"
+                parent = opportunity_tree.insert(
+                    "",
+                    "end",
+                    text=summary,
+                    open=(day == sorted(by_day, reverse=True)[0]),
+                )
                 for item in sorted(rows, key=lambda x: float(x.get("first_seen_at", 0) or 0), reverse=True):
                     first = float(item.get("first_seen_at", 0) or 0)
                     last = float(item.get("last_seen_at", first) or first)
                     setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
+                    simulation = item.get("simulation", {}) if isinstance(item.get("simulation"), dict) else {}
                     price = float(setup.get("price", item.get("detected_price", 0)) or 0)
-                    lot = float(setup.get("lot", 0) or 0)
+                    lot = float(setup.get("display_quantity", 0) or setup.get("lot", 0) or 0)
                     sl = float(setup.get("sl", 0) or 0)
                     tp = float(setup.get("tp", 0) or 0)
-                    risk = float(setup.get("risk_amount", 0) or 0)
-                    reward = float(setup.get("reward_amount", 0) or 0)
-                    result = str(item.get("order_status") or item.get("status") or "")
+                    risk = float(setup.get("risk_amount", setup.get("risk_usd", 0)) or 0)
+                    reward = float(setup.get("reward_amount", setup.get("reward_usd", 0)) or 0)
+                    targets = []
+                    for raw in setup.get("tp_targets") or ([tp] if tp else []):
+                        value = to_float(raw)
+                        if value > 0:
+                            targets.append(f"{value:g}")
+                    tp_text = " / ".join(targets[:3]) if targets else "--"
+                    setup_error = str(setup.get("error") or "").strip()
+                    simulation_status = str(simulation.get("status") or "").upper()
+                    if simulation_status in {"WIN", "LOSS"}:
+                        result = (
+                            f"{simulation_status} {simulation.get('result', '')} "
+                            f"@{to_float(simulation.get('close_price')):g} | "
+                            f"PnL {format_vnd_full(to_float(simulation.get('pnl')), signed=True)}"
+                        ).strip()
+                    elif simulation_status == "OPEN":
+                        started_at = to_float(simulation.get("started_at"))
+                        started_text = (
+                            datetime.fromtimestamp(started_at).strftime("%H:%M:%S")
+                            if started_at
+                            else "--"
+                        )
+                        result = (
+                            f"OPEN từ {started_text} | "
+                            f"giá cuối {to_float(simulation.get('last_price')):g}"
+                        )
+                    elif setup.get("ok") is False or not setup:
+                        result = f"KHÔNG THEO DÕI | {setup_error or 'CHƯA CÓ PREVIEW'}"
+                    else:
+                        result = str(item.get("order_status") or item.get("status") or "")
                     if item.get("order_result"):
                         result += f" | {item.get('order_result')}"
                     opportunity_tree.insert(
@@ -7257,8 +7320,8 @@ def show_history_popup(app):
                             item.get("side", ""),
                             f"{price:g}" if price else "--",
                             f"{lot:g}" if lot else "--",
-                            f"{sl:g}" if sl else "OFF",
-                            f"{tp:g}" if tp else "OFF",
+                            f"{sl:g}" if sl else "--",
+                            tp_text,
                             f"-{format_vnd_full(risk)} | +{format_vnd_full(reward)}" if risk or reward else "--",
                             setup.get("tactic", "--"),
                             item.get("signal_count", 1),
