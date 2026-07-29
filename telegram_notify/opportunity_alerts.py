@@ -210,7 +210,7 @@ def _valid_setup(item: Dict[str, Any]) -> bool:
         return False
     if setup.get("preview_source"):
         try:
-            if int(setup.get("preview_version") or 0) < 3:
+            if int(setup.get("preview_version") or 0) < 4:
                 return False
         except (TypeError, ValueError):
             return False
@@ -280,20 +280,35 @@ def _line(
     ) if market == "CKPS" else side
     direction_text = f" {direction}" if show_direction else ""
     targets = []
-    for value in setup.get("tp_targets") or []:
+    target_sources = []
+    raw_sources = list(setup.get("tp_target_sources") or [])
+    for index, value in enumerate(setup.get("tp_targets") or []):
         try:
             value = float(value)
         except (TypeError, ValueError):
             continue
         if value > 0:
             targets.append(value)
+            target_sources.append(
+                str(raw_sources[index] or "").upper()
+                if index < len(raw_sources)
+                else ""
+            )
     if not targets and tp:
         targets = [tp]
+        target_sources = [""]
     target_slots = targets[:3] + [None] * max(0, 3 - len(targets))
-    target_text = " | ".join(
-        f"TP{index} {_number(value) if value is not None else '--'}"
-        for index, value in enumerate(target_slots, 1)
-    )
+    source_slots = target_sources[:3] + [""] * max(0, 3 - len(target_sources))
+    target_parts = []
+    for index, (value, source) in enumerate(
+        zip(target_slots, source_slots),
+        1,
+    ):
+        source_text = f" ({source})" if source in {"F", "R"} and value is not None else ""
+        target_parts.append(
+            f"TP{index} {_number(value) if value is not None else '--'}{source_text}"
+        )
+    target_text = " | ".join(target_parts)
     entry_label = {
         "SWING_REJECTION": "RETEST",
         "SWING_RETEST": "RETEST",

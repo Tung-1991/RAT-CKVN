@@ -124,7 +124,7 @@ def test_manual_preview_clamps_fractional_derivative_lot_and_reports_actual_risk
     assert app.connector.tick_reads == 0
 
 
-def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(monkeypatch):
+def test_telegram_preview_uses_same_stock_lot_and_configured_rr_ladder(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_STOCK_TEST",
@@ -170,17 +170,19 @@ def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(mo
     assert stock_setup["target_risk_pct"] == 0.1
     assert stock_setup["risk_pct"] == pytest.approx(0.25)
     assert buy["ok"] is True
-    assert buy["preview_version"] == 3
+    assert buy["preview_version"] == 4
     assert buy["lot"] == 100.0
     assert buy["display_quantity"] == 100.0
     assert buy["quantity_unit"] == "CP"
-    assert buy["tp_targets"] == pytest.approx([53.75])
+    assert buy["tp_targets"] == pytest.approx([53.75, 54.375, 55.0])
+    assert buy["tp_target_sources"] == ["R", "R", "R"]
 
     assert sell["ok"] is True
     assert sell["analysis_only"] is True
     assert sell["display_quantity"] == 300.0
     assert sell["quantity_unit"] == "CP"
-    assert sell["tp_targets"] == pytest.approx([46.25])
+    assert sell["tp_targets"] == pytest.approx([46.25, 45.625, 45.0])
+    assert sell["tp_target_sources"] == ["R", "R", "R"]
 
     text = format_digest(
         [
@@ -199,13 +201,13 @@ def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(mo
         ]
     )
     assert "🟢 CKCS BUY" in text
-    assert "FPT | Giá 50 | Entry NOW @50 (100 CP) | CẮT 47.5 | TP1 53.75" in text
-    assert "TP2 -- | TP3 --" in text
+    assert "FPT | Giá 50 | Entry NOW @50 (100 CP) | CẮT 47.5 | TP1 53.75 (R)" in text
+    assert "TP2 54.38 (R) | TP3 55 (R)" in text
     assert "🔴 CKCS SELL" in text
     assert "MBS | Giá 50 | Entry NOW @50 (300 CP) | CẮT 52.5 | TP1 46.25" in text
 
 
-def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_target(monkeypatch):
+def test_telegram_preview_derivative_uses_one_contract_and_rr_ladder(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_CKPS_TEST",
@@ -232,7 +234,8 @@ def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_
     assert order["lot"] == 1.0
     assert order["display_quantity"] == 1.0
     assert order["quantity_unit"] == "HĐ"
-    assert order["tp_targets"] == pytest.approx([1813.5])
+    assert order["tp_targets"] == pytest.approx([1813.5, 1815.75, 1818.0])
+    assert order["tp_target_sources"] == ["R", "R", "R"]
 
     text = format_digest(
         [
@@ -246,9 +249,9 @@ def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_
     )
     assert (
         "🟢 VN30F1M LONG | Giá 1800 | Entry NOW @1800 (1 HĐ) | SL 1791 | "
-        "TP1 1813.5"
+        "TP1 1813.5 (R)"
     ) in text
-    assert "TP2 -- | TP3 --" in text
+    assert "TP2 1815.75 (R) | TP3 1818 (R)" in text
 
 
 def test_rr_target_is_recomputed_from_connector_safe_sl(monkeypatch):
@@ -283,11 +286,11 @@ def test_rr_target_is_recomputed_from_connector_safe_sl(monkeypatch):
     assert setup["ready"] is True
     assert setup["sl"] == pytest.approx(98.0)
     assert setup["tp"] == pytest.approx(103.0)
-    assert setup["tp_targets"][0] == pytest.approx(103.0)
-    assert setup["tp_targets"][1:] == [None, None]
+    assert setup["tp_targets"] == pytest.approx([103.0, 103.5, 104.0])
+    assert setup["tp_target_sources"] == ["R", "R", "R"]
 
 
-def test_swing_tp_exposes_only_the_real_swing_target(monkeypatch):
+def test_swing_tp_uses_real_swing_target_then_fib_display_targets(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "SWING_TARGET_TEST",
@@ -321,7 +324,8 @@ def test_swing_tp_exposes_only_the_real_swing_target(monkeypatch):
     assert setup["ready"] is True
     assert setup["tp"] == pytest.approx(54.6)
     assert setup["tp_targets"][0] == pytest.approx(54.6)
-    assert setup["tp_targets"][1:] == [None, None]
+    assert setup["tp_targets"][1:] == pytest.approx([57.72, 61.18])
+    assert setup["tp_target_sources"] == ["S", "F", "F"]
 
 
 def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
@@ -357,6 +361,7 @@ def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
 
     assert setup["ready"] is True
     assert setup["tp_targets"] == pytest.approx([51.36, 53.09, 55.0])
+    assert setup["tp_target_sources"] == ["F", "F", "F"]
 
 
 def test_telegram_rejects_swing_sl_wider_than_existing_entry_exit_max_atr(
@@ -392,10 +397,10 @@ def test_telegram_rejects_swing_sl_wider_than_existing_entry_exit_max_atr(
 
     assert order["ok"] is False
     assert order["error"] == "INVALID_LEVELS|SL_TOO_WIDE|4.00ATR>2.5ATR"
-    assert order["preview_version"] == 3
+    assert order["preview_version"] == 4
 
 
-def test_telegram_rejects_invalid_secondary_fib_target(monkeypatch):
+def test_invalid_fib_ladder_falls_back_to_ordered_rr_ladder(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_BAD_FIB_TEST",
@@ -425,5 +430,6 @@ def test_telegram_rejects_invalid_secondary_fib_target(monkeypatch):
         },
     )
 
-    assert order["ok"] is False
-    assert order["error"] == "INVALID_LEVELS|DIRECTION_OR_NON_POSITIVE"
+    assert order["ok"] is True
+    assert order["tp_targets"] == pytest.approx([13.875, 13.6875, 13.5])
+    assert order["tp_target_sources"] == ["R", "R", "R"]

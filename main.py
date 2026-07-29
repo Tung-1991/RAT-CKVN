@@ -1924,21 +1924,58 @@ class BotUI(ctk.CTk):
 
         tp_source = "RR"
         tp_targets = [None, None, None]
+        tp_target_sources = [None, None, None]
+        tp_target_multipliers = [None, None, None]
+
+        def _rr_levels(rr_value):
+            base = max(0.1, float(rr_value or 1.5))
+            return [base, base + 0.25, base + 0.5]
+
         def _rr_ladder(rr_value):
-            rr_value = float(rr_value or 1.5)
-            # RR trong preset chỉ cấu hình đúng một mục tiêu (ví dụ 1.5R).
-            # Không tự bịa TP2=2*RR và TP3=3*RR vì BOT thực tế cũng chỉ
-            # gửi một TP theo TP_RR_RATIO.
-            target = (
-                price + sl_distance * rr_value
+            levels = _rr_levels(rr_value)
+            return [
+                price + sl_distance * level
                 if direction == "BUY"
-                else price - sl_distance * rr_value
+                else price - sl_distance * level
+                for level in levels
+            ]
+
+        def _target_valid(value):
+            value = self._safe_float(value, 0.0)
+            if value <= 0:
+                return False
+            return value > price if direction == "BUY" else value < price
+
+        def _target_after(value, previous):
+            value = self._safe_float(value, 0.0)
+            previous = self._safe_float(previous, 0.0)
+            if not _target_valid(value) or previous <= 0:
+                return False
+            return value > previous if direction == "BUY" else value < previous
+
+        def _fib_candidates():
+            low = self._safe_float(context.get(f"swing_low_{tp_group}", 0.0))
+            high = self._safe_float(context.get(f"swing_high_{tp_group}", 0.0))
+            leg = abs(high - low)
+            if low <= 0 or high <= 0 or leg <= 0:
+                return []
+            levels = self._parse_preview_levels(
+                params.get("MANUAL_FIB_TP_LEVELS", "1.272,1.618,2.0")
             )
-            return [target, None, None]
+            return [
+                low + leg * level if direction == "BUY" else high - leg * level
+                for level in levels[:3]
+            ]
+
+        rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+        rr_levels = _rr_levels(rr)
+        rr_targets = _rr_ladder(rr)
+
         if manual_tp > 0:
             tp_price = manual_tp
             tp_source = "MANUAL_TP"
             tp_targets[0] = tp_price
+            tp_target_sources[0] = "M"
         elif tp_mode == "OFF":
             tp_price = 0.0
             tp_source = "OFF"
@@ -1956,10 +1993,12 @@ class BotUI(ctk.CTk):
                 # Swing chỉ cung cấp một mốc đích thật. Không kéo dài khoảng
                 # cách đó thành TP2/TP3 giả.
                 tp_targets = [tp_price, None, None]
+                tp_target_sources = ["S", None, None]
                 tp_source = f"MANUAL_{'SWING_STRUCTURE' if tp_mode == 'SWING_STRUCTURE' else 'SWING_RETEST'}:{tp_group}"
             else:
-                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
-                tp_targets = _rr_ladder(rr)
+                tp_targets = list(rr_targets)
+                tp_target_sources = ["R", "R", "R"]
+                tp_target_multipliers = list(rr_levels)
                 tp_price = tp_targets[0]
                 tp_source = f"{rr:g}R"
         elif tp_mode == "FIB":
@@ -1973,11 +2012,13 @@ class BotUI(ctk.CTk):
                 levels = self._parse_preview_levels(params.get("MANUAL_FIB_TP_LEVELS", "1.272,1.618,2.0"))
                 vals = [tp_low + leg * lvl if direction == "BUY" else tp_high - leg * lvl for lvl in levels[:3]]
                 tp_targets = vals + [None] * max(0, 3 - len(vals))
+                tp_target_sources = ["F" if value is not None else None for value in tp_targets]
                 tp_price = tp_targets[0]
                 tp_source = f"MANUAL_FIB:{tp_group}"
             else:
-                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
-                tp_targets = _rr_ladder(rr)
+                tp_targets = list(rr_targets)
+                tp_target_sources = ["R", "R", "R"]
+                tp_target_multipliers = list(rr_levels)
                 tp_price = tp_targets[0]
                 tp_source = f"{rr:g}R"
         elif tp_mode == "PULLBACK":
@@ -1992,18 +2033,100 @@ class BotUI(ctk.CTk):
                     None,
                     None,
                 ]
+                tp_target_sources = ["P", None, None]
                 tp_price = tp_targets[0]
                 tp_source = f"MANUAL_{pull_src}:{tp_group}"
             else:
-                rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
-                tp_targets = _rr_ladder(rr)
+                tp_targets = list(rr_targets)
+                tp_target_sources = ["R", "R", "R"]
+                tp_target_multipliers = list(rr_levels)
                 tp_price = tp_targets[0]
                 tp_source = f"{rr:g}R"
         else:
-            rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
-            tp_targets = _rr_ladder(rr)
+            tp_targets = list(rr_targets)
+            tp_target_sources = ["R", "R", "R"]
+            tp_target_multipliers = list(rr_levels)
             tp_price = tp_targets[0]
             tp_source = f"{rr:g}R"
+
+        # Một ladder FIB phải đầy đủ, đúng chiều và đúng thứ tự. Nếu bất kỳ
+        # mức nào hỏng thì fallback toàn bộ sang R để không trộn một ladder
+        # FIB rất xa với một mốc R nằm ngược thứ tự.
+        if tp_mode == "FIB":
+            fib_ladder_ok = len(tp_targets) >= 3 and all(
+                value is not None for value in tp_targets[:3]
+            )
+            if fib_ladder_ok:
+                for index, value in enumerate(tp_targets[:3]):
+                    previous = tp_targets[index - 1] if index > 0 else price
+                    if not (
+                        _target_valid(value)
+                        if index == 0
+                        else _target_after(value, previous)
+                    ):
+                        fib_ladder_ok = False
+                        break
+            if not fib_ladder_ok:
+                tp_targets = list(rr_targets)
+                tp_target_sources = ["R", "R", "R"]
+                tp_target_multipliers = list(rr_levels)
+                tp_price = tp_targets[0]
+                tp_source = f"{rr:g}R"
+
+        # TP2/TP3 chỉ là mốc hiển thị. Với mode không phải RR, ưu tiên
+        # Fibonacci extension thật; thiếu/sai chiều mới dùng mốc R tương ứng.
+        # TP1 vẫn là mức TP thực tế do mode đã chọn quyết định.
+        if tp_mode != "OFF":
+            fib_values = [] if tp_mode == "RR" else _fib_candidates()
+            used_fib = set()
+            start_slot = 0 if tp_mode == "FIB" else 1
+            for index in range(start_slot, 3):
+                previous = tp_targets[index - 1] if index > 0 else price
+                current = tp_targets[index]
+                current_ok = (
+                    _target_valid(current)
+                    if index == 0
+                    else _target_after(current, previous)
+                )
+                if current_ok:
+                    if tp_target_sources[index] == "F":
+                        used_fib.add(round(float(current), 10))
+                    continue
+
+                replacement = None
+                for fib_value in fib_values:
+                    key = round(float(fib_value), 10)
+                    if key in used_fib:
+                        continue
+                    if (
+                        _target_valid(fib_value)
+                        if index == 0
+                        else _target_after(fib_value, previous)
+                    ):
+                        replacement = float(fib_value)
+                        tp_target_sources[index] = "F"
+                        used_fib.add(key)
+                        break
+
+                if replacement is None:
+                    for rr_index in range(index, len(rr_targets)):
+                        rr_value = rr_targets[rr_index]
+                        if (
+                            _target_valid(rr_value)
+                            if index == 0
+                            else _target_after(rr_value, previous)
+                        ):
+                            replacement = float(rr_value)
+                            tp_target_sources[index] = "R"
+                            tp_target_multipliers[index] = rr_levels[rr_index]
+                            break
+                tp_targets[index] = replacement
+
+            if tp_targets[0] is not None:
+                tp_price = tp_targets[0]
+                if tp_target_sources[0] == "R":
+                    multiplier = tp_target_multipliers[0] or rr
+                    tp_source = f"{multiplier:g}R"
 
         order_type = 0 if direction == "BUY" else 1
         account = self.connector.get_account_info() if self.connector else None
@@ -2068,11 +2191,21 @@ class BotUI(ctk.CTk):
         # DNSE có thể trả safe_sl đã chuẩn hóa theo bước giá/rule khối lượng.
         # Với TP kiểu R, luôn tính lại từ SL cuối cùng để Preview, BOT payload
         # và Telegram cùng dùng đúng một khoảng R.
-        if str(tp_source or "").upper().endswith("R"):
-            rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
-            tp_targets = _rr_ladder(rr)
+        for index, source in enumerate(tp_target_sources):
+            if source != "R":
+                continue
+            multiplier = tp_target_multipliers[index]
+            if multiplier is None:
+                multiplier = rr_levels[index]
+                tp_target_multipliers[index] = multiplier
+            tp_targets[index] = (
+                price + sl_distance * multiplier
+                if direction == "BUY"
+                else price - sl_distance * multiplier
+            )
+        if tp_target_sources[0] == "R":
             tp_price = tp_targets[0]
-            tp_source = f"{rr:g}R"
+            tp_source = f"{float(tp_target_multipliers[0] or rr):g}R"
 
         max_lot_cap = float((brain.get("symbol_configs", {}).get(symbol, {}) or {}).get("max_lot_cap", 0.0) or 0.0)
         if max_lot_cap <= 0:
@@ -2162,6 +2295,7 @@ class BotUI(ctk.CTk):
             "manual_sl_group": sl_group,
             "manual_tp_group": tp_group,
             "tp_targets": tp_targets[:3],
+            "tp_target_sources": tp_target_sources[:3],
             "manual_sl_buffer": float(params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2)) or 0.2),
             "manual_tp_buffer": float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))) or 0.2),
             "atr_key": atr_key,
@@ -2202,7 +2336,7 @@ class BotUI(ctk.CTk):
                 "ok": False,
                 "error": reason,
                 "preview_source": True,
-                "preview_version": 3,
+                "preview_version": 4,
             }
 
         try:
@@ -2221,10 +2355,20 @@ class BotUI(ctk.CTk):
         current_price = float(setup.get("price", 0.0) or 0.0)
         sl_price = float(setup.get("sl", 0.0) or 0.0)
         primary_tp = float(setup.get("tp", 0.0) or 0.0)
-        raw_targets = [
-            value for value in (setup.get("tp_targets") or []) if value is not None
-        ][:3]
-        targets = [self._safe_float(value, 0.0) for value in raw_targets]
+        raw_target_values = list(setup.get("tp_targets") or [])[:3]
+        raw_target_sources = list(setup.get("tp_target_sources") or [])[:3]
+        target_pairs = [
+            (
+                self._safe_float(value, 0.0),
+                str(raw_target_sources[index] or "").upper()
+                if index < len(raw_target_sources)
+                else "",
+            )
+            for index, value in enumerate(raw_target_values)
+            if value is not None
+        ]
+        targets = [value for value, _source in target_pairs]
+        target_sources = [source for _value, source in target_pairs]
         valid_sl = (
             sl_price < current_price if side == "BUY" else sl_price > current_price
         )
@@ -2246,7 +2390,7 @@ class BotUI(ctk.CTk):
                 "ok": False,
                 "error": "INVALID_LEVELS|DIRECTION_OR_NON_POSITIVE",
                 "preview_source": True,
-                "preview_version": 3,
+                "preview_version": 4,
             }
         ordered_targets = sorted(targets, reverse=side == "SELL")
         if targets != ordered_targets:
@@ -2254,7 +2398,7 @@ class BotUI(ctk.CTk):
                 "ok": False,
                 "error": "INVALID_LEVELS|TP_ORDER",
                 "preview_source": True,
-                "preview_version": 3,
+                "preview_version": 4,
             }
 
         atr_value = self._safe_float(setup.get("atr", 0.0), 0.0)
@@ -2276,7 +2420,7 @@ class BotUI(ctk.CTk):
                     f"{sl_distance_atr:.2f}ATR>{max_sl_atr:g}ATR"
                 ),
                 "preview_source": True,
-                "preview_version": 3,
+                "preview_version": 4,
             }
 
         entry_zone = None
@@ -2305,7 +2449,7 @@ class BotUI(ctk.CTk):
         return {
             "ok": True,
             "preview_source": True,
-            "preview_version": 3,
+            "preview_version": 4,
             "symbol": symbol,
             "side": side,
             "price": current_price,
@@ -2321,6 +2465,7 @@ class BotUI(ctk.CTk):
             "sl": sl_price,
             "tp": primary_tp,
             "tp_targets": targets,
+            "tp_target_sources": target_sources,
             "sl_source": str(setup.get("sl_source") or ""),
             "tp_source": str(setup.get("tp_source") or ""),
             "preset": preset,
@@ -2333,6 +2478,8 @@ class BotUI(ctk.CTk):
         direction = (setup or {}).get("direction", "")
         visible_targets = self._preview_target_values(setup)
         tp_targets = visible_targets[:3] + [None] * max(0, 3 - len(visible_targets))
+        tp_target_sources = list((setup or {}).get("tp_target_sources") or [])[:3]
+        tp_target_sources += [None] * max(0, 3 - len(tp_target_sources))
         show_tp_ladder = len(visible_targets) > 1
         return {
             "key": key,
@@ -2357,6 +2504,7 @@ class BotUI(ctk.CTk):
             "tp1": tp_targets[0],
             "tp2": tp_targets[1],
             "tp3": tp_targets[2],
+            "tp_target_sources": tp_target_sources,
             "show_tp_ladder": show_tp_ladder,
             "tp_source": (setup or {}).get("tp_source", "--"),
             "sl_source_label": (setup or {}).get("sl_source_label", "--"),
@@ -2761,9 +2909,22 @@ class BotUI(ctk.CTk):
                         if hasattr(levels["entry_signal"], "configure"):
                             levels["entry_signal"].configure(text_color=meta_color)
                         tp_parts = []
+                        tp_sources = list(model.get("tp_target_sources") or [])
                         for idx, target_key in enumerate(("tp1", "tp2", "tp3"), start=1):
                             val = model.get(target_key)
-                            tp_parts.append(f"TP{idx} {self._fmt_price(val) if val else '--'}")
+                            source = (
+                                str(tp_sources[idx - 1] or "").upper()
+                                if idx - 1 < len(tp_sources)
+                                else ""
+                            )
+                            source_text = (
+                                f" ({source})"
+                                if val and source in {"F", "R"}
+                                else ""
+                            )
+                            tp_parts.append(
+                                f"TP{idx} {self._fmt_price(val) if val else '--'}{source_text}"
+                            )
                         if model.get("tp_source") == "OFF":
                             tp_parts = ["TP OFF"]
                         _set_preview_text(levels["sl"], f"SL {self._fmt_price(model.get('sl'))}")
@@ -4935,7 +5096,7 @@ class BotUI(ctk.CTk):
                 if (
                     not setup
                     or not setup.get("preview_source")
-                    or self._safe_float(setup.get("preview_version", 0), 0.0) < 3
+                    or self._safe_float(setup.get("preview_version", 0), 0.0) < 4
                 ):
                     legacy_opportunities.append(item)
                 setup_ok = bool(setup.get("ok"))
