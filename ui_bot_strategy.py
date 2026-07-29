@@ -1426,13 +1426,31 @@ class BotStrategyUI(ctk.CTkToplevel):
         colors = {"G0": "#AB47BC", "G1": "#00E676", "G2": "#00B0FF", "G3": "#FF3D00"}
 
         for grp in ["G0", "G1", "G2", "G3"]:
+            default_group_rules = {
+                "G0": {
+                    "max_opposite": 0,
+                    "max_none": 0,
+                    "master_rule": "FIX",
+                },
+                "G1": {
+                    "max_opposite": 0,
+                    "max_none": 1,
+                    "master_rule": "PASS",
+                },
+                "G2": {
+                    "max_opposite": 0,
+                    "max_none": 2,
+                    "master_rule": "PASS",
+                },
+                "G3": {
+                    "max_opposite": 0,
+                    "max_none": 1,
+                    "master_rule": "IGNORE",
+                },
+            }
             grp_data = rules.get(
                 grp,
-                {
-                    "max_opposite": 0,
-                    "max_none": 1 if grp != "G0" else 0,
-                    "master_rule": "FIX" if grp != "G0" else "PASS",
-                },
+                default_group_rules[grp],
             )
 
             frame = ctk.CTkFrame(
