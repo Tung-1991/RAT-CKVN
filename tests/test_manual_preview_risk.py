@@ -48,6 +48,7 @@ class _TradeManager:
             "G0_TIMEFRAME": "1h",
             "G1_TIMEFRAME": "15m",
             "risk_tsl": {"base_sl": "G1", "sl_atr_multiplier": 0.2},
+            "entry_exit": {"sl_distance": {"max_atr": 2.5}},
             "symbol_configs": {"VN30F1M": {"max_lot_cap": 1}},
         }
 
@@ -169,6 +170,7 @@ def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(mo
     assert stock_setup["target_risk_pct"] == 0.1
     assert stock_setup["risk_pct"] == pytest.approx(0.25)
     assert buy["ok"] is True
+    assert buy["preview_version"] == 3
     assert buy["lot"] == 100.0
     assert buy["display_quantity"] == 100.0
     assert buy["quantity_unit"] == "CP"
@@ -196,9 +198,11 @@ def test_telegram_preview_uses_same_stock_lot_and_single_configured_rr_target(mo
             },
         ]
     )
-    assert "FPT BUY | Giá 50 | Entry NOW @50 (100 CP) | CẮT 47.5 | TP1 53.75" in text
+    assert "🟢 CKCS BUY" in text
+    assert "FPT | Giá 50 | Entry NOW @50 (100 CP) | CẮT 47.5 | TP1 53.75" in text
     assert "TP2 -- | TP3 --" in text
-    assert "MBS SELL | Giá 50 | Entry NOW @50 (300 CP) | CẮT 52.5 | TP1 46.25" in text
+    assert "🔴 CKCS SELL" in text
+    assert "MBS | Giá 50 | Entry NOW @50 (300 CP) | CẮT 52.5 | TP1 46.25" in text
 
 
 def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_target(monkeypatch):
@@ -245,6 +249,42 @@ def test_telegram_preview_derivative_uses_one_contract_and_single_configured_rr_
         "TP1 1813.5"
     ) in text
     assert "TP2 -- | TP3 --" in text
+
+
+def test_rr_target_is_recomputed_from_connector_safe_sl(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "SAFE_SL_RR_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "RR",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 1.0,
+            "TP_RR_RATIO": 1.5,
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    app = _PreviewShim()
+    monkeypatch.setattr(
+        app.connector,
+        "calculate_lot_size",
+        lambda *_args, **_kwargs: (100.0, 98.0),
+    )
+
+    setup = app._resolve_manual_setup_preview(
+        "FPT",
+        "BUY",
+        "SAFE_SL_RR_TEST",
+        {"current_price": 100.0, "bid": 100.0, "ask": 100.0},
+        manual_values={"entry": 0.0, "lot": 0.0, "sl": 0.0, "tp": 0.0},
+    )
+
+    assert setup["ready"] is True
+    assert setup["sl"] == pytest.approx(98.0)
+    assert setup["tp"] == pytest.approx(103.0)
+    assert setup["tp_targets"][0] == pytest.approx(103.0)
+    assert setup["tp_targets"][1:] == [None, None]
 
 
 def test_swing_tp_exposes_only_the_real_swing_target(monkeypatch):
@@ -317,3 +357,73 @@ def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
 
     assert setup["ready"] is True
     assert setup["tp_targets"] == pytest.approx([51.36, 53.09, 55.0])
+
+
+def test_telegram_rejects_swing_sl_wider_than_existing_entry_exit_max_atr(
+    monkeypatch,
+):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "TELEGRAM_WIDE_SL_TEST",
+        {
+            "MANUAL_SL_MODE": "SANDBOX",
+            "MANUAL_TP_MODE": "RR",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "TP_RR_RATIO": 1.5,
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    monkeypatch.setattr(config, "DEFAULT_PRESET", "TELEGRAM_WIDE_SL_TEST")
+    app = _PreviewShim()
+
+    order = app.build_telegram_preview_order(
+        "MBS",
+        "SELL",
+        context={
+            "current_price": 17.0,
+            "bid": 17.0,
+            "ask": 17.0,
+            "atr_G1": 1.0,
+            "swing_low_G1": 12.0,
+            "swing_high_G1": 20.8,
+        },
+    )
+
+    assert order["ok"] is False
+    assert order["error"] == "INVALID_LEVELS|SL_TOO_WIDE|4.00ATR>2.5ATR"
+    assert order["preview_version"] == 3
+
+
+def test_telegram_rejects_invalid_secondary_fib_target(monkeypatch):
+    monkeypatch.setitem(
+        config.PRESETS,
+        "TELEGRAM_BAD_FIB_TEST",
+        {
+            "MANUAL_SL_MODE": "PERCENT",
+            "MANUAL_TP_MODE": "FIB",
+            "MANUAL_SL_GROUP": "G1",
+            "MANUAL_TP_GROUP": "G1",
+            "SL_PERCENT": 5.0,
+            "MANUAL_FIB_TP_LEVELS": "1.272,1.618,2.0",
+            "RISK_PERCENT": 1.0,
+        },
+    )
+    monkeypatch.setattr(config, "DEFAULT_PRESET", "TELEGRAM_BAD_FIB_TEST")
+    app = _PreviewShim()
+
+    order = app.build_telegram_preview_order(
+        "MBS",
+        "SELL",
+        context={
+            "current_price": 15.0,
+            "bid": 15.0,
+            "ask": 15.0,
+            "atr_G1": 1.0,
+            "swing_low_G1": 10.0,
+            "swing_high_G1": 20.0,
+        },
+    )
+
+    assert order["ok"] is False
+    assert order["error"] == "INVALID_LEVELS|DIRECTION_OR_NON_POSITIVE"

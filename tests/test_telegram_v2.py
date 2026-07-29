@@ -77,6 +77,17 @@ def test_level_validation_rejects_negative_or_wrong_direction():
 
 def test_formatter_is_compact_and_uses_preview_levels(monkeypatch):
     monkeypatch.setattr(opportunity_alerts, "_priority_symbols", lambda: {"TDM"})
+    monkeypatch.setattr(
+        "core.storage_manager.get_brain_settings_for_symbol",
+        lambda _symbol: {
+            "G0_TIMEFRAME": "1d",
+            "G1_TIMEFRAME": "1h",
+            "indicators": {
+                "ema": {"active": True, "groups": ["G0"]},
+                "swing_point": {"active": True, "groups": ["G1"]},
+            },
+        },
+    )
     text = opportunity_alerts.format_digest(
         [
             _item("VN30F1M", "SELL", "CKPS", 1),
@@ -87,11 +98,17 @@ def test_formatter_is_compact_and_uses_preview_levels(monkeypatch):
     )
     assert text.index("VN30F1M") < text.index("TDM") < text.index("AAA")
     assert "🔴 VN30F1M SHORT | Giá 10 | Entry NOW @10 (1 HĐ) | SL 12 | TP1 7" in text
-    assert "⭐ TDM BUY | Giá 10 | Entry NOW @10 (100 CP) | CẮT 8 | TP1 14" in text
-    assert "🔴 AAA SELL | Giá 10 | Entry NOW @10 | CẮT 12 | TP1 7" in text
+    assert "⭐ PRIORITY" in text
+    assert "🟢 TDM BUY | Giá 10 | Entry NOW @10 (100 CP) | CẮT 8 | TP1 14" in text
+    assert "🔴 CKCS SELL" in text
+    assert "AAA | Giá 10 | Entry NOW @10 | CẮT 12 | TP1 7" in text
     assert "G0 SELL 4/7 FIX" not in text
+    assert "📊 TDM | G0 1D" in text
+    assert "📊 AAA | G0 1D" in text
+    assert "[EMA50]" in text
+    assert "[SWING]" in text
     assert "PAPER" not in text and "REAL" not in text and "BOT_OFF" not in text
-    assert text.startswith("🔴 VN30F1M SHORT")
+    assert text.startswith("⚡ CKPS")
     assert "RAT6 GỢI Ý BOT" not in text
 
 
@@ -104,7 +121,8 @@ def test_formatter_separates_current_price_from_entry_zone(monkeypatch):
 
     text = opportunity_alerts.format_digest([item])
 
-    assert "AAA BUY | Giá 10.2 | Entry NOW 9.8-10 (100 CP)" in text
+    assert "🟢 CKCS BUY" in text
+    assert "AAA | Giá 10.2 | Entry NOW 9.8-10 (100 CP)" in text
 
 
 def test_invalid_levels_are_archived_and_not_queued(monkeypatch, tmp_path):
@@ -113,6 +131,23 @@ def test_invalid_levels_are_archived_and_not_queued(monkeypatch, tmp_path):
     monkeypatch.setattr(opportunity_alerts, "_archive_invalid", lambda item: archived.append(item["symbol"]))
     item = _item()
     item["order_setup"]["tp"] = -1
+
+    result = opportunity_alerts.queue_opportunity(item)
+
+    assert result["reason"] == "invalid_levels"
+    assert archived == ["AAA"]
+
+
+def test_old_preview_cache_is_not_reused_or_sent(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    archived = []
+    monkeypatch.setattr(
+        opportunity_alerts,
+        "_archive_invalid",
+        lambda item: archived.append(item["symbol"]),
+    )
+    item = _item()
+    item["order_setup"]["preview_source"] = True
 
     result = opportunity_alerts.queue_opportunity(item)
 

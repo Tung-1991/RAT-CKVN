@@ -84,3 +84,13 @@ def test_opportunity_uses_preview_callback_without_touching_bot():
             {"context": {"current_price": 10}, "market_mode": "TREND"},
         )
     ]
+
+
+def test_opportunity_does_not_fall_back_to_legacy_order_builder():
+    listener = _listener()
+
+    result = listener._build_opportunity_setup(
+        "AAA", "BUY", {"current_price": 10}, "TREND"
+    )
+
+    assert result == {"ok": False, "error": "PREVIEW_SOURCE_UNAVAILABLE"}

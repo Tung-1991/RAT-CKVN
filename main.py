@@ -2065,6 +2065,15 @@ class BotUI(ctk.CTk):
             lot_size = self._normalize_contracts(lot_size, vol_min, vol_max)
             lot_source = f"AUTO_RISK:{risk_pct:g}%"
 
+        # DNSE có thể trả safe_sl đã chuẩn hóa theo bước giá/rule khối lượng.
+        # Với TP kiểu R, luôn tính lại từ SL cuối cùng để Preview, BOT payload
+        # và Telegram cùng dùng đúng một khoảng R.
+        if str(tp_source or "").upper().endswith("R"):
+            rr = float(params.get("TP_RR_RATIO", 1.5) or 1.5)
+            tp_targets = _rr_ladder(rr)
+            tp_price = tp_targets[0]
+            tp_source = f"{rr:g}R"
+
         max_lot_cap = float((brain.get("symbol_configs", {}).get(symbol, {}) or {}).get("max_lot_cap", 0.0) or 0.0)
         if max_lot_cap <= 0:
             max_lot_cap = float(getattr(config, "MAX_LOT_CAP", 0.0) or 0.0)
@@ -2186,12 +2195,20 @@ class BotUI(ctk.CTk):
         except Exception as exc:
             return {"ok": False, "error": f"PREVIEW_ERROR|{exc}"}
         if not setup.get("ready"):
+            reason = str(setup.get("reason") or "PREVIEW_NOT_READY")
+            if "INVALID_SL" in reason or "INVALID_TP" in reason:
+                reason = f"INVALID_LEVELS|{reason}"
             return {
                 "ok": False,
-                "error": str(setup.get("reason") or "PREVIEW_NOT_READY"),
+                "error": reason,
                 "preview_source": True,
+                "preview_version": 3,
             }
 
+        try:
+            brain = self.trade_mgr._get_brain_settings(symbol)
+        except Exception:
+            brain = {}
         is_stock = settlement.is_cash_stock(symbol)
         display_quantity = float(setup.get("lot", 0.0) or 0.0)
         if is_stock and side == "SELL":
@@ -2201,17 +2218,71 @@ class BotUI(ctk.CTk):
                 )
             except Exception:
                 display_quantity = 0.0
-        targets = [
-            float(value)
-            for value in (setup.get("tp_targets") or [])
-            if self._safe_float(value, 0.0) > 0
-        ][:3]
         current_price = float(setup.get("price", 0.0) or 0.0)
+        sl_price = float(setup.get("sl", 0.0) or 0.0)
+        primary_tp = float(setup.get("tp", 0.0) or 0.0)
+        raw_targets = [
+            value for value in (setup.get("tp_targets") or []) if value is not None
+        ][:3]
+        targets = [self._safe_float(value, 0.0) for value in raw_targets]
+        valid_sl = (
+            sl_price < current_price if side == "BUY" else sl_price > current_price
+        )
+        valid_target = (
+            lambda value: value > current_price
+            if side == "BUY"
+            else 0 < value < current_price
+        )
+        if (
+            current_price <= 0
+            or sl_price <= 0
+            or primary_tp <= 0
+            or not valid_sl
+            or not valid_target(primary_tp)
+            or not targets
+            or any(not valid_target(value) for value in targets)
+        ):
+            return {
+                "ok": False,
+                "error": "INVALID_LEVELS|DIRECTION_OR_NON_POSITIVE",
+                "preview_source": True,
+                "preview_version": 3,
+            }
+        ordered_targets = sorted(targets, reverse=side == "SELL")
+        if targets != ordered_targets:
+            return {
+                "ok": False,
+                "error": "INVALID_LEVELS|TP_ORDER",
+                "preview_source": True,
+                "preview_version": 3,
+            }
+
+        atr_value = self._safe_float(setup.get("atr", 0.0), 0.0)
+        sl_distance_atr = (
+            abs(current_price - sl_price) / atr_value if atr_value > 0 else 0.0
+        )
+        sl_distance_cfg = (
+            ((brain or {}).get("entry_exit", {}) or {}).get("sl_distance", {}) or {}
+        )
+        max_sl_atr = self._safe_float(sl_distance_cfg.get("max_atr", 0.0), 0.0)
+        if (
+            max_sl_atr > 0
+            and sl_distance_atr > max_sl_atr + 1e-9
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    f"INVALID_LEVELS|SL_TOO_WIDE|"
+                    f"{sl_distance_atr:.2f}ATR>{max_sl_atr:g}ATR"
+                ),
+                "preview_source": True,
+                "preview_version": 3,
+            }
+
         entry_zone = None
         entry_status = "OFF"
         entry_tactic = "OFF"
         try:
-            brain = self.trade_mgr._get_brain_settings(symbol)
             ee_cfg = self._manual_preview_entry_exit_cfg(
                 (brain or {}).get("entry_exit", {}) or {}
             )
@@ -2234,6 +2305,7 @@ class BotUI(ctk.CTk):
         return {
             "ok": True,
             "preview_source": True,
+            "preview_version": 3,
             "symbol": symbol,
             "side": side,
             "price": current_price,
@@ -2246,13 +2318,15 @@ class BotUI(ctk.CTk):
             "display_quantity": display_quantity,
             "quantity_unit": "CP" if is_stock else "HĐ",
             "analysis_only": bool(is_stock and side == "SELL"),
-            "sl": float(setup.get("sl", 0.0) or 0.0),
-            "tp": float(setup.get("tp", 0.0) or 0.0),
+            "sl": sl_price,
+            "tp": primary_tp,
             "tp_targets": targets,
             "sl_source": str(setup.get("sl_source") or ""),
             "tp_source": str(setup.get("tp_source") or ""),
             "preset": preset,
             "market_mode": str(context.get("market_mode") or market_mode or "ANY"),
+            "sl_distance_atr": sl_distance_atr,
+            "max_sl_atr": max_sl_atr,
         }
 
     def _make_preview_model(self, key, title, status, reason, setup, source, can_apply=False):
@@ -4858,7 +4932,11 @@ class BotUI(ctk.CTk):
                 side = str(item.get("side", "BUY") or "BUY").upper()
                 count = int(item.get("signal_count", 1) or 1)
                 setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
-                if not setup or not setup.get("preview_source"):
+                if (
+                    not setup
+                    or not setup.get("preview_source")
+                    or self._safe_float(setup.get("preview_version", 0), 0.0) < 3
+                ):
                     legacy_opportunities.append(item)
                 setup_ok = bool(setup.get("ok"))
                 entry = float(setup.get("price", detected) or detected or 0.0)

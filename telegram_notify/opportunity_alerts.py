@@ -127,7 +127,10 @@ def _shortlist_markdown(items: list[Dict[str, Any]], now: Optional[datetime] = N
             if not rows:
                 continue
             lines.extend([f"## {title}", ""])
-            lines.extend(f"- {_line(item)}" for item in rows)
+            lines.extend(
+                f"- {_line(item, show_direction=title not in {'CKCS BUY', 'CKCS SELL'})}"
+                for item in rows
+            )
             lines.append("")
     lines.extend(
         [
@@ -205,6 +208,12 @@ def _valid_setup(item: Dict[str, Any]) -> bool:
     setup = item.get("order_setup") if isinstance(item.get("order_setup"), dict) else {}
     if setup.get("ok") is False:
         return False
+    if setup.get("preview_source"):
+        try:
+            if int(setup.get("preview_version") or 0) < 3:
+                return False
+        except (TypeError, ValueError):
+            return False
     side = str(item.get("side") or "").upper()
     try:
         price = float(setup.get("price") or item.get("last_price") or 0.0)
@@ -214,10 +223,43 @@ def _valid_setup(item: Dict[str, Any]) -> bool:
         return False
     if min(price, sl, tp) <= 0:
         return False
-    return (sl < price < tp) if side == "BUY" else (tp < price < sl)
+    if not ((sl < price < tp) if side == "BUY" else (tp < price < sl)):
+        return False
+    targets = []
+    for raw in setup.get("tp_targets") or [tp]:
+        if raw is None:
+            continue
+        try:
+            target = float(raw)
+        except (TypeError, ValueError):
+            return False
+        if target <= 0:
+            return False
+        if side == "BUY" and target <= price:
+            return False
+        if side == "SELL" and target >= price:
+            return False
+        targets.append(target)
+    if not targets:
+        return False
+    if targets != sorted(targets, reverse=side == "SELL"):
+        return False
+    try:
+        sl_distance_atr = float(setup.get("sl_distance_atr") or 0.0)
+        max_sl_atr = float(setup.get("max_sl_atr") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if max_sl_atr > 0 and sl_distance_atr > max_sl_atr + 1e-9:
+        return False
+    return True
 
 
-def _line(item: Dict[str, Any], icon: str = "") -> str:
+def _line(
+    item: Dict[str, Any],
+    icon: str = "",
+    *,
+    show_direction: bool = True,
+) -> str:
     setup = item.get("order_setup") if isinstance(item.get("order_setup"), dict) else {}
     symbol = str(item.get("symbol") or "").upper()
     side = str(item.get("side") or "").upper()
@@ -236,6 +278,7 @@ def _line(item: Dict[str, Any], icon: str = "") -> str:
     direction = (
         "LONG" if side == "BUY" else "SHORT"
     ) if market == "CKPS" else side
+    direction_text = f" {direction}" if show_direction else ""
     targets = []
     for value in setup.get("tp_targets") or []:
         try:
@@ -268,11 +311,85 @@ def _line(item: Dict[str, Any], icon: str = "") -> str:
         pass
     prefix = f"{icon} " if icon else ""
     return (
-        f"{prefix}{symbol} {direction} | Giá {_number(current_price)} | "
+        f"{prefix}{symbol}{direction_text} | Giá {_number(current_price)} | "
         f"Entry {entry_text}{quantity} | "
         f"{level_label} {_number(sl)}"
         + (f" | {target_text}" if target_text else "")
     )
+
+
+def _group_context_line(item: Dict[str, Any]) -> str:
+    """Tóm tắt động G0/G1 của đúng mã; chỉ để hiển thị."""
+    symbol = str(item.get("symbol") or "VN30F1M").upper()
+    context = item.get("context") if isinstance(item.get("context"), dict) else {}
+    details = (
+        context.get("group_details")
+        if isinstance(context.get("group_details"), dict)
+        else {}
+    )
+    timeframes = (
+        context.get("group_timeframes")
+        if isinstance(context.get("group_timeframes"), dict)
+        else {}
+    )
+    try:
+        from core.storage_manager import get_brain_settings_for_symbol
+
+        brain = get_brain_settings_for_symbol(symbol)
+    except Exception:
+        brain = {}
+    indicators = (
+        brain.get("indicators")
+        if isinstance(brain.get("indicators"), dict)
+        else {}
+    )
+    labels = {
+        "ema": "EMA50",
+        "ema_cross": "EMA20/50",
+        "supertrend": "ST",
+        "rsi": "RSI",
+        "macd": "MACD",
+        "adx": "ADX",
+        "volume": "VOL",
+        "swing_point": "SWING",
+        "atr": "ATR",
+        "fibonacci": "FIB",
+        "bollinger_bands": "BB",
+        "psar": "PSAR",
+        "stochastic": "STOCH",
+        "simple_breakout": "BREAKOUT",
+        "candle": "CANDLE",
+        "multi_candle": "MULTI",
+        "pivot_points": "PIVOT",
+    }
+
+    parts = []
+    for group in ("G0", "G1"):
+        detail = details.get(group) if isinstance(details.get(group), dict) else {}
+        try:
+            status = int(detail.get("status") or 0)
+        except (TypeError, ValueError):
+            status = 0
+        icon = "🟢▲" if status > 0 else "🔴▼" if status < 0 else "⚪—"
+        buy = int(detail.get("B") or 0)
+        sell = int(detail.get("S") or 0)
+        none = int(detail.get("N") or 0)
+        total = buy + sell + none
+        votes = buy if status > 0 else sell if status < 0 else max(buy, sell)
+        tf = str(
+            timeframes.get(group)
+            or brain.get(f"{group}_TIMEFRAME")
+            or group
+        ).upper()
+        active = []
+        for name, cfg in indicators.items():
+            if not isinstance(cfg, dict) or not cfg.get("active"):
+                continue
+            if group in (cfg.get("groups") or []):
+                active.append(labels.get(name, str(name).upper()))
+        indicator_text = "·".join(active) if active else "NONE"
+        parts.append(f"{group} {tf} {icon} {votes}/{total} [{indicator_text}]")
+    return f"📊 {symbol} | " + " | ".join(parts)
 
 
 def _sections(items: list[Dict[str, Any]]) -> list[tuple[str, list[Dict[str, Any]]]]:
@@ -333,6 +450,7 @@ def format_digest(
         lines.append(f"📋 ĐẦU NGÀY · {now.strftime('%H:%M')}")
 
     section_icons = {
+        "CKPS": "⚡",
         "PRIORITY": "⭐",
         "CKCS BUY": "🟢",
         "CKCS SELL": "🔴",
@@ -342,12 +460,24 @@ def format_digest(
         if not rows:
             continue
         section_count += len(rows)
+        if lines:
+            lines.append("")
+        lines.append(f"{section_icons.get(title, '•')} {title}")
+        if title == "CKPS":
+            lines.append(_group_context_line(rows[0]))
         for item in rows:
             if title == "CKPS":
                 icon = "🟢" if str(item.get("side") or "").upper() == "BUY" else "🔴"
+                show_direction = True
+            elif title == "PRIORITY":
+                icon = "🟢" if str(item.get("side") or "").upper() == "BUY" else "🔴"
+                show_direction = True
             else:
-                icon = section_icons.get(title, "•")
-            lines.append(_line(item, icon=icon))
+                icon = ""
+                show_direction = False
+            if title != "CKPS":
+                lines.append(_group_context_line(item))
+            lines.append(_line(item, icon=icon, show_direction=show_direction))
     if not section_count:
         if lines:
             lines.append("")

@@ -85,12 +85,10 @@ class SignalListener:
                 context=context,
                 market_mode=market_mode,
             )
-        return self.trade_manager.build_telegram_signal_order(
-            symbol,
-            action,
-            context=context,
-            market_mode=market_mode,
-        )
+        # Không quay lại bộ dựng gợi ý cũ của TradeManager: bộ đó có thể dùng
+        # một cấu hình SL/TP khác Manual Preview. Thiếu nguồn Preview thì bỏ
+        # thông báo, tuyệt đối không tự dựng mức giá thay thế.
+        return {"ok": False, "error": "PREVIEW_SOURCE_UNAVAILABLE"}
 
     def _auto_trade_for(self, symbol) -> bool:
         """Cờ bật-bot theo nhóm mã. Tương thích ngược:
