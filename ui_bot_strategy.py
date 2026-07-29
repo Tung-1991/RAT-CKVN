@@ -196,6 +196,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         self.preview_fetch_lock = threading.Lock()
         self.preview_fetch_inflight = set()
         self.preview_fetch_last = {}
+        self.preview_last_render_error = ""
 
         self._build_ui()
 
@@ -731,13 +732,29 @@ class BotStrategyUI(ctk.CTkToplevel):
                 context = self._context_for_symbol(all_ctx, active_symbol) if active_symbol else {}
 
             preview_brain = self._effective_preview_brain(active_symbol)
-            if active_symbol and not self._context_ready_for_preview(
-                context,
-                preview_brain,
-            ):
-                self._schedule_preview_context_fetch(active_symbol)
-                # Không hiển thị phiếu cũ dưới nhãn/rule mới. Worker sẽ thay
-                # bằng context vừa tính từ đúng symbol override.
+            context_ready = self._context_ready_for_preview(context, preview_brain)
+            context_strategy_stale = False
+            if active_symbol:
+                try:
+                    from core.storage_manager import brain_strategy_fingerprint
+
+                    actual_fingerprint = str(
+                        (context or {}).get("strategy_fingerprint") or ""
+                    )
+                    expected_fingerprint = brain_strategy_fingerprint(preview_brain)
+                    if (
+                        not actual_fingerprint
+                        or actual_fingerprint != expected_fingerprint
+                    ):
+                        context_strategy_stale = bool(context_ready)
+                        self._schedule_preview_context_fetch(active_symbol)
+                except Exception:
+                    context_strategy_stale = bool(context_ready)
+                    self._schedule_preview_context_fetch(active_symbol)
+
+            if active_symbol and not context_ready:
+                # Chưa có context indicator hợp lệ. Worker sẽ thử tính đúng
+                # symbol; cache hợp lệ nhưng cũ vẫn được giữ và gắn nhãn riêng.
                 context = {}
 
             if active_symbol != self.preview_last_symbol:
@@ -845,6 +862,8 @@ class BotStrategyUI(ctk.CTkToplevel):
 
             # Cập nhật Block Reason (Highlight lý do chặn)
             block_reason = context.get("block_reason", "OK / Ready")
+            if context_strategy_stale:
+                block_reason = "CACHE CŨ — chờ lượt quét theo setting mới"
             reason_color = "#00C853" if "OK" in block_reason else "#FFAB00"
             self.master_reason_lbl.configure(text=f"Lý do: {block_reason}", text_color=reason_color)
             if hasattr(self, "entry_exit_preview_lbl"):
@@ -852,8 +871,15 @@ class BotStrategyUI(ctk.CTkToplevel):
                     text=self._entry_exit_preview_text(active_symbol, context)
                 )
 
-        except Exception as e:
-            pass
+            self.preview_last_render_error = ""
+        except Exception as exc:
+            error_key = f"{type(exc).__name__}: {exc}"
+            if error_key != self.preview_last_render_error:
+                logger.exception(
+                    "[Strategy Preview] Render thất bại: %s",
+                    error_key,
+                )
+                self.preview_last_render_error = error_key
 
         # Lặp lại sau 1 giây
         self.after(1000, self.update_preview)
@@ -959,16 +985,9 @@ class BotStrategyUI(ctk.CTkToplevel):
         group_details = context.get("group_details")
         if not isinstance(group_details, dict) or not group_details:
             return False
-        if isinstance(brain, dict):
-            try:
-                from core.storage_manager import brain_strategy_fingerprint
-
-                expected = brain_strategy_fingerprint(brain)
-                actual = str(context.get("strategy_fingerprint") or "")
-                if not actual or actual != expected:
-                    return False
-            except Exception:
-                return False
+        # Fingerprint chỉ cho biết cache được tính từ setting nào. Cache cũ vẫn là dữ
+        # liệu indicator hợp lệ và phải được hiển thị ngoài phiên; update_preview sẽ
+        # gắn nhãn CACHE CŨ và âm thầm yêu cầu tính lại ở lượt quét kế tiếp.
         return any(context.get(f"trend_G{i}") for i in range(4))
 
     def _schedule_preview_context_fetch(self, symbol):
@@ -1006,8 +1025,12 @@ class BotStrategyUI(ctk.CTkToplevel):
                 self.after(0, lambda s=symbol, c=context: self._store_preview_context(s, c))
             except Exception:
                 pass
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "[Strategy Preview] Không thể làm mới context %s: %s",
+                symbol,
+                exc,
+            )
         finally:
             with self.preview_fetch_lock:
                 self.preview_fetch_inflight.discard(symbol)

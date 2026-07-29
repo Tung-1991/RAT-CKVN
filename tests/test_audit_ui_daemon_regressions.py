@@ -298,13 +298,28 @@ def test_daemon_startup_replaces_stale_invalid_signal_file(monkeypatch, tmp_path
 
 def test_daemon_startup_preserves_last_preview_context_but_clears_old_signals(monkeypatch, tmp_path):
     target = tmp_path / "live_signals.json"
+    cached_context = {
+        "current_price": 7.15,
+        "atr_G2": 0.08,
+        "strategy_fingerprint": "legacy-strategy",
+        "trend_G0": "DOWN",
+        "group_details": {
+            "G0": {
+                "B": 0,
+                "S": 1,
+                "N": 0,
+                "status": -1,
+                "inds": ["[SELL] EMA [BASE|ANY]"],
+            }
+        },
+    }
     target.write_text(
         json.dumps(
             {
                 "brain_heartbeat": {
                     "status": "HEALTHY",
                     "active_symbols": ["AAA"],
-                    "contexts": {"AAA": {"current_price": 7.15, "atr_G2": 0.08}},
+                    "contexts": {"AAA": cached_context},
                 },
                 "pending_signals": [{"signal_id": "stale-order"}],
             }
@@ -327,6 +342,10 @@ def test_daemon_startup_preserves_last_preview_context_but_clears_old_signals(mo
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert daemon.heartbeat_contexts["AAA"]["current_price"] == 7.15
     assert payload["brain_heartbeat"]["contexts"]["AAA"]["atr_G2"] == 0.08
+    assert payload["brain_heartbeat"]["contexts"]["AAA"]["strategy_fingerprint"] == "legacy-strategy"
+    assert payload["brain_heartbeat"]["contexts"]["AAA"]["group_details"]["G0"]["inds"] == [
+        "[SELL] EMA [BASE|ANY]"
+    ]
     assert payload["pending_signals"] == []
 
 
