@@ -8,13 +8,13 @@
       "G3_TIMEFRAME": "1m",
       "voting_rules": {
         "G0": {
-          "max_opposite": 1,
+          "max_opposite": 0,
           "max_none": 1,
           "master_rule": "PASS"
         },
         "G1": {
           "max_opposite": 0,
-          "max_none": 1,
+          "max_none": 2,
           "master_rule": "FIX"
         },
         "G2": {

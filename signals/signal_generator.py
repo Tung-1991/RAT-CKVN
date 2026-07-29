@@ -7,7 +7,10 @@ import json
 
 import copy
 import config
-from core.storage_manager import get_brain_settings_for_symbol
+from core.storage_manager import (
+    brain_strategy_fingerprint,
+    get_brain_settings_for_symbol,
+)
 
 logger = logging.getLogger("SignalGenerator")
 
@@ -317,6 +320,8 @@ class SignalGenerator:
 
     def generate_signal_v4(self, dfs, context, symbol=None):
         settings = self._get_brain_settings(symbol)
+        # Không cho UI ghép rule mới với phiếu indicator cũ từ heartbeat cache.
+        context["strategy_fingerprint"] = brain_strategy_fingerprint(settings)
         voting_rules = settings.get("voting_rules", {})
         inds_config = settings.get("indicators", {})
         

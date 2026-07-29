@@ -211,9 +211,9 @@ class BotStrategyUI(ctk.CTkToplevel):
             "G2_TIMEFRAME": getattr(config, "G2_TIMEFRAME", "15m"),
             "G3_TIMEFRAME": getattr(config, "G3_TIMEFRAME", "15m"),
             "voting_rules": {
-                "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "PASS"},
-                "G1": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
-                "G2": {"max_opposite": 0, "max_none": 1, "master_rule": "FIX"},
+                "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+                "G1": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+                "G2": {"max_opposite": 0, "max_none": 2, "master_rule": "PASS"},
                 "G3": {"max_opposite": 0, "max_none": 1, "master_rule": "IGNORE"},
             },
             "risk_tsl": {
@@ -730,8 +730,15 @@ class BotStrategyUI(ctk.CTkToplevel):
                 active_symbol = str(active_symbol or "").strip().upper()
                 context = self._context_for_symbol(all_ctx, active_symbol) if active_symbol else {}
 
-            if active_symbol and not self._context_ready_for_preview(context):
+            preview_brain = self._effective_preview_brain(active_symbol)
+            if active_symbol and not self._context_ready_for_preview(
+                context,
+                preview_brain,
+            ):
                 self._schedule_preview_context_fetch(active_symbol)
+                # Không hiển thị phiếu cũ dưới nhãn/rule mới. Worker sẽ thay
+                # bằng context vừa tính từ đúng symbol override.
+                context = {}
 
             if active_symbol != self.preview_last_symbol:
                 self.preview_status_cache.clear()
@@ -741,7 +748,6 @@ class BotStrategyUI(ctk.CTkToplevel):
                 self.preview_status_cache.clear()
 
             group_details = context.get("group_details", {})
-            preview_brain = self._effective_preview_brain(active_symbol)
 
 
             # Cập nhật 4 cột Grid
@@ -947,12 +953,22 @@ class BotStrategyUI(ctk.CTkToplevel):
                 return val or {}
         return {}
 
-    def _context_ready_for_preview(self, context):
+    def _context_ready_for_preview(self, context, brain=None):
         if not isinstance(context, dict) or not context:
             return False
         group_details = context.get("group_details")
         if not isinstance(group_details, dict) or not group_details:
             return False
+        if isinstance(brain, dict):
+            try:
+                from core.storage_manager import brain_strategy_fingerprint
+
+                expected = brain_strategy_fingerprint(brain)
+                actual = str(context.get("strategy_fingerprint") or "")
+                if not actual or actual != expected:
+                    return False
+            except Exception:
+                return False
         return any(context.get(f"trend_G{i}") for i in range(4))
 
     def _schedule_preview_context_fetch(self, symbol):

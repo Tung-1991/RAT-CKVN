@@ -99,18 +99,18 @@
   "voting_rules": {
     "G0": {
       "max_opposite": 0,
-      "max_none": 3,
+      "max_none": 0,
       "master_rule": "FIX"
     },
     "G1": {
       "max_opposite": 0,
-      "max_none": 0,
+      "max_none": 1,
       "master_rule": "PASS"
     },
     "G2": {
       "max_opposite": 0,
-      "max_none": 1,
-      "master_rule": "IGNORE"
+      "max_none": 2,
+      "master_rule": "PASS"
     },
     "G3": {
       "max_opposite": 0,
@@ -137,10 +137,10 @@
     "adx": {
       "active": true,
       "groups": [
-        "G0"
+        "G1"
       ],
       "is_trend": false,
-      "macro_role": "BREAKOUT",
+      "macro_role": "NONE",
       "active_modes": [
         "ANY"
       ],
@@ -155,7 +155,8 @@
     "ema": {
       "active": true,
       "groups": [
-        "G0"
+        "G0",
+        "G1"
       ],
       "is_trend": true,
       "macro_role": "BASE",
@@ -165,14 +166,18 @@
       "params": {
         "period": 50
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
-      "group_params": {}
+      "group_params": {
+        "G1": {
+          "period": 20
+        }
+      }
     },
     "swing_point": {
       "active": true,
       "groups": [
-        "G1"
+        "G2"
       ],
       "is_trend": false,
       "macro_role": "NONE",
@@ -184,7 +189,7 @@
         "strength": 2,
         "atr_buffer": 0.5
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -222,9 +227,9 @@
       "group_params": {}
     },
     "ema_cross": {
-      "active": true,
+      "active": false,
       "groups": [
-        "G0"
+        "G2"
       ],
       "is_trend": false,
       "macro_role": "NONE",
@@ -242,10 +247,10 @@
     "volume": {
       "active": true,
       "groups": [
-        "G0"
+        "G2"
       ],
       "is_trend": false,
-      "macro_role": "BREAKOUT",
+      "macro_role": "NONE",
       "active_modes": [
         "ANY"
       ],
@@ -271,7 +276,7 @@
         "period": 10,
         "multiplier": 3.0
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -329,9 +334,9 @@
       "group_params": {}
     },
     "rsi": {
-      "active": true,
+      "active": false,
       "groups": [
-        "G0"
+        "G2"
       ],
       "is_trend": false,
       "macro_role": "NONE",
@@ -371,7 +376,7 @@
     "macd": {
       "active": true,
       "groups": [
-        "G0"
+        "G1"
       ],
       "is_trend": false,
       "macro_role": "NONE",
@@ -424,17 +429,17 @@
       "group_params": {}
     },
     "simple_breakout": {
-      "active": false,
+      "active": true,
       "groups": [
         "G2"
       ],
       "is_trend": true,
-      "macro_role": "BREAKOUT",
+      "macro_role": "NONE",
       "active_modes": [
         "ANY"
       ],
       "params": {
-        "lookback": 1,
+        "lookback": 2,
         "atr_buffer": 0.0
       },
       "trigger_mode": "STRICT_CLOSE",

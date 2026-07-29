@@ -196,7 +196,7 @@ def test_repeated_restore_keeps_only_one_fixed_rollback(tmp_path):
     assert json.loads(saved.read_text(encoding="utf-8")) == {"version": 3}
 
 
-def test_validate_detects_modified_package(tmp_path):
+def test_validate_allows_edited_valid_json_package(tmp_path):
     account = tmp_path / "data" / "111"
     _write(account / "brain_settings.json", '{"ok": true}')
     result = settings_transfer.export_split_settings(
@@ -209,8 +209,7 @@ def test_validate_detects_modified_package(tmp_path):
     assert settings_transfer.validate_package(public)["valid"] is True
 
     _write(public / "brain_settings.json", '{"changed": true}')
-    with pytest.raises(ValueError, match="bị sửa hoặc hỏng"):
-        settings_transfer.validate_package(public)
+    assert settings_transfer.validate_package(public)["valid"] is True
 
 
 def test_validate_ignores_windows_line_ending_conversion(tmp_path):

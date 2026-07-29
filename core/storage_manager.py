@@ -4,6 +4,7 @@ import os
 import csv
 import time
 import copy
+import hashlib
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
@@ -1012,9 +1013,9 @@ def load_brain_settings() -> Dict[str, Any]:
             )
         ),
         "voting_rules": copy.deepcopy(sandbox_defaults.get("voting_rules", {
-            "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "PASS"},
-            "G1": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
-            "G2": {"max_opposite": 0, "max_none": 1, "master_rule": "FIX"},
+            "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+            "G1": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+            "G2": {"max_opposite": 0, "max_none": 2, "master_rule": "PASS"},
             "G3": {"max_opposite": 0, "max_none": 1, "master_rule": "IGNORE"}
         })),
         "risk_tsl": {
@@ -1441,6 +1442,30 @@ def get_brain_settings_for_symbol(symbol: str = None) -> Dict[str, Any]:
     _normalize_brain_settings_shape(base_brain)
     _cache_merged[cache_key] = {"data": base_brain, "ts": now}
     return copy.deepcopy(base_brain)
+
+
+def brain_strategy_fingerprint(settings: Dict[str, Any]) -> str:
+    """Dấu vân tay phần cấu hình trực tiếp sinh signal/group context."""
+    settings = settings if isinstance(settings, dict) else {}
+    payload = {
+        "MASTER_EVAL_MODE": settings.get("MASTER_EVAL_MODE"),
+        "MIN_MATCHING_VOTES": settings.get("MIN_MATCHING_VOTES"),
+        "FORCE_ANY_MODE": settings.get("FORCE_ANY_MODE"),
+        "timeframes": {
+            group: settings.get(f"{group}_TIMEFRAME")
+            for group in ("G0", "G1", "G2", "G3")
+        },
+        "voting_rules": settings.get("voting_rules") or {},
+        "indicators": settings.get("indicators") or {},
+    }
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 def _dca_pca_signal_key(symbol: str, signal_class: str = None) -> str:
     if not signal_class:

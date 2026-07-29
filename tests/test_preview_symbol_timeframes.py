@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import main
 import ui_bot_strategy
+from core.storage_manager import brain_strategy_fingerprint
 
 
 class _TradeMgr:
@@ -89,6 +90,44 @@ def test_strategy_preview_loads_effective_settings_for_selected_symbol(monkeypat
             "vn30f1m",
         )
         is effective
+    )
+
+
+def test_strategy_preview_rejects_context_from_old_strategy():
+    brain = {
+        "G0_TIMEFRAME": "1h",
+        "voting_rules": {"G0": {"master_rule": "PASS"}},
+        "indicators": {
+            "ema": {
+                "active": True,
+                "groups": ["G0"],
+                "params": {"period": 20},
+            }
+        },
+    }
+    context = {
+        "strategy_fingerprint": "old-config",
+        "group_details": {"G0": {"B": 1, "S": 0, "N": 0}},
+        "trend_G0": "UP",
+    }
+
+    assert (
+        ui_bot_strategy.BotStrategyUI._context_ready_for_preview(
+            None,
+            context,
+            brain,
+        )
+        is False
+    )
+
+    context["strategy_fingerprint"] = brain_strategy_fingerprint(brain)
+    assert (
+        ui_bot_strategy.BotStrategyUI._context_ready_for_preview(
+            None,
+            context,
+            brain,
+        )
+        is True
     )
 
 

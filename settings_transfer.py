@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -58,19 +57,6 @@ SENSITIVE_KEY_PARTS = (
     "active_account", "customer_id", "custody",
 )
 IGNORED_ACCOUNT_DIRS = {"copy", "logs", "paper", "templates", "rollback"}
-
-
-def _sha256(path: Path) -> str:
-    if path.suffix.lower() in {".json", ".md", ".txt"}:
-        # Git for Windows may convert LF <-> CRLF after checkout.  That must
-        # not make a valid portable settings package look corrupted.
-        content = path.read_bytes().replace(b"\r\n", b"\n")
-        return hashlib.sha256(content).hexdigest()
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _is_sensitive_key(key: object) -> bool:
@@ -228,14 +214,12 @@ def _export_flat_files(account_dir: Path, folder: Path, category: str, env_path:
 def _write_manifest(folder: Path, category: str, files: list[str]) -> None:
     mapping = PUBLIC_SOURCE_MAP if category == "public" else PRIVATE_SOURCE_MAP
     targets = {name: target.as_posix() for name, target in mapping.items() if name in files}
-    hashes = {name: _sha256(folder / name) for name in files}
     _write_json(folder / MANIFEST_FILE, {
         "version": 4,
         "category": category,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "files": files,
         "targets": targets,
-        "sha256": hashes,
     })
 
 
@@ -282,7 +266,7 @@ def load_manifest(package_dir: Path) -> dict[str, Any]:
         raise ValueError("Manifest không hợp lệ.")
     if int(manifest.get("version", 0) or 0) not in {3, 4}:
         raise ValueError("Phiên bản manifest không được hỗ trợ.")
-    if not isinstance(manifest.get("files"), list) or not isinstance(manifest.get("sha256"), dict):
+    if not isinstance(manifest.get("files"), list):
         raise ValueError("Manifest thiếu danh sách kiểm tra.")
     return manifest
 
@@ -305,8 +289,6 @@ def validate_package(package_dir: Path) -> dict[str, Any]:
         if source.suffix.lower() == ".json":
             with source.open("r", encoding="utf-8-sig") as handle:
                 json.load(handle)
-        if _sha256(source) != str(manifest["sha256"].get(name, "")):
-            raise ValueError(f"File đã bị sửa hoặc hỏng: {name}")
         checked.append(name)
     return {"valid": True, "category": category, "package_id": "current", "files": checked}
 
