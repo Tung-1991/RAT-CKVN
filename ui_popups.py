@@ -15,6 +15,7 @@ import config
 import csv
 import os
 import json
+import threading
 from datetime import datetime
 
 from core.money import (
@@ -25,6 +26,17 @@ from core.money import (
     unit_from_display,
     unit_to_display,
 )
+
+
+def _require_broker_success(result, action="Cập nhật lệnh"):
+    if getattr(result, "ok", False):
+        return result
+    message = (
+        getattr(result, "message", "")
+        or getattr(result, "error", "")
+        or "Broker không xác nhận thành công."
+    )
+    raise RuntimeError(f"{action} thất bại: {message}")
 
 
 def _fit_popup(window, preferred_w, preferred_h, min_w=620, min_h=460):
@@ -1471,6 +1483,12 @@ def open_advisor_popup(app):
     var_tg_opportunity_ckcs = tk.BooleanVar(
         value=bool(tg_settings.get("opportunity_ckcs_enabled", True))
     )
+    var_tg_reversal_alerts = tk.BooleanVar(
+        value=bool(tg_settings.get("position_reversal_alerts_enabled", True))
+    )
+    var_tg_level_alerts = tk.BooleanVar(
+        value=bool(tg_settings.get("position_level_alerts_enabled", False))
+    )
     var_tg_chunk = tk.StringVar(value=str(tg_settings.get("chunk_size", 3500)))
     var_tg_token = tk.StringVar(value="")
 
@@ -1636,10 +1654,22 @@ def open_advisor_popup(app):
     _tg_check(tg_rules_col, "Nhận gợi ý CKCS", var_tg_opportunity_ckcs, 5)
     _tg_row(tg_rules_col, "Lặp cùng mã (phút)", var_tg_opportunity_cooldown, 6)
     _tg_row(tg_rules_col, "Gộp và gửi mỗi (phút)", var_tg_opportunity_batch, 7)
-    _tg_check(tg_rules_col, "Bật điều khiển từ xa (nâng cao)", var_tg_control_enabled, 8)
-    _tg_check(tg_rules_col, "Cho phép duyệt signal từ xa (nâng cao)", var_tg_signal_enabled, 9)
-    _tg_row(tg_rules_col, "Chu kỳ đọc lệnh điều khiển (giây)", var_tg_poll_interval, 10)
-    _tg_row(tg_rules_col, "Cooldown signal điều khiển (phút)", var_tg_signal_cooldown, 11)
+    _tg_check(
+        tg_rules_col,
+        "Cảnh báo đảo chiều vị thế đang mở",
+        var_tg_reversal_alerts,
+        8,
+    )
+    _tg_check(
+        tg_rules_col,
+        "Cảnh báo vị thế gần SL/TP",
+        var_tg_level_alerts,
+        9,
+    )
+    _tg_check(tg_rules_col, "Bật điều khiển từ xa (nâng cao)", var_tg_control_enabled, 10)
+    _tg_check(tg_rules_col, "Cho phép duyệt signal từ xa (nâng cao)", var_tg_signal_enabled, 11)
+    _tg_row(tg_rules_col, "Chu kỳ đọc lệnh điều khiển (giây)", var_tg_poll_interval, 12)
+    _tg_row(tg_rules_col, "Cooldown signal điều khiển (phút)", var_tg_signal_cooldown, 13)
     ctk.CTkLabel(
         tg_rules_col,
         text=(
@@ -1650,7 +1680,7 @@ def open_advisor_popup(app):
         text_color="#90CAF9",
         wraplength=880,
         justify="left",
-    ).grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
+    ).grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 8))
 
     tg_buttons = ctk.CTkFrame(tg_compact, fg_color="transparent")
     tg_buttons.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 8))
@@ -1679,6 +1709,8 @@ def open_advisor_popup(app):
                     "opportunity_mode_filter": var_tg_opportunity_mode.get(),
                     "opportunity_ckps_enabled": var_tg_opportunity_ckps.get(),
                     "opportunity_ckcs_enabled": var_tg_opportunity_ckcs.get(),
+                    "position_reversal_alerts_enabled": var_tg_reversal_alerts.get(),
+                    "position_level_alerts_enabled": var_tg_level_alerts.get(),
                     "chunk_size": var_tg_chunk.get(),
                 }
             )
@@ -1712,6 +1744,12 @@ def open_advisor_popup(app):
             )
             var_tg_opportunity_ckcs.set(
                 bool(saved.get("opportunity_ckcs_enabled", True))
+            )
+            var_tg_reversal_alerts.set(
+                bool(saved.get("position_reversal_alerts_enabled", True))
+            )
+            var_tg_level_alerts.set(
+                bool(saved.get("position_level_alerts_enabled", False))
             )
             var_tg_chunk.set(str(saved.get("chunk_size", 3500)))
             app._set_advisor_status("Telegram settings saved")
@@ -2169,12 +2207,28 @@ def open_advisor_popup(app):
     ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(1, 5))
     ctk.CTkCheckBox(
         suggestion_card,
+        text="Cảnh báo đảo chiều vị thế đang mở",
+        variable=var_tg_reversal_alerts,
+        font=("Roboto", 10, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
+    ctk.CTkCheckBox(
+        suggestion_card,
+        text="Cảnh báo vị thế gần SL/TP",
+        variable=var_tg_level_alerts,
+        font=("Roboto", 10, "bold"),
+        checkbox_width=18,
+        checkbox_height=18,
+    ).grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 4))
+    ctk.CTkCheckBox(
+        suggestion_card,
         text="Gửi thêm bản tổng 09:30 và 14:50",
         variable=var_tg_opportunity_daily_digest,
         font=("Roboto", 10, "bold"),
         checkbox_width=18,
         checkbox_height=18,
-    ).grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 7))
+    ).grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 7))
     manual_report_actions = ctk.CTkFrame(telegram_page, fg_color="#252526", corner_radius=8)
     manual_report_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 5))
     manual_report_actions.grid_columnconfigure((0, 1), weight=1)
@@ -7086,15 +7140,14 @@ def open_edit_popup(app, ticket):
         ee_btns[lb] = b
     live_edit()  # Lần gọi đầu tiên khi mở popup
 
+    btn_update = None
+
     def save_e():
         try:
             if not app._ensure_trading_otp():
                 return
-            app.connector.modify_position(
-                ticket,
-                app._price_input_to_internal(e_sl.get(), pos.symbol),
-                app._price_input_to_internal(e_tp.get(), pos.symbol),
-            )
+            new_sl = app._price_input_to_internal(e_sl.get(), pos.symbol)
+            new_tp = app._price_input_to_internal(e_tp.get(), pos.symbol)
             act = []
             for k, v in states.items():
                 if v:
@@ -7119,19 +7172,47 @@ def open_edit_popup(app, ticket):
             # Lưu Entry/Exit Mode
             selected_ee_label = var_ee.get()
             new_ee_tactic = ee_options_map.get(selected_ee_label, "OFF")
-            app.trade_mgr.update_trade_entry_exit_tactic(ticket, new_ee_tactic)
-            app.log_message(f"Update Entry/Exit #{ticket}: {new_ee_tactic}")
-            top.destroy()
+            btn_update.configure(state="disabled", text="ĐANG CẬP NHẬT...")
+
+            def _finish_success():
+                app.log_message(
+                    f"[CẬP NHẬT LỆNH] #{ticket}: SL/TP đã được broker xác nhận | "
+                    f"TSL={final_t} | E/E={new_ee_tactic}"
+                )
+                top.destroy()
+
+            def _finish_error(error):
+                try:
+                    btn_update.configure(state="normal", text="CẬP NHẬT LỆNH")
+                    messagebox.showerror("Không cập nhật được", str(error), parent=top)
+                except Exception:
+                    pass
+
+            def _update_worker():
+                try:
+                    modify_result = app.connector.modify_position(pos, new_sl, new_tp)
+                    _require_broker_success(modify_result, "Cập nhật SL/TP")
+                    app.trade_mgr.update_trade_tactic(ticket, final_t)
+                    app.trade_mgr.update_trade_entry_exit_tactic(
+                        ticket,
+                        new_ee_tactic,
+                    )
+                    app.after(0, _finish_success)
+                except Exception as error:
+                    app.after(0, lambda error=error: _finish_error(error))
+
+            threading.Thread(target=_update_worker, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Lỗi", str(e), parent=top)
-    ctk.CTkButton(
+    btn_update = ctk.CTkButton(
         top,
         text="CẬP NHẬT LỆNH",
         height=45,
         fg_color="#2e7d32",
         font=FONT_BOLD,
         command=save_e,
-    ).pack(pady=20, fill="x", padx=40)
+    )
+    btn_update.pack(pady=20, fill="x", padx=40)
 
 def show_history_popup(app):
 
@@ -7717,13 +7798,15 @@ def show_running_color_legend(app):
     body.pack(fill="both", expand=True, padx=14, pady=8)
     legend = [
         ("#40205c", "GỢI Ý BOT / CACHE", "BOT đã tính giá, số lượng, SL/TP nhưng chưa gửi mua/bán. Chuột phải để chỉnh và kích hoạt."),
-        ("#5c5417", "LỆNH LIMIT / LỆNH HẸN ĐANG CHỜ", "Đã được người dùng kích hoạt nhưng còn chờ giá LIMIT hoặc chờ đúng phiên để gửi."),
+        ("#5c5417", "LỆNH ĐANG CHỜ", "Đang chờ giá hoặc chờ đúng phiên để gửi."),
+        ("#51491b", "VỊ THẾ CHỜ ĐÓNG", "Yêu cầu đóng đã được cache. Bấm ↩ hoặc chuột phải để hủy trước khi app bắt đầu gửi."),
         ("#0b4f5c", "ĐANG GỬI", "App đang gửi lệnh tới DNSE; không bấm gửi lại."),
         ("#123f6b", "DNSE ĐÃ NHẬN", "DNSE đã nhận lệnh và đang chờ khớp."),
         ("#6a3f08", "KHỚP MỘT PHẦN", "Một phần khối lượng đã khớp, phần còn lại vẫn đang chờ."),
         ("#5c3a17", "CKCS ĐÃ KHỚP", "Cổ phiếu đã mua; xem cột trạng thái để biết đang chờ T+2 hay đã về."),
-        ("#234d20", "VỊ THẾ BUY / LONG", "Lệnh đang mở theo chiều mua. Màu xanh không có nghĩa chắc chắn đang lãi."),
-        ("#5c1a1b", "VỊ THẾ SELL / SHORT HOẶC LỆNH LỖI", "Xem chữ trên dòng để phân biệt vị thế SELL với lệnh gửi thất bại."),
+        ("#1f4630", "VỊ THẾ BUY / LONG", "Vị thế mua đang mở; màu không đại diện lãi/lỗ."),
+        ("#4a2424", "VỊ THẾ SELL / SHORT", "Vị thế bán đang mở; màu không đại diện lãi/lỗ."),
+        ("#7a1f1f", "LỆNH LỖI", "Lệnh gửi thất bại; chuột phải để xem lỗi."),
         ("#303030", "ĐÃ HỦY / HẾT HẠN", "Lệnh chờ đã bị hủy hoặc quá thời gian hiệu lực."),
     ]
     for color, title, detail in legend:

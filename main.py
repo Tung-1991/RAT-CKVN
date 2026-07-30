@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import logging
 from core.logger_setup import setup_logging  # [NEW V4.3] Import hệ thống Log 3 lớp
 import config
-from core.dnse_connector import DNSEConnector
+from core.dnse_connector import DNSEConnector, ModeBoundConnector
 from core.checklist_manager import ChecklistManager
 from core.trade_manager import TradeManager
 from core.storage_manager import load_brain_settings, load_state, save_brain_settings, save_state
@@ -353,6 +353,7 @@ class BotUI(ctk.CTk):
         self.trade_mgr = TradeManager(
             self.connector, self.checklist_mgr, log_callback=self.log_message
         )
+        self._inactive_trade_managers = {}
 
         self.grid_columnconfigure(0, weight=0, minsize=420)
         self.grid_columnconfigure(1, weight=1)
@@ -1007,10 +1008,14 @@ class BotUI(ctk.CTk):
         if requested_paper == old_paper:
             return
 
-        # Đổi chế độ luôn thu hồi quyền tự mở lệnh. Runtime chỉ quản lý vị thế
-        # thuộc mode đang chọn; không đổi mode khi mode cũ còn vị thế cần tự quản lý.
+        # Đổi mode tự do nhưng luôn thu hồi quyền MỞ lệnh mới. Vị thế mode cũ
+        # vẫn được một TradeManager mode-bound quản lý BE/SWING ở nền.
         self._mode_switching = True
         self.set_auto_trade_enabled(False, reason="Đổi PAPER/REAL")
+        try:
+            save_state(self.trade_mgr.state)
+        except Exception:
+            pass
         config.PAPER_TRADING = requested_paper
         self.log_message(f"🔄 Chuyển sang chế độ: {'PAPER' if requested_paper else 'REAL'}", target="bot")
         # Ghi vào .env để NHỚ sau khi tắt/mở lại app.
@@ -4011,6 +4016,7 @@ class BotUI(ctk.CTk):
 
     def _send_pending_order(self, item):
         order_id = str(item.get("id", ""))
+        action = str(item.get("action", "OPEN") or "OPEN").upper()
         item_mode = str(item.get("execution_mode", "PAPER") or "PAPER").upper()
         current_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
         if item_mode != current_mode:
@@ -4034,6 +4040,9 @@ class BotUI(ctk.CTk):
                         self._otp_prompt_scheduled = False
 
                 self.after(0, _prompt_pending_otp)
+            return
+        if action == "CLOSE":
+            self._send_pending_close(item)
             return
         try:
             result = self.trade_mgr.execute_manual_trade(
@@ -4079,6 +4088,76 @@ class BotUI(ctk.CTk):
             pending_orders.mark(order_id, pending_orders.FAILED, str(exc))
             self._update_opportunity_order_result(item, "FAILED", str(exc))
             self.log_message(f"[LIMIT ORDER] Exception {side} {symbol}: {exc}", error=True, target="manual")
+
+    def _send_pending_close(self, item):
+        order_id = str(item.get("id", "") or "")
+        ticket = str(item.get("position_ticket", "") or "")
+        symbol = str(item.get("symbol", "") or "").upper()
+        position = next(
+            (
+                pos
+                for pos in self.connector.get_all_open_positions()
+                if str(getattr(pos, "ticket", "") or "") == ticket
+                or str(getattr(pos, "position_id", "") or "") == ticket
+            ),
+            None,
+        )
+        if position is None:
+            pending_orders.mark(
+                order_id,
+                pending_orders.CANCELLED,
+                "POSITION_ALREADY_CLOSED",
+            )
+            self.log_message(
+                f"[ĐÓNG LỆNH] Bỏ cache #{ticket}: vị thế không còn mở.",
+                target="manual",
+            )
+            return
+        try:
+            self.trade_mgr.set_exit_reason(position.ticket, "Manual_Close")
+            result = self.connector.close_position(
+                position,
+                str(item.get("close_comment", "") or "Manual_Close"),
+            )
+            if getattr(result, "ok", False):
+                pending_orders.mark(
+                    order_id,
+                    pending_orders.SENT,
+                    getattr(result, "message", "") or "CLOSED",
+                )
+                self.log_message(
+                    f"[ĐÓNG LỆNH] Đã đóng {symbol} #{ticket}.",
+                    target="manual",
+                )
+                return
+
+            error = str(getattr(result, "error", "") or "")
+            message = str(getattr(result, "message", "") or error or "CLOSE_FAILED")
+            if error == "STOCK_NOT_SETTLED_T2":
+                pending_orders.mark(
+                    order_id,
+                    pending_orders.PENDING,
+                    message,
+                    retry_at=time.time() + 3600.0,
+                )
+                self.log_message(
+                    f"[ĐÓNG LỆNH] {symbol} #{ticket} đang chờ cổ phiếu về T+2.",
+                    target="manual",
+                )
+                return
+            pending_orders.mark(order_id, pending_orders.FAILED, message)
+            self.log_message(
+                f"[ĐÓNG LỆNH] Không đóng được {symbol} #{ticket}: {message}",
+                error=True,
+                target="manual",
+            )
+        except Exception as exc:
+            pending_orders.mark(order_id, pending_orders.FAILED, str(exc))
+            self.log_message(
+                f"[ĐÓNG LỆNH] Lỗi đóng {symbol} #{ticket}: {exc}",
+                error=True,
+                target="manual",
+            )
 
     def _update_opportunity_order_result(self, item, status, result):
         """Cập nhật bản lịch sử gợi ý đã kích hoạt theo kết quả gửi lệnh."""
@@ -4251,6 +4330,37 @@ class BotUI(ctk.CTk):
             pos_extras,
         )
 
+    def _update_inactive_mode_trades(self):
+        """Manage open positions in the mode that is not currently shown."""
+        inactive_paper = not bool(getattr(config, "PAPER_TRADING", True))
+        mode = "PAPER" if inactive_paper else "REAL"
+        managers = getattr(self, "_inactive_trade_managers", None)
+        if managers is None:
+            managers = {}
+            self._inactive_trade_managers = managers
+        manager = managers.get(mode)
+        if manager is None:
+            bound_connector = ModeBoundConnector(self.connector, inactive_paper)
+
+            def _inactive_log(message, error=False, target=None, _mode=mode):
+                self.log_message(
+                    f"[NỀN {_mode}] {message}",
+                    error=error,
+                    target=target or "bot",
+                )
+
+            manager = TradeManager(
+                bound_connector,
+                self.checklist_mgr,
+                log_callback=_inactive_log,
+            )
+            managers[mode] = manager
+        manager.state = load_state(paper=inactive_paper)
+        return manager.update_running_trades(
+            "STANDARD",
+            self.latest_market_context,
+        )
+
     def bg_update_loop(self):
         while self.running:
             if self.__dict__.get("_mode_switching", False):
@@ -4289,6 +4399,8 @@ class BotUI(ctk.CTk):
                     "STANDARD", self.latest_market_context
                 )
                 self.tsl_states_map.update(new_map)
+                inactive_map = self._update_inactive_mode_trades()
+                self.tsl_states_map.update(inactive_map)
 
                 acc = self.connector.get_account_info()
                 
@@ -5241,8 +5353,26 @@ class BotUI(ctk.CTk):
         except Exception:
             pass
 
-        for item in pending_orders.list_all():
+        pending_items = pending_orders.list_all()
+        active_pending_closes = {}
+        for pending_item in pending_items:
+            pending_status = str(pending_item.get("status", "") or "").upper()
+            if (
+                str(pending_item.get("action", "OPEN") or "OPEN").upper() == "CLOSE"
+                and pending_status not in pending_orders.FINAL_STATUSES
+            ):
+                pending_mode = str(
+                    pending_item.get("execution_mode", "PAPER") or "PAPER"
+                ).upper()
+                pending_ticket = str(
+                    pending_item.get("position_ticket", "") or ""
+                )
+                if pending_ticket:
+                    active_pending_closes[(pending_mode, pending_ticket)] = pending_item
+
+        for item in pending_items:
             item_mode = str(item.get("execution_mode", "PAPER")).upper()
+            action = str(item.get("action", "OPEN") or "OPEN").upper()
             local_id = str(item.get("id", ""))
             if not local_id:
                 continue
@@ -5264,9 +5394,12 @@ class BotUI(ctk.CTk):
             tp_source = str(item.get("tp_source", "") or ("MANUAL_TP" if tp > 0 else "PRESET"))
             plan = str(item.get("plan", "") or "")
             if not plan:
-                plan = f"OPEN -> DNSE LO @{entry:g}" if entry > 0 else f"{target} -> DNSE {target}"
+                if action == "CLOSE":
+                    plan = f"OPEN -> CLOSE #{item.get('position_ticket', '')}"
+                else:
+                    plan = f"OPEN -> DNSE LO @{entry:g}" if entry > 0 else f"{target} -> DNSE {target}"
             time_str = datetime.fromtimestamp(created).strftime("%d/%m %H:%M") if created else "--"
-            exp_str = datetime.fromtimestamp(expire_at).strftime("%d/%m %H:%M") if expire_at else "--"
+            exp_str = datetime.fromtimestamp(expire_at).strftime("%d/%m %H:%M") if expire_at else "không hết hạn"
             price_txt = f"LO @{self._fmt_price(entry, symbol)}" if entry > 0 else f"{target} auction"
             lot_txt = f"{lot:g} {unit}" if lot > 0 else f"AUTO {unit}"
             sl_txt = self._fmt_price(sl, symbol) if sl > 0 else "AUTO"
@@ -5282,17 +5415,31 @@ class BotUI(ctk.CTk):
                 "CANCELLED": "order_cancelled",
                 "SENT": "dnse_order",
             }.get(status, "local_pending")
-            values_data = (
-                f"[LOCAL] {_short_id(local_id)}",
-                time_str,
-                f"[LOCAL][{status}] {side_txt} {lot_txt} {symbol} | {plan}",
-                f"{sl_txt} ({sl_source})  |  {tp_txt} ({tp_source})",
-                f"exp {exp_str}",
-                f"lot {lot_source} | preset {item.get('preset', '')}",
-                f"entry {price_txt}",
-                result_txt or f"{status} | {item.get('note', '')} | E/E={item.get('manual_entry_tactic', 'OFF')}",
-                "" if status == "SENDING" else "X",
-            )
+            if action == "CLOSE":
+                ticket = str(item.get("position_ticket", "") or "")
+                values_data = (
+                    f"[LOCAL] {_short_id(local_id)}",
+                    time_str,
+                    f"[LOCAL][{status}] ĐÓNG {symbol} #{ticket}",
+                    "Đóng toàn bộ vị thế",
+                    exp_str,
+                    f"{lot:g} {unit}" if lot > 0 else "--",
+                    "Chờ phiên OPEN",
+                    result_txt or f"{status} | {item.get('note', '')}",
+                    "" if status == "SENDING" else "X",
+                )
+            else:
+                values_data = (
+                    f"[LOCAL] {_short_id(local_id)}",
+                    time_str,
+                    f"[LOCAL][{status}] {side_txt} {lot_txt} {symbol} | {plan}",
+                    f"{sl_txt} ({sl_source})  |  {tp_txt} ({tp_source})",
+                    f"exp {exp_str}",
+                    f"lot {lot_source} | preset {item.get('preset', '')}",
+                    f"entry {price_txt}",
+                    result_txt or f"{status} | {item.get('note', '')} | E/E={item.get('manual_entry_tactic', 'OFF')}",
+                    "" if status == "SENDING" else "X",
+                )
             _upsert(scope, row_id, values_data, tag_to_apply)
 
         def _order_pick(order, *keys, default=""):
@@ -5333,7 +5480,9 @@ class BotUI(ctk.CTk):
 
         for p in positions:
             ticket_str = str(p.ticket)
-            position_mode = "PAPER" if ticket_str.upper().startswith("PAPER") or getattr(config, "PAPER_TRADING", True) else "REAL"
+            position_mode = (
+                "PAPER" if ticket_str.upper().startswith("PAPER") else "REAL"
+            )
             scope = _running_scope(p.symbol, position_mode)
 
             # [FREEZE FIX] Đọc số liệu đã gom sẵn ở thread nền -> KHÔNG gọi mạng trên thread UI.
@@ -5371,7 +5520,7 @@ class BotUI(ctk.CTk):
             if is_child:
                 display_ticket = f" ┗━ #{ticket_str}"
 
-            broker_tag = "[PAPER]" if str(ticket_str).upper().startswith("PAPER") or getattr(config, "PAPER_TRADING", True) else "[REAL]"
+            broker_tag = "[PAPER]" if position_mode == "PAPER" else "[REAL]"
             origin_tag = "[MANUAL]"
             pos_comment = str(getattr(p, "comment", "") or "")
             if "[BOT]_AUTO_DCA" in pos_comment:
@@ -5495,6 +5644,22 @@ class BotUI(ctk.CTk):
             except Exception:
                 pass
 
+            pending_close = active_pending_closes.get((position_mode, ticket_str))
+            action_text = "❌"
+            if pending_close:
+                pending_status = str(
+                    pending_close.get("status", pending_orders.PENDING)
+                    or pending_orders.PENDING
+                ).upper()
+                if pending_status == pending_orders.SENDING:
+                    close_badge = "↗ ĐANG GỬI ĐÓNG"
+                    action_text = ""
+                else:
+                    close_badge = "⏳ CHỜ ĐÓNG"
+                    action_text = "↩"
+                stt_txt = f"{close_badge} | {stt_txt}" if stt_txt else close_badge
+                tag_to_apply = "position_closing"
+
             values_data = (
                 display_ticket,
                 time_str,
@@ -5504,7 +5669,7 @@ class BotUI(ctk.CTk):
                 rr_str,
                 pnl_excursion_str,
                 stt_txt,
-                "❌",
+                action_text,
             )
 
             _upsert(scope, ticket_str, values_data, tag_to_apply)
@@ -6838,31 +7003,92 @@ class BotUI(ctk.CTk):
 
     def close_all_trades(self):
         tree = self._current_running_tree()
-        items = [item for item in tree.get_children() if str(item).isdigit()]
-        if not items:
+        visible_ids = {
+            str(item)
+            for item in tree.get_children()
+            if not str(item).startswith(("LOCAL:", "ORDER:", "OPP:"))
+        }
+        positions = [
+            pos
+            for pos in self.connector.get_all_open_positions()
+            if str(getattr(pos, "ticket", "") or "") in visible_ids
+        ]
+        if not positions:
             return
         if self.var_confirm_close.get() and not messagebox.askyesno(
             "Xác nhận", "ĐÓNG TOÀN BỘ LỆNH?", parent=self
         ):
             return
-        if not self._ensure_trading_otp():
-            return
-        for item in items:
-            p = next(
-                (
-                    p
-                    for p in self.connector.get_all_open_positions()
-                    if str(p.ticket) == str(item)
-                ),
-                None,
+        for position in positions:
+            self._queue_or_execute_position_close(position)
+
+    def _queue_or_execute_position_close(self, position):
+        from core.market_hours import market_session_phase
+
+        ticket = str(
+            getattr(position, "position_id", None)
+            or getattr(position, "ticket", "")
+            or ""
+        )
+        symbol = str(getattr(position, "symbol", "") or "").upper()
+        phase = market_session_phase(symbol)[0]
+        if phase != "OPEN":
+            close_side = (
+                "SELL"
+                if int(getattr(position, "type", 0) or 0) == 0
+                else "BUY"
             )
-            if p:
-                self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
-                threading.Thread(
-                    target=self.connector.close_position,
-                    args=(p,),
-                    daemon=True,
-                ).start()
+            execution_mode = (
+                "PAPER" if ticket.upper().startswith("PAPER-") else "REAL"
+            )
+            pending = pending_orders.add_close_order(
+                symbol=symbol,
+                position_ticket=ticket,
+                side=close_side,
+                lot=float(getattr(position, "volume", 0.0) or 0.0),
+                execution_mode=execution_mode,
+                comment="Manual_Close",
+            )
+            self.log_message(
+                f"[ĐÓNG LỆNH] Ngoài phiên: đã cache {symbol} #{ticket} "
+                f"đến phiên OPEN (id={str(pending.get('id', ''))[:8]}).",
+                target="manual",
+            )
+            return pending
+
+        if not self._ensure_trading_otp():
+            return None
+
+        self.trade_mgr.set_exit_reason(position.ticket, "Manual_Close")
+
+        def _close_now():
+            try:
+                result = self.connector.close_position(position, "Manual_Close")
+                if getattr(result, "ok", False):
+                    self.log_message(
+                        f"[ĐÓNG LỆNH] Đã đóng {symbol} #{ticket}.",
+                        target="manual",
+                    )
+                else:
+                    message = (
+                        getattr(result, "message", "")
+                        or getattr(result, "error", "")
+                        or "CLOSE_FAILED"
+                    )
+                    self.log_message(
+                        f"[ĐÓNG LỆNH] Không đóng được {symbol} #{ticket}: {message}",
+                        error=True,
+                        target="manual",
+                    )
+            except Exception as exc:
+                self.log_message(
+                    f"[ĐÓNG LỆNH] Lỗi đóng {symbol} #{ticket}: {exc}",
+                    error=True,
+                    target="manual",
+                )
+
+        threading.Thread(target=_close_now, daemon=True).start()
+        return None
 
     def _pending_row_item(self, row_id):
         if not str(row_id).startswith("LOCAL:"):
@@ -7045,6 +7271,64 @@ class BotUI(ctk.CTk):
         ctk.CTkButton(top, text="KÍCH HOẠT", height=42, fg_color="#6A1B9A", command=activate).pack(fill="x", padx=18, pady=(8, 4))
         ctk.CTkButton(top, text="ĐÓNG", height=34, fg_color="#455A64", command=top.destroy).pack(fill="x", padx=18, pady=4)
 
+    def _active_pending_close_for_ticket(self, ticket):
+        mode = "PAPER" if str(ticket or "").upper().startswith("PAPER") else "REAL"
+        try:
+            return pending_orders.find_active_close(ticket, execution_mode=mode)
+        except Exception:
+            return None
+
+    def _running_selection_action_summary(self, row_ids):
+        counts = {
+            "close": 0,
+            "cancel_close": 0,
+            "cancel_local": 0,
+            "cancel_dnse": 0,
+            "delete_opportunity": 0,
+            "delete_final": 0,
+            "busy": 0,
+        }
+        for raw_id in row_ids or ():
+            row_id = str(raw_id or "")
+            if row_id.startswith("OPP:"):
+                counts["delete_opportunity"] += 1
+            elif row_id.startswith("LOCAL:"):
+                item = self._pending_row_item(row_id) or {}
+                status = str(item.get("status", "") or "").upper()
+                if status == pending_orders.SENDING:
+                    counts["busy"] += 1
+                elif status in pending_orders.FINAL_STATUSES:
+                    counts["delete_final"] += 1
+                else:
+                    counts["cancel_local"] += 1
+            elif row_id.startswith("ORDER:"):
+                counts["cancel_dnse"] += 1
+            else:
+                pending_close = self._active_pending_close_for_ticket(row_id)
+                if pending_close:
+                    status = str(pending_close.get("status", "") or "").upper()
+                    if status == pending_orders.SENDING:
+                        counts["busy"] += 1
+                    else:
+                        counts["cancel_close"] += 1
+                else:
+                    counts["close"] += 1
+
+        parts = []
+        labels = (
+            ("close", "Đóng {n} vị thế"),
+            ("cancel_close", "Hủy đóng {n} vị thế"),
+            ("cancel_local", "Hủy {n} lệnh chờ"),
+            ("cancel_dnse", "Hủy {n} lệnh DNSE"),
+            ("delete_opportunity", "Xóa {n} gợi ý"),
+            ("delete_final", "Dọn {n} dòng hoàn tất"),
+            ("busy", "Bỏ qua {n} dòng đang gửi"),
+        )
+        for key, template in labels:
+            if counts[key]:
+                parts.append(template.format(n=counts[key]))
+        return " · ".join(parts) or "Không có thao tác khả dụng"
+
     def _handle_running_table_action(self, row_id, confirm=True):
         row_id = str(row_id or "")
         if row_id.startswith("OPP:"):
@@ -7112,35 +7396,47 @@ class BotUI(ctk.CTk):
             threading.Thread(target=_cancel_order, daemon=True).start()
             return
 
-        try:
-            ticket = int(row_id)
-        except Exception:
-            return
+        pending_close = BotUI._active_pending_close_for_ticket(self, row_id)
+        if pending_close:
+            status = str(pending_close.get("status", "") or "").upper()
+            if status == pending_orders.SENDING:
+                self.log_message(
+                    f"[ĐÓNG LỆNH] #{row_id} đang được gửi, không thể hủy.",
+                    target="manual",
+                )
+                return
+            return BotUI._handle_running_table_action(
+                self,
+                f"LOCAL:{pending_close.get('id', '')}",
+                confirm=confirm,
+            )
+
         if confirm and self.var_confirm_close.get() and not messagebox.askyesno(
             "Dong lenh", f"Dong lenh #{row_id}?", parent=self
         ):
-            return
-        if not self._ensure_trading_otp():
             return
         p = next(
             (
                 p
                 for p in self.connector.get_all_open_positions()
-                if p.ticket == ticket
+                if str(getattr(p, "ticket", "") or "") == row_id
+                or str(getattr(p, "position_id", "") or "") == row_id
             ),
             None,
         )
         if p:
-            self.trade_mgr.set_exit_reason(p.ticket, "Manual_Close")
-            threading.Thread(target=self.connector.close_position, args=(p,), daemon=True).start()
+            self._queue_or_execute_position_close(p)
 
     def close_selected_trades(self):
         tree = self._current_running_tree()
         selected = tree.selection()
         if not selected:
             return
+        summary = self._running_selection_action_summary(selected)
+        if summary == "Không có thao tác khả dụng":
+            return
         if self.var_confirm_close.get() and not messagebox.askyesno(
-            "Xac nhan", f"Thao tac voi {len(selected)} dong da chon?", parent=self
+            "Xác nhận thao tác", f"{summary}?", parent=self
         ):
             return
         for item in selected:
@@ -7158,12 +7454,16 @@ class BotUI(ctk.CTk):
     def on_tree_right_click(self, event):
         tree = event.widget
         row_id = tree.identify_row(event.y)
-        selected = tree.selection()
+        selected = tuple(tree.selection())
+        if row_id and row_id not in selected:
+            tree.selection_set(row_id)
+            selected = (row_id,)
         menu = Menu(self, tearoff=0, font=("Arial", 14))
 
         if len(selected) > 1:
+            summary = self._running_selection_action_summary(selected)
             menu.add_command(
-                label=f"Thao tac {len(selected)} dong da chon",
+                label=summary,
                 command=self.close_selected_trades,
             )
         else:
@@ -7185,7 +7485,7 @@ class BotUI(ctk.CTk):
                     status = str(item.get("status", "")).upper()
                     if status == "FAILED":
                         menu.add_command(
-                            label="Xem loi",
+                            label="Xem lỗi",
                             command=lambda item=item: messagebox.showinfo(
                                 "Pending order error",
                                 str(item.get("result", "") or "No error detail"),
@@ -7195,32 +7495,48 @@ class BotUI(ctk.CTk):
                         menu.add_separator()
                     if status in pending_orders.FINAL_STATUSES:
                         menu.add_command(
-                            label="Xoa dong",
+                            label="Xóa dòng",
                             command=lambda row_id=row_id: self._handle_running_table_action(row_id),
                         )
                     elif status == "SENDING":
-                        menu.add_command(label="Dang gui DNSE", state="disabled")
+                        menu.add_command(label="Đang gửi DNSE", state="disabled")
                     else:
                         menu.add_command(
-                            label="Huy hen",
+                            label="Hủy lệnh chờ",
                             command=lambda row_id=row_id: self._handle_running_table_action(row_id),
                         )
                 elif str(row_id).startswith("ORDER:"):
                     menu.add_command(
-                        label="Huy lenh DNSE",
+                        label="Hủy lệnh DNSE",
                         command=lambda row_id=row_id: self._handle_running_table_action(row_id),
                     )
                 else:
                     ticket = row_id
-                    menu.add_command(
-                        label=f"Chinh sua lenh #{ticket}",
-                        command=lambda: self.open_edit_popup(ticket),
-                    )
-                    menu.add_separator()
-                    menu.add_command(
-                        label="Dong vi the nay",
-                        command=lambda: self.close_selected_trades(),
-                    )
+                    pending_close = self._active_pending_close_for_ticket(ticket)
+                    if pending_close:
+                        status = str(pending_close.get("status", "") or "").upper()
+                        if status == pending_orders.SENDING:
+                            menu.add_command(
+                                label="Đang gửi yêu cầu đóng",
+                                state="disabled",
+                            )
+                        else:
+                            menu.add_command(
+                                label="Hủy yêu cầu đóng",
+                                command=lambda row_id=row_id: self._handle_running_table_action(
+                                    row_id
+                                ),
+                            )
+                    else:
+                        menu.add_command(
+                            label=f"Sửa SL / TP / TSL #{ticket}",
+                            command=lambda: self.open_edit_popup(ticket),
+                        )
+                        menu.add_separator()
+                        menu.add_command(
+                            label="Đóng vị thế",
+                            command=lambda: self.close_selected_trades(),
+                        )
 
         if menu.index("end") is not None:
             menu.add_separator()

@@ -349,6 +349,28 @@ class SignalListener:
         context = signal.get("context", {})
         market_mode = signal.get("market_mode", "ANY")
 
+        # Telegram opportunity remains a market-signal feed.  Position alerts
+        # are separate and are emitted only for positions that are already open.
+        try:
+            from telegram_notify.position_alerts import observe_reversal
+
+            open_positions = self.trade_manager.connector.get_all_open_positions()
+            current_price = float(
+                context.get(
+                    "current_price",
+                    context.get("last", context.get("bid", context.get("ask", 0.0))),
+                )
+                or 0.0
+            )
+            observe_reversal(
+                open_positions,
+                symbol,
+                action,
+                current_price=current_price,
+            )
+        except Exception as exc:
+            logger.error(f"[Listener] Position Telegram alert error: {exc}")
+
         # [NEW V4.4 FINAL] LƯỚI LỌC 0: TỰ ĐỘNG CẮT LỆNH ĐẢO CHIỀU (CLOSE ON REVERSE)
         # Chạy độc lập với AUTO-TRADE. Bất cứ lệnh nào đang ôm tactic REVERSE_CLOSE
         # đều sẽ bị chém ngay lập tức khi có tín hiệu ngược (bảo vệ tài khoản).

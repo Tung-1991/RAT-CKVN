@@ -219,6 +219,53 @@ def _unwrap_payload(data: Any, collection_keys: Tuple[str, ...] = ()) -> Any:
     return data
 
 
+class ModeBoundConnector:
+    """Bind one shared DNSE connector to PAPER or REAL for background management."""
+
+    def __init__(self, connector: "DNSEConnector", paper_mode: bool):
+        self._connector = connector
+        self._paper_mode = bool(paper_mode)
+
+    def __getattr__(self, name):
+        return getattr(self._connector, name)
+
+    def _is_paper_mode(self) -> bool:
+        return self._paper_mode
+
+    def get_account_info(self, paper_mode: Optional[bool] = None):
+        return self._connector.get_account_info(paper_mode=self._paper_mode)
+
+    def get_positions(self, paper_mode: Optional[bool] = None):
+        return self._connector.get_positions(paper_mode=self._paper_mode)
+
+    def get_all_open_positions(self, paper_mode: Optional[bool] = None):
+        return self._connector.get_all_open_positions(paper_mode=self._paper_mode)
+
+    def get_paper_closed_trade(self, ticket: Any):
+        if not self._paper_mode:
+            return None
+        return self._connector._paper().get_closed_trade(ticket)
+
+    def modify_position(
+        self, position_or_ticket: Any, sl: float = 0.0, tp: float = 0.0
+    ) -> BrokerOrderResult:
+        return self._connector.modify_position(
+            position_or_ticket,
+            sl,
+            tp,
+            paper_mode=self._paper_mode,
+        )
+
+    def close_position(
+        self, position_or_ticket: Any, comment: str = ""
+    ) -> BrokerOrderResult:
+        return self._connector.close_position(
+            position_or_ticket,
+            comment,
+            paper_mode=self._paper_mode,
+        )
+
+
 class DNSEConnector:
     _balances_403_muted = False
     _positions_403_muted = False
@@ -1550,8 +1597,10 @@ class DNSEConnector:
         self._positions_cache_ts = time.time()
         return positions
 
-    def get_all_open_positions(self) -> List[BrokerPosition]:
-        return self.get_positions()
+    def get_all_open_positions(
+        self, paper_mode: Optional[bool] = None
+    ) -> List[BrokerPosition]:
+        return self.get_positions(paper_mode=paper_mode)
 
     def _order_result(self, ok: bool, data: Any, status_code: int, message: str = "") -> BrokerOrderResult:
         payload = _unwrap_payload(data) if isinstance(data, dict) else {}
@@ -1819,8 +1868,16 @@ class DNSEConnector:
         )
         return self._order_result(ok, data, status_code, message)
 
-    def modify_position(self, position_or_ticket: Any, sl: float = 0.0, tp: float = 0.0) -> BrokerOrderResult:
-        if self._is_paper_mode():
+    def modify_position(
+        self,
+        position_or_ticket: Any,
+        sl: float = 0.0,
+        tp: float = 0.0,
+        *,
+        paper_mode: Optional[bool] = None,
+    ) -> BrokerOrderResult:
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return self._paper().modify_position(position_or_ticket, sl, tp)
         position_id = getattr(position_or_ticket, "position_id", None) or getattr(position_or_ticket, "ticket", None) or position_or_ticket
         result = self.set_position_pnl_config(str(position_id), sl, tp)
@@ -1828,8 +1885,15 @@ class DNSEConnector:
             logger.warning("DNSE PnL config update failed/not supported for %s: %s", position_id, result.error)
         return result
 
-    def close_position(self, position_or_ticket: Any, comment: str = "") -> BrokerOrderResult:
-        if self._is_paper_mode():
+    def close_position(
+        self,
+        position_or_ticket: Any,
+        comment: str = "",
+        *,
+        paper_mode: Optional[bool] = None,
+    ) -> BrokerOrderResult:
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return self._paper().close_position(position_or_ticket, comment)
         position_id = getattr(position_or_ticket, "position_id", None) or getattr(position_or_ticket, "ticket", None) or position_or_ticket
         pos_obj = position_or_ticket if hasattr(position_or_ticket, "symbol") else None

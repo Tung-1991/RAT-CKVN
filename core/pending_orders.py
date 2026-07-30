@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 import math
+from datetime import datetime, timedelta
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional
 
@@ -44,9 +45,69 @@ def _expire_hours() -> float:
         return max(0.01, default)
 
 
+def _next_target_session_end(symbol: str, target: str, created_at: float) -> float:
+    """Return the end of the next eligible trading phase.
+
+    A wall-clock expiry must never remove an order before it has had at least
+    one chance to reach its requested phase.  The cached DNSE working-date
+    calendar is used when available; weekdays remain the safe fallback.
+    """
+    created = datetime.fromtimestamp(float(created_at))
+    target = str(target or "OPEN").upper()
+    is_derivative = str(symbol or "").upper().startswith("VN30F")
+    if target == "ATO":
+        end_minute = 540 if is_derivative else 555
+    elif target == "ATC":
+        end_minute = 885
+    else:
+        end_minute = 870
+
+    try:
+        from core.market_calendar import date_status
+    except Exception:
+        date_status = None
+
+    for offset in range(0, 31):
+        day = created + timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+        if date_status is not None:
+            try:
+                if str(date_status(day).get("status", "")).upper() in {
+                    "WEEKEND",
+                    "HOLIDAY",
+                }:
+                    continue
+            except Exception:
+                pass
+        session_end = day.replace(
+            hour=end_minute // 60,
+            minute=end_minute % 60,
+            second=0,
+            microsecond=0,
+        )
+        if session_end > created:
+            return session_end.timestamp()
+    return created_at
+
+
+def _order_expire_at(
+    *,
+    symbol: str,
+    target: str,
+    created_at: float,
+    expire_hours: float,
+) -> float:
+    wall_clock_expiry = float(created_at) + (float(expire_hours) * 3600.0)
+    next_session_end = _next_target_session_end(symbol, target, created_at)
+    return max(wall_clock_expiry, next_session_end)
+
+
 def _normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
     item = dict(entry or {})
     item.setdefault("id", str(uuid.uuid4()))
+    action = str(item.get("action", "OPEN") or "OPEN").strip().upper()
+    item["action"] = action if action in ("OPEN", "CLOSE") else "OPEN"
     item["symbol"] = str(item.get("symbol", "") or "").strip().upper()
     item["side"] = str(item.get("side", "BUY") or "BUY").strip().upper()
     item["preset"] = str(item.get("preset", getattr(config, "DEFAULT_PRESET", "SCALPING")) or "SCALPING")
@@ -59,6 +120,15 @@ def _normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
     item.setdefault("created_at", _now())
     item.setdefault("expire_at", float(item["created_at"]) + (_expire_hours() * 3600.0))
     item["status"] = str(item.get("status", PENDING) or PENDING).upper()
+    if item["action"] == "OPEN" and item["status"] == PENDING:
+        item["expire_at"] = max(
+            float(item.get("expire_at", 0.0) or 0.0),
+            _next_target_session_end(
+                item["symbol"],
+                item["target"],
+                float(item["created_at"]),
+            ),
+        )
     item.setdefault("note", "")
     item.setdefault("result", "")
     item.setdefault("dnse_order_id", "")
@@ -75,6 +145,9 @@ def _normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
     item["trigger_price"] = float(item.get("trigger_price", item["entry_price"]) or 0.0)
     item["slippage_ticks"] = max(0, int(item.get("slippage_ticks", 0) or 0))
     item.setdefault("opportunity_id", "")
+    item["position_ticket"] = str(item.get("position_ticket", "") or "")
+    item.setdefault("close_comment", "")
+    item.setdefault("retry_at", 0.0)
     # Lệnh hẹn cũ chưa có mode được coi là PAPER để không thể vô tình gửi tiền thật.
     mode = str(item.get("execution_mode", "PAPER") or "PAPER").strip().upper()
     item["execution_mode"] = mode if mode in ("PAPER", "REAL") else "PAPER"
@@ -130,6 +203,7 @@ def add_order(
 ) -> Dict[str, Any]:
     created_at = _now()
     hours = _expire_hours() if expire_hours is None else max(0.01, float(expire_hours))
+    resolved_target = target or ("OPEN" if float(entry_price or 0.0) > 0 else "ATO")
     item = _normalize(
         {
             "id": str(uuid.uuid4()),
@@ -140,9 +214,14 @@ def add_order(
             "entry_price": entry_price,
             "sl": sl,
             "tp": tp,
-            "target": target or ("OPEN" if float(entry_price or 0.0) > 0 else "ATO"),
+            "target": resolved_target,
             "created_at": created_at,
-            "expire_at": created_at + (hours * 3600.0),
+            "expire_at": _order_expire_at(
+                symbol=symbol,
+                target=resolved_target,
+                created_at=created_at,
+                expire_hours=hours,
+            ),
             "status": PENDING,
             "note": note,
             "manual_entry_tactic": manual_entry_tactic,
@@ -168,6 +247,66 @@ def add_order(
     return deepcopy(item)
 
 
+def add_close_order(
+    *,
+    symbol: str,
+    position_ticket: Any,
+    side: str,
+    lot: float = 0.0,
+    execution_mode: Optional[str] = None,
+    comment: str = "Manual_Close",
+    note: str = "",
+) -> Dict[str, Any]:
+    """Cache a manual close until the next continuous OPEN session.
+
+    Close requests do not expire: they remain pending until executed, cancelled
+    by the user, or finalized because the position no longer exists.
+    """
+    created_at = _now()
+    mode = str(
+        execution_mode
+        or ("PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL")
+    ).strip().upper()
+    mode = mode if mode in ("PAPER", "REAL") else "PAPER"
+    ticket = str(position_ticket or "")
+    with _LOCK:
+        items = _read_unlocked()
+        for existing in items:
+            if (
+                str(existing.get("action", "OPEN")).upper() == "CLOSE"
+                and str(existing.get("position_ticket", "")) == ticket
+                and str(existing.get("execution_mode", "PAPER")).upper() == mode
+                and str(existing.get("status", "")).upper() not in FINAL_STATUSES
+            ):
+                return deepcopy(_normalize(existing))
+        item = _normalize(
+            {
+                "id": str(uuid.uuid4()),
+                "action": "CLOSE",
+                "symbol": symbol,
+                "side": side,
+                "preset": "",
+                "lot": lot,
+                "entry_price": 0.0,
+                "sl": 0.0,
+                "tp": 0.0,
+                "target": "OPEN",
+                "created_at": created_at,
+                "expire_at": 0.0,
+                "status": PENDING,
+                "note": note or "Đóng vị thế khi thị trường mở",
+                "plan": f"OPEN -> CLOSE #{ticket}",
+                "execution_mode": mode,
+                "entry_mode": "MARKET",
+                "position_ticket": ticket,
+                "close_comment": comment,
+            }
+        )
+        items.append(item)
+        _write_unlocked(items)
+    return deepcopy(item)
+
+
 def list_all() -> List[Dict[str, Any]]:
     with _LOCK:
         return deepcopy(_read_unlocked())
@@ -175,6 +314,29 @@ def list_all() -> List[Dict[str, Any]]:
 
 def list_active() -> List[Dict[str, Any]]:
     return [x for x in list_all() if str(x.get("status", "")).upper() not in FINAL_STATUSES]
+
+
+def find_active_close(
+    position_ticket: Any,
+    execution_mode: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the non-final close request for one position, if any."""
+    ticket = str(position_ticket or "")
+    mode = str(execution_mode or "").strip().upper()
+    if not ticket:
+        return None
+    with _LOCK:
+        for item in _read_unlocked():
+            if str(item.get("action", "OPEN")).upper() != "CLOSE":
+                continue
+            if str(item.get("position_ticket", "")) != ticket:
+                continue
+            if mode and str(item.get("execution_mode", "PAPER")).upper() != mode:
+                continue
+            if str(item.get("status", "")).upper() in FINAL_STATUSES:
+                continue
+            return deepcopy(_normalize(item))
+    return None
 
 
 def mark(order_id: str, status: str, result: str = "", **updates: Any) -> Optional[Dict[str, Any]]:
@@ -233,7 +395,12 @@ def expire_pending(now: Optional[float] = None) -> List[Dict[str, Any]]:
     with _LOCK:
         items = _read_unlocked()
         for item in items:
-            if str(item.get("status", "")).upper() == PENDING and float(item.get("expire_at", 0.0) or 0.0) <= now:
+            expire_at = float(item.get("expire_at", 0.0) or 0.0)
+            if (
+                str(item.get("status", "")).upper() == PENDING
+                and expire_at > 0
+                and expire_at <= now
+            ):
                 item["status"] = EXPIRED
                 item["result"] = "Expired before market phase"
                 item["finalized_at"] = now
@@ -324,7 +491,10 @@ def claim_due(
                 continue
             if str(item.get("execution_mode", "PAPER")).upper() != current_mode:
                 continue
-            if float(item.get("expire_at", 0.0) or 0.0) <= now:
+            if float(item.get("retry_at", 0.0) or 0.0) > now:
+                continue
+            expire_at = float(item.get("expire_at", 0.0) or 0.0)
+            if expire_at > 0 and expire_at <= now:
                 item["status"] = EXPIRED
                 item["result"] = "Expired before market phase"
                 changed = True

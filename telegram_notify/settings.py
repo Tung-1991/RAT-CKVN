@@ -24,6 +24,10 @@ DEFAULT_SETTINGS = {
     "opportunity_mode_filter": "ALL",
     "opportunity_ckps_enabled": True,
     "opportunity_ckcs_enabled": True,
+    "position_reversal_alerts_enabled": True,
+    "position_level_alerts_enabled": False,
+    "position_alert_distance_r": 0.2,
+    "position_alert_cooldown_minutes": 15.0,
 }
 
 
@@ -67,6 +71,13 @@ def normalize_settings(data):
     clean = dict(DEFAULT_SETTINGS)
     if isinstance(data, dict):
         clean.update(data)
+        if (
+            "position_reversal_alerts_enabled" not in data
+            and "position_alerts_enabled" in data
+        ):
+            clean["position_reversal_alerts_enabled"] = bool(
+                data.get("position_alerts_enabled")
+            )
         # Migrate only the two legacy defaults. Custom values are preserved.
         if _is_exact_number(data.get("opportunity_duplicate_cooldown_minutes"), 60.0):
             clean["opportunity_duplicate_cooldown_minutes"] = 0.0
@@ -113,6 +124,25 @@ def normalize_settings(data):
     )
     clean["opportunity_ckps_enabled"] = bool(clean.get("opportunity_ckps_enabled", True))
     clean["opportunity_ckcs_enabled"] = bool(clean.get("opportunity_ckcs_enabled", True))
+    clean.pop("position_alerts_enabled", None)
+    clean["position_reversal_alerts_enabled"] = bool(
+        clean.get("position_reversal_alerts_enabled", True)
+    )
+    clean["position_level_alerts_enabled"] = bool(
+        clean.get("position_level_alerts_enabled", False)
+    )
+    clean["position_alert_distance_r"] = _safe_float(
+        clean.get("position_alert_distance_r"),
+        DEFAULT_SETTINGS["position_alert_distance_r"],
+        min_value=0.01,
+        max_value=1.0,
+    )
+    clean["position_alert_cooldown_minutes"] = _safe_float(
+        clean.get("position_alert_cooldown_minutes"),
+        DEFAULT_SETTINGS["position_alert_cooldown_minutes"],
+        min_value=1.0,
+        max_value=1440.0,
+    )
     return clean
 
 

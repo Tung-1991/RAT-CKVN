@@ -874,15 +874,16 @@ def setup_right_panel(app, parent):
         tree = ttk.Treeview(
             container, columns=cols, show="headings", style="Running.Treeview", selectmode="extended"
         )
-        tree.tag_configure("buy_row", background="#234d20", foreground="#e0e0e0")
-        tree.tag_configure("sell_row", background="#5c1a1b", foreground="#e0e0e0")
+        tree.tag_configure("buy_row", background="#1f4630", foreground="#e0e0e0")
+        tree.tag_configure("sell_row", background="#4a2424", foreground="#e0e0e0")
+        tree.tag_configure("position_closing", background="#51491b", foreground="#FFF3B0")
         tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
         tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
         tree.tag_configure("local_pending", background="#5c5417", foreground="#FFF3B0")
         tree.tag_configure("local_sending", background="#0b4f5c", foreground="#B2EBF2")
         tree.tag_configure("dnse_order", background="#123f6b", foreground="#D7ECFF")
         tree.tag_configure("dnse_partial", background="#6a3f08", foreground="#FFE0B2")
-        tree.tag_configure("order_failed", background="#5c1a1b", foreground="#FFCDD2")
+        tree.tag_configure("order_failed", background="#7a1f1f", foreground="#FFCDD2")
         tree.tag_configure("order_cancelled", background="#303030", foreground="#B0BEC5")
         tree.tag_configure("bot_opportunity", background="#40205c", foreground="#F3E5F5")
         for c, h, w, a in zip(cols, headers, widths, anchors):

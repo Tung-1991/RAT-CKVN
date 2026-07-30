@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import os
+from datetime import datetime
 
 import config
 from core import pending_orders, storage_manager
@@ -32,7 +33,7 @@ def test_pending_order_add_cancel_and_delete(monkeypatch, tmp_path):
 
     assert os.path.exists(account_dir / "pending_orders.json")
     assert item["target"] == "OPEN"
-    assert round((item["expire_at"] - item["created_at"]) / 3600) == 12
+    assert item["expire_at"] >= item["created_at"] + 12 * 3600
     assert len(pending_orders.list_active()) == 1
 
     cancelled = pending_orders.cancel(item["id"])
@@ -74,6 +75,11 @@ def test_claim_due_is_atomic_and_does_not_claim_twice(monkeypatch, tmp_path):
 
 def test_expired_pending_order_is_not_claimed(monkeypatch, tmp_path):
     _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        pending_orders,
+        "_next_target_session_end",
+        lambda _symbol, _target, created_at: created_at,
+    )
     item = pending_orders.add_order(
         symbol="VN30F1M",
         side="BUY",
@@ -83,11 +89,43 @@ def test_expired_pending_order_is_not_claimed(monkeypatch, tmp_path):
         expire_hours=0.01,
     )
 
-    due = pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=item["expire_at"] + 1)
+    forced_expiry = item["created_at"] + 1
+    pending_orders.mark(item["id"], pending_orders.PENDING, expire_at=forced_expiry)
+    due = pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=forced_expiry + 1)
 
     assert due == []
     stored = pending_orders.list_all()[0]
     assert stored["status"] == pending_orders.EXPIRED
+
+
+def test_pending_entry_survives_weekend_and_holiday_until_next_session(
+    monkeypatch, tmp_path
+):
+    _isolated_account(monkeypatch, tmp_path)
+    friday_after_close = datetime(2026, 7, 31, 16, 0).timestamp()
+    monkeypatch.setattr(pending_orders, "_now", lambda: friday_after_close)
+    monkeypatch.setattr(
+        "core.market_calendar.date_status",
+        lambda value=None: {
+            "status": (
+                "HOLIDAY"
+                if value.strftime("%Y-%m-%d") == "2026-08-03"
+                else "TRADING"
+            )
+        },
+    )
+
+    item = pending_orders.add_order(
+        symbol="VN30F1M",
+        side="BUY",
+        preset="SCALPING",
+        lot=1,
+        entry_price=1200,
+        expire_hours=24,
+    )
+
+    next_session_end = datetime(2026, 8, 4, 14, 30).timestamp()
+    assert item["expire_at"] >= next_session_end
 
 
 def test_pending_orders_never_cross_paper_real(monkeypatch, tmp_path):
@@ -110,6 +148,70 @@ def test_pending_orders_never_cross_paper_real(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "PAPER_TRADING", True)
     due = pending_orders.claim_due(lambda _symbol: ("OPEN", ""), now=paper["created_at"] + 2)
     assert [item["id"] for item in due] == [paper["id"]]
+
+
+def test_pending_close_waits_for_open_and_does_not_expire(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+
+    item = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-1",
+        side="SELL",
+        lot=1,
+        execution_mode="PAPER",
+    )
+
+    assert item["action"] == "CLOSE"
+    assert item["target"] == "OPEN"
+    assert item["expire_at"] == 0
+    assert pending_orders.expire_pending(now=item["created_at"] + 365 * 86400) == []
+    assert pending_orders.claim_due(
+        lambda _symbol: ("CLOSED", ""),
+        now=item["created_at"] + 1,
+    ) == []
+
+    due = pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 2,
+    )
+    assert [row["id"] for row in due] == [item["id"]]
+
+
+def test_pending_close_is_deduplicated_per_position_and_mode(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+
+    first = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-9",
+        side="SELL",
+        execution_mode="PAPER",
+    )
+    duplicate = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-9",
+        side="SELL",
+        execution_mode="PAPER",
+    )
+
+    assert duplicate["id"] == first["id"]
+    assert len(pending_orders.list_active()) == 1
+
+
+def test_find_active_close_is_mode_safe_and_ignores_final_rows(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    paper = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-11",
+        side="SELL",
+        execution_mode="PAPER",
+    )
+
+    assert pending_orders.find_active_close("PAPER-11", "PAPER")["id"] == paper["id"]
+    assert pending_orders.find_active_close("PAPER-11", "REAL") is None
+
+    pending_orders.cancel(paper["id"])
+    assert pending_orders.find_active_close("PAPER-11", "PAPER") is None
 
 
 def test_limit_opportunity_waits_for_price_and_uses_nearest_allowed_tick(monkeypatch, tmp_path):

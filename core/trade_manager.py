@@ -2161,7 +2161,10 @@ class TradeManager:
             self._sync_state_lifecycle()
             current_positions = self.connector.get_all_open_positions()
             current_tickets = [str(p.ticket) for p in current_positions]
-            paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+            try:
+                paper_mode = bool(self.connector._is_paper_mode())
+            except Exception:
+                paper_mode = bool(getattr(config, "PAPER_TRADING", True))
             # PAPER và REAL dùng chung danh sách quản lý để đổi mode không làm mất
             # chiến thuật, nhưng tuyệt đối không được coi ticket của mode kia là vừa đóng.
             tracked_tickets = [
@@ -2461,6 +2464,30 @@ class TradeManager:
                     if all_market_contexts
                     else {}
                 )
+                try:
+                    from telegram_notify.position_alerts import observe_position
+
+                    alert_price = float(
+                        sym_ctx.get(
+                            "current_price",
+                            getattr(pos, "price_current", 0.0),
+                        )
+                        or 0.0
+                    )
+                    observe_position(
+                        pos,
+                        alert_price,
+                        initial_r_dist=float(
+                            self.state.get("initial_r_dist", {}).get(s_ticket, 0.0)
+                            or 0.0
+                        ),
+                    )
+                except Exception as exc:
+                    self.log(
+                        f"[TELEGRAM] Cảnh báo vị thế #{s_ticket} lỗi: {exc}",
+                        error=True,
+                        target="bot-log",
+                    )
                 if is_newly_tracked:
                     try:
                         from ai_advisor.history import record_trade_opened
@@ -3664,7 +3691,19 @@ class TradeManager:
                 else min(valid_moves, key=lambda x: x[0])
             )
             if abs(target_sl - current_sl) > (point / 2):
-                self.connector.modify_position(pos, target_sl, pos.tp)
+                modify_result = self.connector.modify_position(pos, target_sl, pos.tp)
+                if not bool(getattr(modify_result, "ok", False)):
+                    message = str(
+                        getattr(modify_result, "message", "")
+                        or getattr(modify_result, "error", "")
+                        or "BROKER_REJECTED_TSL"
+                    )
+                    self.log(
+                        f"[TSL] Không sửa được SL #{pos.ticket} -> {target_sl:.2f}: {message}",
+                        error=True,
+                        target="bot",
+                    )
+                    return f"{action_rule} · DNSE TỪ CHỐI ({message})"
                 # [NEW] Lưu quy tắc dời SL để tracking lý do đóng lệnh sau này
                 if "last_tsl_rules" not in self.state:
                     self.state["last_tsl_rules"] = {}

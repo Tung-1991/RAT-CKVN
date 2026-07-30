@@ -756,7 +756,7 @@
   },
   "opportunity_settings": {
     "enabled": true,
-    "show_in_running_table": false,
+    "show_in_running_table": true,
     "retention_hours": 24.0,
     "history_enabled": true,
     "default_order_mode": "MARKET",

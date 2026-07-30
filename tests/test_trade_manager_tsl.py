@@ -19,7 +19,7 @@ class _Connector:
 
     def modify_position(self, pos, sl, tp):
         self.modified.append((pos.ticket, sl, tp))
-        return True
+        return SimpleNamespace(ok=True, message="MODIFIED", error="")
 
 
 def test_stale_paper_ticket_does_not_create_fake_pnl(monkeypatch):
@@ -262,6 +262,31 @@ def test_be_moves_stop_to_break_even_after_profit_trigger(monkeypatch):
     assert manager.state["be_sl_arms"] == {}
     assert manager.connector.modified[0][1] == pytest.approx(100.0)
     assert "BE_SL" in result
+
+
+def test_tsl_does_not_claim_success_when_broker_rejects(monkeypatch):
+    monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
+    manager = _manager(
+        "BE",
+        {
+            "BE_SL_LOSS_ENABLE": False,
+            "BE_OFFSET_RR": 0.8,
+            "BE_OFFSET_POINTS": 0,
+        },
+    )
+    manager.connector.modify_position = lambda *_args: SimpleNamespace(
+        ok=False,
+        message="DNSE rejected",
+        error="REJECTED",
+    )
+
+    result = manager._apply_independent_tsl(
+        _position(price_current=101.0, profit=100.0),
+        {},
+    )
+
+    assert "DNSE TỪ CHỐI" in result
+    assert manager.state.get("last_tsl_rules", {}) == {}
 
 
 class _ImmediateThread:

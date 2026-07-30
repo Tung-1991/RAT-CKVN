@@ -20,6 +20,8 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert loaded["signal_proposals_enabled"] is False
     assert loaded["signal_proposal_cooldown_minutes"] == 15.0
     assert loaded["opportunity_alerts_enabled"] is False
+    assert loaded["position_reversal_alerts_enabled"] is True
+    assert loaded["position_level_alerts_enabled"] is False
     assert loaded["opportunity_daily_digest_enabled"] is False
     assert loaded["opportunity_chat_id"] == ""
     assert loaded["opportunity_duplicate_cooldown_minutes"] == 0.0
@@ -34,6 +36,7 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
             "control_enabled": True,
             "signal_proposals_enabled": True,
             "opportunity_alerts_enabled": True,
+            "position_alerts_enabled": False,
             "opportunity_daily_digest_enabled": True,
             "bot_token_env": "TELE_BOT_KEY",
             "report_chat_id": "123",
@@ -55,6 +58,8 @@ def test_telegram_settings_defaults_and_save_load(monkeypatch, tmp_path):
     assert saved["control_enabled"] is True
     assert saved["signal_proposals_enabled"] is True
     assert saved["opportunity_alerts_enabled"] is True
+    assert saved["position_reversal_alerts_enabled"] is False
+    assert saved["position_level_alerts_enabled"] is False
     assert saved["opportunity_daily_digest_enabled"] is True
     assert saved["opportunity_chat_id"] == "789"
     assert saved["opportunity_duplicate_cooldown_minutes"] == 90.0

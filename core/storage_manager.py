@@ -784,7 +784,12 @@ def save_daily_history_to_csv(prev_date, pnl, trades_count, win_streak, lose_str
     except:
         pass
 
-def load_state() -> Dict[str, Any]:
+def load_state(paper: Any = None) -> Dict[str, Any]:
+    requested_paper = (
+        bool(getattr(config, "PAPER_TRADING", True))
+        if paper is None
+        else bool(paper)
+    )
     default_state = {
         "date": get_today_str(),
         "pnl_today": 0.0,
@@ -820,10 +825,10 @@ def load_state() -> Dict[str, Any]:
         "rev_confirmations": {},
         "current_session_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "cooldown_until": 0.0,
-        "state_mode": "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL",
+        "state_mode": "PAPER" if requested_paper else "REAL",
     }
 
-    state_file = _mode_state_file()
+    state_file = _mode_state_file(requested_paper)
     os.makedirs(os.path.dirname(state_file), exist_ok=True)
 
     # bot_state.json là file cũ dùng chung. Chỉ nhập một lần vào đúng chế độ
@@ -837,7 +842,7 @@ def load_state() -> Dict[str, Any]:
             tickets.extend((legacy_state.get("trade_symbols", {}) or {}).keys())
             has_paper = any(str(ticket).upper().startswith("PAPER-") for ticket in tickets)
             has_real = any(not str(ticket).upper().startswith("PAPER-") for ticket in tickets)
-            paper_mode = bool(getattr(config, "PAPER_TRADING", True))
+            paper_mode = requested_paper
             if (paper_mode and (has_paper or not has_real)) or ((not paper_mode) and has_real):
                 source_file = STATE_FILE
         except Exception:
@@ -850,7 +855,7 @@ def load_state() -> Dict[str, Any]:
         with open(source_file, "r", encoding="utf-8") as f:
             state = json.load(f)
             apply_state_defaults(state)
-            state["state_mode"] = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
+            state["state_mode"] = "PAPER" if requested_paper else "REAL"
             if source_file == STATE_FILE and state["state_mode"] == "PAPER":
                 # PNL PAPER cũ từng có thể bị tính sai hệ số. Sổ PaperBroker mới là
                 # nguồn thật và sẽ đồng bộ lại; không mang con số legacy sang file mới.

@@ -13,7 +13,8 @@ import pytest
 import bot_daemon
 import config
 import main
-from core import market_hours
+import ui_popups
+from core import market_hours, pending_orders
 
 
 class _Var:
@@ -103,6 +104,203 @@ def test_manual_atc_is_kept_during_atc_session(monkeypatch):
     assert app.var_preview_trade_after_apply.get() is False
     assert app.chk_preview_trade_after_apply.options["state"] == "disabled"
     assert calls == ["hint", "preview"]
+
+
+def test_unified_buy_button_caches_automatically_outside_session(monkeypatch):
+    calls = []
+    app = SimpleNamespace(
+        cbo_symbol=_Var("VN30F1M"),
+        var_manual_market=_Var(True),
+        var_manual_order_mode=_Var("NORMAL"),
+        var_manual_trade_mode=_Var("NORMAL"),
+        var_manual_schedule_session=_Var("OPEN"),
+        var_manual_entry=_Var(""),
+        last_price_val=1320.5,
+        _price_input_to_internal=lambda value, _symbol: float(value or 0),
+        _price_internal_to_input=lambda value, _symbol: str(value),
+        on_click_trade=lambda: calls.append("send"),
+        on_click_schedule_order=lambda: calls.append("cache"),
+    )
+    monkeypatch.setattr(
+        market_hours,
+        "market_session_phase",
+        lambda _symbol: ("CLOSED", "Đóng phiên"),
+    )
+
+    main.BotUI.on_click_smart_order(app)
+
+    assert calls == ["cache"]
+    assert app.var_manual_entry.get() == "1320.5"
+
+
+def test_running_table_accepts_paper_ticket_for_manual_close():
+    position = SimpleNamespace(
+        ticket="PAPER-1",
+        position_id="PAPER-1",
+        symbol="VN30F1M",
+    )
+    calls = []
+    app = SimpleNamespace(
+        var_confirm_close=_Var(False),
+        connector=SimpleNamespace(get_all_open_positions=lambda: [position]),
+        _queue_or_execute_position_close=lambda pos: calls.append(pos.ticket),
+    )
+
+    main.BotUI._handle_running_table_action(app, "PAPER-1", confirm=False)
+
+    assert calls == ["PAPER-1"]
+
+
+def test_running_table_multi_action_label_is_explicit():
+    app = SimpleNamespace(
+        _pending_row_item=lambda row_id: (
+            {"status": pending_orders.PENDING}
+            if row_id == "LOCAL:wait"
+            else {"status": pending_orders.SENDING}
+        ),
+        _active_pending_close_for_ticket=lambda ticket: (
+            {"status": pending_orders.PENDING} if ticket == "PAPER-2" else None
+        ),
+    )
+
+    summary = main.BotUI._running_selection_action_summary(
+        app,
+        ("PAPER-1", "PAPER-2", "ORDER:88", "LOCAL:wait", "LOCAL:sending"),
+    )
+
+    assert summary == (
+        "Đóng 1 vị thế · Hủy đóng 1 vị thế · Hủy 1 lệnh chờ · "
+        "Hủy 1 lệnh DNSE · Bỏ qua 1 dòng đang gửi"
+    )
+
+
+def test_pending_close_action_on_position_cancels_request(monkeypatch):
+    item = {
+        "id": "close-12",
+        "action": "CLOSE",
+        "position_ticket": "PAPER-12",
+        "execution_mode": "PAPER",
+        "status": pending_orders.PENDING,
+        "symbol": "VN30F1M",
+    }
+    cancelled = []
+    deleted = []
+    app = SimpleNamespace(
+        var_confirm_close=_Var(False),
+        _pending_row_item=lambda _row_id: item,
+        _delete_running_row_everywhere=lambda row_id: deleted.append(row_id),
+        log_message=lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "find_active_close",
+        lambda ticket, execution_mode=None: item if ticket == "PAPER-12" else None,
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "cancel",
+        lambda order_id: cancelled.append(order_id),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "delete_final",
+        lambda order_id: deleted.append(order_id),
+    )
+
+    main.BotUI._handle_running_table_action(app, "PAPER-12", confirm=False)
+
+    assert cancelled == ["close-12"]
+    assert deleted == ["close-12", "LOCAL:close-12"]
+
+
+def test_edit_position_requires_broker_confirmation():
+    ok = SimpleNamespace(ok=True, message="UPDATED", error="")
+    assert ui_popups._require_broker_success(ok, "Cập nhật SL/TP") is ok
+
+    failed = SimpleNamespace(ok=False, message="DNSE_REJECTED", error="")
+    with pytest.raises(RuntimeError, match="DNSE_REJECTED"):
+        ui_popups._require_broker_success(failed, "Cập nhật SL/TP")
+
+
+@pytest.mark.parametrize(
+    ("ticket", "expected_mode"),
+    [("PAPER-4", "PAPER"), ("982741", "REAL")],
+)
+def test_manual_close_outside_session_uses_same_pending_flow(
+    monkeypatch,
+    ticket,
+    expected_mode,
+):
+    captured = []
+    position = SimpleNamespace(
+        ticket=ticket,
+        position_id=ticket,
+        symbol="VN30F1M",
+        type=0,
+        volume=2,
+    )
+    app = SimpleNamespace(
+        log_message=lambda *args, **kwargs: None,
+        _ensure_trading_otp=lambda: pytest.fail("cache must not require OTP"),
+    )
+    monkeypatch.setattr(
+        market_hours,
+        "market_session_phase",
+        lambda _symbol: ("CLOSED", "Đóng phiên"),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "add_close_order",
+        lambda **kwargs: captured.append(kwargs) or {"id": "close-1"},
+    )
+
+    main.BotUI._queue_or_execute_position_close(app, position)
+
+    assert captured[0]["position_ticket"] == ticket
+    assert captured[0]["execution_mode"] == expected_mode
+    assert captured[0]["side"] == "SELL"
+
+
+def test_pending_close_executes_and_marks_sent(monkeypatch):
+    position = SimpleNamespace(
+        ticket="PAPER-7",
+        position_id="PAPER-7",
+        symbol="VN30F1M",
+    )
+    marked = []
+    closed = []
+    app = SimpleNamespace(
+        connector=SimpleNamespace(
+            get_all_open_positions=lambda: [position],
+            close_position=lambda pos, comment: (
+                closed.append((pos.ticket, comment))
+                or SimpleNamespace(ok=True, message="PAPER_CLOSED", error="")
+            ),
+        ),
+        trade_mgr=SimpleNamespace(set_exit_reason=lambda *_args: None),
+        log_message=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "mark",
+        lambda order_id, status, result="", **updates: marked.append(
+            (order_id, status, result, updates)
+        ),
+    )
+
+    main.BotUI._send_pending_close(
+        app,
+        {
+            "id": "close-7",
+            "action": "CLOSE",
+            "position_ticket": "PAPER-7",
+            "symbol": "VN30F1M",
+            "close_comment": "Manual_Close",
+        },
+    )
+
+    assert closed == [("PAPER-7", "Manual_Close")]
+    assert marked[0][0:2] == ("close-7", pending_orders.SENT)
 
 
 def test_save_brain_live_config_preserves_unmanaged_sections(monkeypatch):
