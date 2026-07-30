@@ -135,6 +135,30 @@ def test_ui_position_snapshot_combines_paper_and_real_without_switching_mode(
     assert config.PAPER_TRADING is False
 
 
+def test_account_totals_only_use_positions_from_current_execution_mode():
+    paper = SimpleNamespace(
+        ticket="PAPER-2",
+        position_id="PAPER-2",
+        profit=-325122.0,
+        swap=0.0,
+    )
+    real = SimpleNamespace(
+        ticket="9988",
+        position_id="9988",
+        profit=123000.0,
+        swap=0.0,
+    )
+
+    assert main.BotUI._positions_for_execution_mode([paper, real], False) == [real]
+    assert main.BotUI._positions_for_execution_mode([paper, real], True) == [paper]
+
+    real_positions = main.BotUI._positions_for_execution_mode([paper], False)
+    pnl, realized, floating = main.BotUI._combined_display_pnl(
+        0.0, real_positions
+    )
+    assert (pnl, realized, floating) == (0.0, 0.0, 0.0)
+
+
 def test_inactive_position_modify_and_close_are_routed_by_ticket():
     calls = []
     connector = SimpleNamespace(

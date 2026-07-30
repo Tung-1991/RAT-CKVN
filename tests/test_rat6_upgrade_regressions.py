@@ -179,6 +179,7 @@ def test_off_hours_real_account_apis_stay_live_while_price_is_cache_only(monkeyp
 
 def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monkeypatch):
     calls = []
+    contract_date_calls = []
 
     class Var:
         def __init__(self, value):
@@ -224,6 +225,7 @@ def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monke
     app._quantity_label = lambda _symbol: "Cổ phiếu"
     app._is_derivative_symbol = lambda symbol: str(symbol).startswith("VN30F")
     app._save_brain_live_config = lambda: None
+    app._update_contract_dates_label = lambda symbol: contract_date_calls.append(symbol)
     app.on_direction_change = lambda _value: None
     app.refresh_manual_preview_tab = lambda: None
     app._render_cached_ui_snapshot = lambda symbol: calls.append(symbol)
@@ -233,6 +235,7 @@ def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monke
     main.BotUI.on_symbol_change(app, "AAA")
 
     assert calls == ["AAA"]
+    assert contract_date_calls == ["AAA"]
     assert app.running_tabs.selected == "CKCS PAPER"
     assert app.tree is app.running_trees["CKCS PAPER"]
     assert app.var_manual_entry.get() == ""

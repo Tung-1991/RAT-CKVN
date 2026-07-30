@@ -960,6 +960,9 @@ class BotUI(ctk.CTk):
             text_color="#9E9E9E",
             font=("Roboto", 14, "bold"),
         )
+        # Ngày hợp đồng là dữ liệu lịch, phải hiện ngay cả khi đóng phiên,
+        # token hết hạn hoặc chưa tải được snapshot giá.
+        self._update_contract_dates_label(new_symbol)
         self.on_direction_change(self.var_direction.get())
         # Grid preview removed
         self.refresh_manual_preview_tab()
@@ -4584,6 +4587,16 @@ class BotUI(ctk.CTk):
         return str(ticket).upper().startswith("PAPER")
 
     @staticmethod
+    def _positions_for_execution_mode(positions, paper_mode):
+        """Keep account totals/PNL isolated while tables may show both modes."""
+        expected_paper = bool(paper_mode)
+        return [
+            position
+            for position in (positions or [])
+            if BotUI._position_is_paper(position) == expected_paper
+        ]
+
+    @staticmethod
     def _merge_position_snapshots(*snapshots):
         merged = {}
         for positions in snapshots:
@@ -5110,6 +5123,10 @@ class BotUI(ctk.CTk):
         # [FREEZE FIX] pos_extras do bg_update_loop gom sẵn (thread nền). Nếu caller khác
         # (vd đường tạo lệnh hẹn thủ công) không truyền -> tự gom ở đây để giữ hành vi cũ.
         self._update_contract_dates_label(sym)
+        current_mode_positions = self._positions_for_execution_mode(
+            positions,
+            getattr(config, "PAPER_TRADING", True),
+        )
         if pos_extras is None:
             pos_extras = self._collect_position_market(positions)
         sym_count = len(self.brain_active_symbols)
@@ -5244,10 +5261,10 @@ class BotUI(ctk.CTk):
         # ghi đè bằng tổng tự tính (balances cổ phiếu không trả sẵn NAV).
         self.update_portfolio_table(
             acc,
-            getattr(self, "_ui_all_positions_snapshot", positions),
+            current_mode_positions,
         )
         pnl, realized_pnl, floating_pnl = self._combined_display_pnl(
-            state.get("pnl_today", 0.0), positions
+            state.get("pnl_today", 0.0), current_mode_positions
         )
         pnl_text = f"PNL: {self._fmt_money(pnl, signed=True)}"
         self._set_money_label(
@@ -5316,7 +5333,7 @@ class BotUI(ctk.CTk):
                         "type": int(getattr(p, "type", 0) or 0),
                         "volume": float(getattr(p, "volume", 0.0) or 0.0),
                         "settle_date": (getattr(p, "raw", {}) or {}).get("settle_date", ""),
-                    } for p in (positions or []) if str(getattr(p, "symbol", "") or "").upper() == str(sym or "").upper()]
+                    } for p in current_mode_positions if str(getattr(p, "symbol", "") or "").upper() == str(sym or "").upper()]
                     sellable = settlement.available_to_sell(rows, sym)
                     if sellable <= 0:
                         if self.var_direction.get() == "SELL":
@@ -5367,7 +5384,7 @@ class BotUI(ctk.CTk):
             self.lbl_dashboard_price.configure(
                 text=self._fmt_price(cur_price, sym),
                 text_color="#FFB300" if is_stale_price else (COL_GREEN if cur_price >= self.last_price_val else COL_RED),
-                font=("Roboto", 30, "bold"),
+                font=("Roboto", 28, "bold"),
             )
             self.last_price_val = cur_price
             # Trần/TC/Sàn (nếu DNSE trả về) — hiện cho cả CKCS lẫn phái sinh.
@@ -5403,7 +5420,7 @@ class BotUI(ctk.CTk):
                 self.lbl_dashboard_price.configure(
                     text=self._fmt_price(cur_price, sym),
                     text_color="#9E9E9E",
-                    font=("Roboto", 30, "bold"),
+                    font=("Roboto", 28, "bold"),
                 )
             else:
                 from core.market_hours import market_session_phase
@@ -5656,9 +5673,9 @@ class BotUI(ctk.CTk):
                 self._set_money_label(
                     self.lbl_prev_risk,
                     risk_text,
-                    base_size=15,
-                    min_size=10,
-                    comfortable_chars=18,
+                    base_size=13,
+                    min_size=9,
+                    comfortable_chars=20,
                     family="Consolas",
                     text_color=COL_RED,
                 )
@@ -5682,9 +5699,9 @@ class BotUI(ctk.CTk):
                 self._set_money_label(
                     self.lbl_prev_rew,
                     reward_text,
-                    base_size=15,
-                    min_size=10,
-                    comfortable_chars=18,
+                    base_size=13,
+                    min_size=9,
+                    comfortable_chars=20,
                     family="Consolas",
                     text_color=COL_GREEN,
                 )
