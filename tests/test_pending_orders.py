@@ -214,6 +214,39 @@ def test_find_active_close_is_mode_safe_and_ignores_final_rows(monkeypatch, tmp_
     assert pending_orders.find_active_close("PAPER-11", "PAPER") is None
 
 
+def test_scheduler_can_claim_inactive_close_but_not_inactive_entry(
+    monkeypatch,
+    tmp_path,
+):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    close_item = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-21",
+        side="SELL",
+        execution_mode="PAPER",
+    )
+    entry_item = pending_orders.add_order(
+        symbol="VN30F1M",
+        side="BUY",
+        preset="SCALPING",
+        execution_mode="PAPER",
+        entry_price=1200,
+    )
+
+    due = pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=max(close_item["created_at"], entry_item["created_at"]) + 1,
+        include_inactive_closes=True,
+    )
+
+    assert [item["id"] for item in due] == [close_item["id"]]
+    assert pending_orders.find_active_close("PAPER-21", "PAPER")["status"] == "SENDING"
+    assert next(
+        item for item in pending_orders.list_all() if item["id"] == entry_item["id"]
+    )["status"] == "PENDING"
+
+
 def test_limit_opportunity_waits_for_price_and_uses_nearest_allowed_tick(monkeypatch, tmp_path):
     _isolated_account(monkeypatch, tmp_path)
     monkeypatch.setattr(config, "PAPER_TRADING", True)

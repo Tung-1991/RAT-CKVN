@@ -708,6 +708,11 @@ class BotUI(ctk.CTk):
         self._save_brain_live_config()
 
     def _ensure_trading_otp(self):
+        return self._ensure_trading_otp_for_mode(
+            bool(getattr(config, "PAPER_TRADING", True))
+        )
+
+    def _ensure_trading_otp_for_mode(self, paper_mode):
         """Hỏi & xác thực OTP DNSE (token 8h). True nếu OK / đã có token.
 
         PAPER mode: KHÔNG cần OTP (lệnh route sang paper broker, không gọi DNSE đặt lệnh)
@@ -717,7 +722,7 @@ class BotUI(ctk.CTk):
         import os
         # [FIX] OTP phải set token lên CHÍNH connector đặt lệnh (self.connector),
         # KHÔNG phải dnse_api (data_engine chỉ lo market-data, không cần token).
-        if bool(getattr(config, "PAPER_TRADING", True)):
+        if bool(paper_mode):
             self.log_message("📝 PAPER mode: bỏ qua OTP, bật bot bằng tiền ảo.", target="bot")
             return True
         # Đã có trading-token còn hiệu lực -> khỏi hỏi lại (vd vừa xác thực ở ⚙ ADVANCED).
@@ -1025,17 +1030,15 @@ class BotUI(ctk.CTk):
         except Exception as exc:
             self.log_message(f"Lưu PAPER_TRADING vào .env lỗi: {exc}", error=True, target="bot")
         self._save_brain_live_config()
-        # [AUTO-APPLY] Áp dụng NGAY không cần restart: xoá cache tài khoản + kết nối lại + đọc lại số dư.
+        # MODE chỉ đổi nơi đặt lệnh mới. Giữ snapshot/cache của cả hai mode để
+        # bốn tab không nhấp nháy hoặc mất vị thế khi người dùng chuyển mode.
         try:
             if getattr(self, "connector", None) is not None:
-                self.connector.reset_session_caches()
                 if not config.PAPER_TRADING:
                     self.connector.connect()  # đảm bảo kết nối REAL
             # Runtime state tách riêng: PAPER không dùng chung PnL/TSL/ticket với REAL.
             if getattr(self, "trade_mgr", None) is not None:
                 self.trade_mgr.state = load_state()
-            self.tsl_states_map = {}
-            self._ui_all_positions_snapshot = []
             self.update_portfolio_table()  # refresh tổng tài sản ngay
             if hasattr(self, "running_tabs"):
                 market = "CKPS" if self._is_derivative_symbol(self.cbo_symbol.get()) else "CKCS"
@@ -3965,6 +3968,10 @@ class BotUI(ctk.CTk):
                     "free_margin": 0.0,
                 }
                 cached_positions = list(getattr(self.connector, "_positions_cache", []) or [])
+            cached_positions = BotUI._merge_position_snapshots(
+                getattr(self, "_ui_all_positions_snapshot", []),
+                cached_positions,
+            )
             self.update_ui(
                 cached_acc,
                 self.trade_mgr.state,
@@ -4008,6 +4015,7 @@ class BotUI(ctk.CTk):
                 market_session_phase,
                 quote_fn=_quote,
                 point_fn=_point,
+                include_inactive_closes=True,
             )
             for item in due_items:
                 self._send_pending_order(item)
@@ -4019,7 +4027,7 @@ class BotUI(ctk.CTk):
         action = str(item.get("action", "OPEN") or "OPEN").upper()
         item_mode = str(item.get("execution_mode", "PAPER") or "PAPER").upper()
         current_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
-        if item_mode != current_mode:
+        if item_mode != current_mode and action != "CLOSE":
             pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_MATCHING_MODE")
             return
         expected_paper_mode = item_mode == "PAPER"
@@ -4028,7 +4036,7 @@ class BotUI(ctk.CTk):
         entry_price = float(item.get("entry_price", 0.0) or 0.0)
         target = str(item.get("target", "")).upper()
         order_kind = target if target in ("ATO", "ATC") and entry_price <= 0 else None
-        if not getattr(config, "PAPER_TRADING", True) and not self.connector.has_trading_token():
+        if not expected_paper_mode and not self.connector.has_trading_token():
             pending_orders.mark(order_id, pending_orders.PENDING, "WAITING_FOR_TRADING_TOKEN")
             if not getattr(self, "_otp_prompt_scheduled", False):
                 self._otp_prompt_scheduled = True
@@ -4093,15 +4101,7 @@ class BotUI(ctk.CTk):
         order_id = str(item.get("id", "") or "")
         ticket = str(item.get("position_ticket", "") or "")
         symbol = str(item.get("symbol", "") or "").upper()
-        position = next(
-            (
-                pos
-                for pos in self.connector.get_all_open_positions()
-                if str(getattr(pos, "ticket", "") or "") == ticket
-                or str(getattr(pos, "position_id", "") or "") == ticket
-            ),
-            None,
-        )
+        position = BotUI._find_open_position(self, ticket)
         if position is None:
             pending_orders.mark(
                 order_id,
@@ -4114,8 +4114,10 @@ class BotUI(ctk.CTk):
             )
             return
         try:
-            self.trade_mgr.set_exit_reason(position.ticket, "Manual_Close")
-            result = self.connector.close_position(
+            position_manager = BotUI._trade_manager_for_position(self, position)
+            position_manager.set_exit_reason(position.ticket, "Manual_Close")
+            result = BotUI._close_position_for_mode(
+                self,
                 position,
                 str(item.get("close_comment", "") or "Manual_Close"),
             )
@@ -4174,6 +4176,174 @@ class BotUI(ctk.CTk):
         except Exception:
             pass
 
+    @staticmethod
+    def _position_is_paper(position_or_ticket):
+        ticket = (
+            getattr(position_or_ticket, "ticket", None)
+            or getattr(position_or_ticket, "position_id", None)
+            or position_or_ticket
+            or ""
+        )
+        return str(ticket).upper().startswith("PAPER")
+
+    @staticmethod
+    def _merge_position_snapshots(*snapshots):
+        merged = {}
+        for positions in snapshots:
+            for position in positions or ():
+                ticket = str(
+                    getattr(position, "ticket", "")
+                    or getattr(position, "position_id", "")
+                    or ""
+                )
+                if ticket:
+                    merged[ticket] = position
+        return list(merged.values())
+
+    def _get_all_mode_positions(self, *, refresh_real=True, real_fallback=None):
+        """Return PAPER + REAL positions without changing the order-entry mode."""
+        paper_positions = []
+        real_positions = list(real_fallback or [])
+        try:
+            paper_positions = list(
+                self.connector.get_all_open_positions(paper_mode=True) or []
+            )
+        except TypeError:
+            current = list(real_positions)
+            if not current:
+                current = list(
+                    self.__dict__.get("_ui_all_positions_snapshot", []) or []
+                )
+            if not current:
+                current = list(self.connector.get_all_open_positions() or [])
+            paper_positions = (
+                list(current)
+                if bool(getattr(config, "PAPER_TRADING", True))
+                else [p for p in current if BotUI._position_is_paper(p)]
+            )
+            if not real_positions:
+                real_positions = [
+                    p for p in current if not BotUI._position_is_paper(p)
+                ]
+        except Exception:
+            paper_positions = [
+                p
+                for p in list(
+                    self.__dict__.get("_ui_all_positions_snapshot", []) or []
+                )
+                if BotUI._position_is_paper(p)
+            ]
+
+        if refresh_real:
+            try:
+                real_positions = list(
+                    self.connector.get_all_open_positions(paper_mode=False) or []
+                )
+            except TypeError:
+                current = list(self.connector.get_all_open_positions() or [])
+                real_positions = [
+                    p for p in current if not BotUI._position_is_paper(p)
+                ]
+            except Exception:
+                real_positions = list(real_fallback or [])
+
+        return BotUI._merge_position_snapshots(
+            paper_positions,
+            real_positions,
+        )
+
+    def _find_open_position(self, ticket):
+        ticket = str(ticket or "")
+        position = next(
+            (
+                p
+                for p in list(
+                    self.__dict__.get("_ui_all_positions_snapshot", []) or []
+                )
+                if str(getattr(p, "ticket", "") or "") == ticket
+                or str(getattr(p, "position_id", "") or "") == ticket
+            ),
+            None,
+        )
+        if position is not None:
+            return position
+        try:
+            positions = self.connector.get_all_open_positions(
+                paper_mode=ticket.upper().startswith("PAPER")
+            )
+        except TypeError:
+            positions = self.connector.get_all_open_positions()
+        except Exception:
+            positions = []
+        return next(
+            (
+                p
+                for p in positions or []
+                if str(getattr(p, "ticket", "") or "") == ticket
+                or str(getattr(p, "position_id", "") or "") == ticket
+            ),
+            None,
+        )
+
+    def _modify_position_for_mode(self, position, sl, tp):
+        try:
+            return self.connector.modify_position(
+                position,
+                sl,
+                tp,
+                paper_mode=BotUI._position_is_paper(position),
+            )
+        except TypeError:
+            return self.connector.modify_position(position, sl, tp)
+
+    def _close_position_for_mode(self, position, comment=""):
+        try:
+            return self.connector.close_position(
+                position,
+                comment,
+                paper_mode=BotUI._position_is_paper(position),
+            )
+        except TypeError:
+            return self.connector.close_position(position, comment)
+
+    def _trade_manager_for_mode(self, paper_mode):
+        paper_mode = bool(paper_mode)
+        if paper_mode == bool(getattr(config, "PAPER_TRADING", True)):
+            return self.trade_mgr
+        if not hasattr(self, "checklist_mgr"):
+            return self.trade_mgr
+
+        mode = "PAPER" if paper_mode else "REAL"
+        managers = getattr(self, "_inactive_trade_managers", None)
+        if managers is None:
+            managers = {}
+            self._inactive_trade_managers = managers
+        manager = managers.get(mode)
+        if manager is None:
+            bound_connector = ModeBoundConnector(self.connector, paper_mode)
+
+            def _inactive_log(message, error=False, target=None, _mode=mode):
+                self.log_message(
+                    f"[NỀN {_mode}] {message}",
+                    error=error,
+                    target=target or "bot",
+                )
+
+            manager = TradeManager(
+                bound_connector,
+                self.checklist_mgr,
+                log_callback=_inactive_log,
+            )
+            manager.state = load_state(paper=paper_mode)
+            managers[mode] = manager
+        return manager
+
+    def _trade_manager_for_position(self, position):
+        return BotUI._trade_manager_for_mode(
+            self,
+            BotUI._position_is_paper(position),
+        )
+
     def _render_cached_ui_snapshot(self, sym):
         """Render account state while market-data endpoints are asleep."""
         import core.storage_manager as storage_manager
@@ -4182,7 +4352,47 @@ class BotUI(ctk.CTk):
         if paper_mode:
             acc = self.connector.get_account_info()
             all_positions = list(self.connector.get_all_open_positions() or [])
-            open_orders = []
+            cached_orders = list(
+                getattr(self.connector, "_orders_cache", []) or []
+            )
+            open_orders = [
+                order
+                for order in cached_orders
+                if not sym
+                or str(order.get("symbol", "")).upper() == str(sym).upper()
+            ]
+            now = time.time()
+            closed_sync_seconds = max(
+                60.0,
+                float(
+                    getattr(config, "DNSE_CLOSED_PRIVATE_SYNC_SECONDS", 300.0)
+                    or 300.0
+                ),
+            )
+            if (
+                now
+                - float(self.__dict__.get("_closed_private_sync_ts", 0.0) or 0.0)
+                >= closed_sync_seconds
+            ):
+                self._closed_private_sync_ts = now
+                try:
+                    self.connector.get_all_open_positions(paper_mode=False)
+                except Exception:
+                    pass
+                try:
+                    open_orders = list(
+                        self.connector.get_orders(
+                            paper_mode=False,
+                            symbol=sym,
+                            orderCategory=getattr(
+                                self.connector,
+                                "order_category",
+                                "NORMAL",
+                            ),
+                        )
+                    )
+                except Exception:
+                    pass
         else:
             cached_acc = getattr(self.connector, "_account_cache", None)
             cached_positions = list(getattr(self.connector, "_positions_cache", []) or [])
@@ -4250,6 +4460,18 @@ class BotUI(ctk.CTk):
                 "margin": 0.0,
                 "free_margin": 0.0,
             }
+
+        if paper_mode:
+            real_fallback = list(
+                getattr(self.connector, "_positions_cache", []) or []
+            )
+        else:
+            real_fallback = list(all_positions)
+        all_positions = BotUI._get_all_mode_positions(
+            self,
+            refresh_real=False,
+            real_fallback=real_fallback,
+        )
 
         tick_data = data_engine.fetch_realtime_tick(sym)  # outside session: cache-only by contract
         if not tick_data:
@@ -4333,28 +4555,7 @@ class BotUI(ctk.CTk):
     def _update_inactive_mode_trades(self):
         """Manage open positions in the mode that is not currently shown."""
         inactive_paper = not bool(getattr(config, "PAPER_TRADING", True))
-        mode = "PAPER" if inactive_paper else "REAL"
-        managers = getattr(self, "_inactive_trade_managers", None)
-        if managers is None:
-            managers = {}
-            self._inactive_trade_managers = managers
-        manager = managers.get(mode)
-        if manager is None:
-            bound_connector = ModeBoundConnector(self.connector, inactive_paper)
-
-            def _inactive_log(message, error=False, target=None, _mode=mode):
-                self.log_message(
-                    f"[NỀN {_mode}] {message}",
-                    error=error,
-                    target=target or "bot",
-                )
-
-            manager = TradeManager(
-                bound_connector,
-                self.checklist_mgr,
-                log_callback=_inactive_log,
-            )
-            managers[mode] = manager
+        manager = BotUI._trade_manager_for_mode(self, inactive_paper)
         manager.state = load_state(paper=inactive_paper)
         return manager.update_running_trades(
             "STANDARD",
@@ -4462,7 +4663,10 @@ class BotUI(ctk.CTk):
                     logger.error(f"[TICK_ERROR] {sym}: {e}", exc_info=True)
                 magics = storage_manager.get_magic_numbers()
                 
-                all_pos = list(self.connector.get_all_open_positions() or [])
+                all_pos = BotUI._get_all_mode_positions(
+                    self,
+                    refresh_real=True,
+                )
                 self._ui_all_positions_snapshot = list(all_pos)
                 pos = [
                     p
@@ -4475,7 +4679,15 @@ class BotUI(ctk.CTk):
                 open_orders = []
                 try:
                     if hasattr(self.connector, "get_orders"):
-                        open_orders = self.connector.get_orders(symbol=sym, orderCategory=getattr(self.connector, "order_category", "NORMAL"))
+                        open_orders = self.connector.get_orders(
+                            paper_mode=False,
+                            symbol=sym,
+                            orderCategory=getattr(
+                                self.connector,
+                                "order_category",
+                                "NORMAL",
+                            ),
+                        )
                 except Exception:
                     open_orders = []
                 # [FREEZE FIX] Gom giá/spread/phí cho mọi vị thế NGAY TẠI ĐÂY (thread nền),
@@ -5227,7 +5439,6 @@ class BotUI(ctk.CTk):
             else:
                 tree.insert("", "end", iid=str(row_id), values=values, tags=(tag,))
 
-        child_to_parent = self.trade_mgr.state.get("child_to_parent", {})
         open_fee_total = 0.0  # [NEW] Tổng fee từ lệnh đang mở
         def _short_id(value):
             text = str(value or "")
@@ -5455,7 +5666,7 @@ class BotUI(ctk.CTk):
             row_id = f"ORDER:{order_id}"
             status = str(_order_pick(order, "orderStatus", "status", "state", default="ORDER")).upper()
             symbol = str(_order_pick(order, "symbol", "code", "stockSymbol", default=self.cbo_symbol.get()))
-            scope = _running_scope(symbol, current_execution_mode)
+            scope = _running_scope(symbol, "REAL")
             side_raw = str(_order_pick(order, "side", "orderSide", "orderType", "type", default="")).upper()
             side_txt = "BUY" if side_raw in ("NB", "BUY", "0") else ("SELL" if side_raw in ("NS", "SELL", "1") else side_raw or "ORDER")
             qty = _order_pick(order, "quantity", "orderQuantity", "volume", "qty", default="")
@@ -5484,6 +5695,7 @@ class BotUI(ctk.CTk):
                 "PAPER" if ticket_str.upper().startswith("PAPER") else "REAL"
             )
             scope = _running_scope(p.symbol, position_mode)
+            position_trade_mgr = BotUI._trade_manager_for_position(self, p)
 
             # [FREEZE FIX] Đọc số liệu đã gom sẵn ở thread nền -> KHÔNG gọi mạng trên thread UI.
             extra = (pos_extras or {}).get(ticket_str) or {}
@@ -5505,7 +5717,10 @@ class BotUI(ctk.CTk):
             comm_total_usd = float(extra.get("comm", 0.0) or 0.0)
 
             # [NEW] Cộng fee lệnh đang mở vào tổng (spread + commission + |swap|)
-            open_fee_total += spread_cost_usd + comm_total_usd + abs(swap_val)
+            if position_mode == current_execution_mode:
+                open_fee_total += (
+                    spread_cost_usd + comm_total_usd + abs(swap_val)
+                )
 
             fee_str = f"Spread -{self._fmt_money(abs(spread_cost_usd))} | Phí -{self._fmt_money(abs(comm_total_usd))}"
 
@@ -5515,7 +5730,9 @@ class BotUI(ctk.CTk):
             side_txt = "BUY" if is_buy else "SELL"
 
             display_ticket = f"#{ticket_str}"
-            is_child = ticket_str in child_to_parent
+            is_child = ticket_str in position_trade_mgr.state.get(
+                "child_to_parent", {}
+            )
 
             if is_child:
                 display_ticket = f" ┗━ #{ticket_str}"
@@ -5531,7 +5748,9 @@ class BotUI(ctk.CTk):
                 origin_tag = "[BOT]"
             elif "_Child" in pos_comment:
                 origin_tag = "[MANUAL+BOT]"
-            margin_meta = self.trade_mgr.state.get("trade_margin_meta", {}).get(ticket_str, {})
+            margin_meta = position_trade_mgr.state.get(
+                "trade_margin_meta", {}
+            ).get(ticket_str, {})
             margin_tag = ""
             if margin_meta or "[MARGIN][MANUAL]" in pos_comment:
                 margin_tag = "[MARGIN][MANUAL]"
@@ -5571,7 +5790,7 @@ class BotUI(ctk.CTk):
             elif "[BOT]_AUTO_PCA" in pos_comment:
                 stt_txt = "PCA Child"
             else:
-                tactic_info = self.trade_mgr.get_trade_tactic(p.ticket)
+                tactic_info = position_trade_mgr.get_trade_tactic(p.ticket)
                 tactic_badges = []
                 tactic_modes = tactic_info.split("+")
                 if "BE_CASH" in tactic_modes:
@@ -5599,7 +5818,9 @@ class BotUI(ctk.CTk):
                     tactic_badges.append("+".join(stt_extras))
                 if tactic_badges:
                     stt_txt += f" | TSL:{'+'.join(tactic_badges)}"
-                ee_tactic = self.trade_mgr.get_trade_entry_exit_tactic(p.ticket)
+                ee_tactic = position_trade_mgr.get_trade_entry_exit_tactic(
+                    p.ticket
+                )
                 if ee_tactic and ee_tactic != "OFF":
                     ee_labels = {
                         "FALLBACK_R": "R",
@@ -5622,7 +5843,7 @@ class BotUI(ctk.CTk):
                     stt_txt += f" | M:{margin_meta.get('risk_base', 'EQUITY_NAV')} RTT:{rtt_txt}"
 
             net_pnl = p.profit + getattr(p, "swap", 0.0)
-            excursion = self.trade_mgr.state.get("trade_excursions", {}).get(
+            excursion = position_trade_mgr.state.get("trade_excursions", {}).get(
                 ticket_str, {}
             )
             mae_usd = float(excursion.get("mae_usd", min(net_pnl, 0.0)))
@@ -7008,9 +7229,12 @@ class BotUI(ctk.CTk):
             for item in tree.get_children()
             if not str(item).startswith(("LOCAL:", "ORDER:", "OPP:"))
         }
+        snapshot = list(getattr(self, "_ui_all_positions_snapshot", []) or [])
+        if not snapshot:
+            snapshot = BotUI._get_all_mode_positions(self, refresh_real=True)
         positions = [
             pos
-            for pos in self.connector.get_all_open_positions()
+            for pos in snapshot
             if str(getattr(pos, "ticket", "") or "") in visible_ids
         ]
         if not positions:
@@ -7056,14 +7280,21 @@ class BotUI(ctk.CTk):
             )
             return pending
 
-        if not self._ensure_trading_otp():
+        if not self._ensure_trading_otp_for_mode(
+            BotUI._position_is_paper(position)
+        ):
             return None
 
-        self.trade_mgr.set_exit_reason(position.ticket, "Manual_Close")
+        position_manager = BotUI._trade_manager_for_position(self, position)
+        position_manager.set_exit_reason(position.ticket, "Manual_Close")
 
         def _close_now():
             try:
-                result = self.connector.close_position(position, "Manual_Close")
+                result = BotUI._close_position_for_mode(
+                    self,
+                    position,
+                    "Manual_Close",
+                )
                 if getattr(result, "ok", False):
                     self.log_message(
                         f"[ĐÓNG LỆNH] Đã đóng {symbol} #{ticket}.",
@@ -7379,12 +7610,22 @@ class BotUI(ctk.CTk):
                 "Huy lenh DNSE", f"Huy lenh DNSE #{order_id}?", parent=self
             ):
                 return
-            if not self._ensure_trading_otp():
+            if not self._ensure_trading_otp_for_mode(False):
                 return
 
             def _cancel_order():
                 try:
-                    result = self.connector.cancel_order(order_id, symbol=symbol)
+                    try:
+                        result = self.connector.cancel_order(
+                            order_id,
+                            symbol=symbol,
+                            paper_mode=False,
+                        )
+                    except TypeError:
+                        result = self.connector.cancel_order(
+                            order_id,
+                            symbol=symbol,
+                        )
                     if getattr(result, "ok", False):
                         self.log_message(f"[DNSE] Cancelled order {order_id}", target="manual")
                     else:
@@ -7415,15 +7656,7 @@ class BotUI(ctk.CTk):
             "Dong lenh", f"Dong lenh #{row_id}?", parent=self
         ):
             return
-        p = next(
-            (
-                p
-                for p in self.connector.get_all_open_positions()
-                if str(getattr(p, "ticket", "") or "") == row_id
-                or str(getattr(p, "position_id", "") or "") == row_id
-            ),
-            None,
-        )
+        p = BotUI._find_open_position(self, row_id)
         if p:
             self._queue_or_execute_position_close(p)
 

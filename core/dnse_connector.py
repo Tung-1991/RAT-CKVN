@@ -241,6 +241,10 @@ class ModeBoundConnector:
     def get_all_open_positions(self, paper_mode: Optional[bool] = None):
         return self._connector.get_all_open_positions(paper_mode=self._paper_mode)
 
+    def get_orders(self, **params):
+        params["paper_mode"] = self._paper_mode
+        return self._connector.get_orders(**params)
+
     def get_paper_closed_trade(self, ticket: Any):
         if not self._paper_mode:
             return None
@@ -1028,8 +1032,13 @@ class DNSEConnector:
     def quantity_label_for_symbol(self, symbol: Optional[str] = None) -> str:
         return "Hợp đồng" if self.market_type_for_symbol(symbol or "") == "DERIVATIVE" else "Cổ phiếu"
 
-    def get_orders(self, **params) -> List[Dict[str, Any]]:
-        if self._is_paper_mode():
+    def get_orders(
+        self,
+        paper_mode: Optional[bool] = None,
+        **params,
+    ) -> List[Dict[str, Any]]:
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return []
         symbol = params.pop("symbol", None)
         market_type = self.market_type_for_symbol(symbol) if symbol else self.market_type
@@ -1839,8 +1848,16 @@ class DNSEConnector:
         )
         return self._order_result(ok, data, status_code, message)
 
-    def cancel_order(self, order_id: str, *, account_no: Optional[str] = None, symbol: Optional[str] = None) -> BrokerOrderResult:
-        if self._is_paper_mode():
+    def cancel_order(
+        self,
+        order_id: str,
+        *,
+        account_no: Optional[str] = None,
+        symbol: Optional[str] = None,
+        paper_mode: Optional[bool] = None,
+    ) -> BrokerOrderResult:
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return BrokerOrderResult(ok=False, order_id=str(order_id), error="PAPER_CANCEL_UNSUPPORTED", message="Paper orders are filled immediately.")
         _account_no = account_no or (self.account_no_for_symbol(symbol) if symbol else self.account_no)
         _market_type = self.market_type_for_symbol(symbol) if symbol else self.market_type

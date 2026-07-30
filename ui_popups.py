@@ -6794,22 +6794,39 @@ def open_tsl_popup(app, override_symbol=None):
 
 def open_edit_popup(app, ticket):
 
-    pos = next(
-        (p for p in app.connector.get_all_open_positions() if p.ticket == ticket), None
-    )
+    finder = getattr(app, "_find_open_position", None)
+    if callable(finder):
+        pos = finder(ticket)
+    else:
+        pos = next(
+            (
+                p
+                for p in app.connector.get_all_open_positions()
+                if str(getattr(p, "ticket", "") or "") == str(ticket)
+            ),
+            None,
+        )
     if not pos:
         return
+    manager_selector = getattr(app, "_trade_manager_for_position", None)
+    position_trade_mgr = (
+        manager_selector(pos) if callable(manager_selector) else app.trade_mgr
+    )
     top = ctk.CTkToplevel(app)
     top.title(f"Sửa lệnh #{ticket}")
     _fit_popup(top, 450, 830, 420, 560)
     _bring_popup_to_front(top)
     # top.transient(app)
     is_buy = pos.type == 0
-    bal = (
-        app.connector.get_account_info()["balance"]
-        if app.connector.get_account_info()
-        else 1000.0
-    )
+    try:
+        position_account = app.connector.get_account_info(
+            paper_mode=str(ticket).upper().startswith("PAPER")
+        )
+    except TypeError:
+        position_account = app.connector.get_account_info()
+    except Exception:
+        position_account = None
+    bal = float((position_account or {}).get("balance", 1000.0) or 1000.0)
     ctk.CTkLabel(top, text="NEW SL:", font=FONT_BOLD).pack(pady=(10, 2))
     e_sl = ctk.CTkEntry(top, justify="center")
     e_sl.insert(0, app._price_internal_to_input(pos.sl, pos.symbol))
@@ -6836,7 +6853,7 @@ def open_edit_popup(app, ticket):
         font=("Consolas", 12),
     )
     lbl_tactic_preview.pack(pady=5)
-    cur_t = app.trade_mgr.get_trade_tactic(ticket)
+    cur_t = position_trade_mgr.get_trade_tactic(ticket)
     cur_modes = cur_t.split("+")
     states = {
         "BE": "BE" in cur_modes,
@@ -6951,7 +6968,7 @@ def open_edit_popup(app, ticket):
         val = ctx.get(f"swing_low_{group}" if is_buy else f"swing_high_{group}")
         atr_val = ctx.get(f"atr_{group}")
         if val and str(val) != "--" and atr_val:
-            brain = app.trade_mgr._get_brain_settings()
+            brain = position_trade_mgr._get_brain_settings()
             mult = float(
                 brain.get("risk_tsl", {}).get(
                     "sl_atr_multiplier", getattr(config, "sl_atr_multiplier", 0.2)
@@ -7013,7 +7030,7 @@ def open_edit_popup(app, ticket):
         val = ctx.get(f"swing_high_{group}" if is_buy else f"swing_low_{group}")
         atr_val = ctx.get(f"atr_{group}")
         if val and str(val) != "--" and atr_val:
-            brain = app.trade_mgr._get_brain_settings()
+            brain = position_trade_mgr._get_brain_settings()
             mult = float(brain.get("risk_tsl", {}).get("sl_atr_multiplier", 0.2))
             calc_tp = (
                 float(val) - (float(atr_val) * mult)
@@ -7110,7 +7127,7 @@ def open_edit_popup(app, ticket):
         "FIB": "FIB_RETRACE",
         "PULL": "PULLBACK_ZONE",
     }
-    current_ee = app.trade_mgr.get_trade_entry_exit_tactic(ticket)
+    current_ee = position_trade_mgr.get_trade_entry_exit_tactic(ticket)
     var_ee = ctk.StringVar(value=current_ee if current_ee else "OFF")
     ee_btns = {}
 
@@ -7144,7 +7161,13 @@ def open_edit_popup(app, ticket):
 
     def save_e():
         try:
-            if not app._ensure_trading_otp():
+            ensure_for_mode = getattr(app, "_ensure_trading_otp_for_mode", None)
+            otp_ok = (
+                ensure_for_mode(str(ticket).upper().startswith("PAPER"))
+                if callable(ensure_for_mode)
+                else app._ensure_trading_otp()
+            )
+            if not otp_ok:
                 return
             new_sl = app._price_input_to_internal(e_sl.get(), pos.symbol)
             new_tp = app._price_input_to_internal(e_tp.get(), pos.symbol)
@@ -7168,7 +7191,6 @@ def open_edit_popup(app, ticket):
                 final_t += "+AUTO_DCA"
             if chk_pca.get():
                 final_t += "+AUTO_PCA"
-            app.trade_mgr.update_trade_tactic(ticket, final_t)
             # Lưu Entry/Exit Mode
             selected_ee_label = var_ee.get()
             new_ee_tactic = ee_options_map.get(selected_ee_label, "OFF")
@@ -7190,10 +7212,15 @@ def open_edit_popup(app, ticket):
 
             def _update_worker():
                 try:
-                    modify_result = app.connector.modify_position(pos, new_sl, new_tp)
+                    modifier = getattr(app, "_modify_position_for_mode", None)
+                    modify_result = (
+                        modifier(pos, new_sl, new_tp)
+                        if callable(modifier)
+                        else app.connector.modify_position(pos, new_sl, new_tp)
+                    )
                     _require_broker_success(modify_result, "Cập nhật SL/TP")
-                    app.trade_mgr.update_trade_tactic(ticket, final_t)
-                    app.trade_mgr.update_trade_entry_exit_tactic(
+                    position_trade_mgr.update_trade_tactic(ticket, final_t)
+                    position_trade_mgr.update_trade_entry_exit_tactic(
                         ticket,
                         new_ee_tactic,
                     )

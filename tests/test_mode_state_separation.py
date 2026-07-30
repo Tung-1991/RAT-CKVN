@@ -87,6 +87,10 @@ def test_mode_bound_connector_routes_positions_and_updates_to_bound_mode():
             calls.append(("account", paper_mode))
             return {}
 
+        def get_orders(self, paper_mode=None, **_params):
+            calls.append(("orders", paper_mode))
+            return []
+
         def modify_position(self, pos, sl, tp, paper_mode=None):
             calls.append(("modify", paper_mode))
             return SimpleNamespace(ok=True)
@@ -99,10 +103,61 @@ def test_mode_bound_connector_routes_positions_and_updates_to_bound_mode():
     bound.get_positions()
     bound.get_all_open_positions()
     bound.get_account_info()
+    bound.get_orders()
     bound.modify_position("1", 10, 20)
     bound.close_position("1")
 
     assert all(call[1] is False for call in calls)
+
+
+def test_ui_position_snapshot_combines_paper_and_real_without_switching_mode(
+    monkeypatch,
+):
+    paper = SimpleNamespace(ticket="PAPER-1", position_id="PAPER-1")
+    real = SimpleNamespace(ticket="9988", position_id="9988")
+    calls = []
+
+    class Connector:
+        def get_all_open_positions(self, paper_mode=None):
+            calls.append(paper_mode)
+            return [paper] if paper_mode else [real]
+
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    app = SimpleNamespace(
+        connector=Connector(),
+        _ui_all_positions_snapshot=[],
+    )
+
+    positions = main.BotUI._get_all_mode_positions(app, refresh_real=True)
+
+    assert [position.ticket for position in positions] == ["PAPER-1", "9988"]
+    assert calls == [True, False]
+    assert config.PAPER_TRADING is False
+
+
+def test_inactive_position_modify_and_close_are_routed_by_ticket():
+    calls = []
+    connector = SimpleNamespace(
+        modify_position=lambda pos, sl, tp, paper_mode=None: (
+            calls.append(("modify", pos.ticket, paper_mode))
+            or SimpleNamespace(ok=True)
+        ),
+        close_position=lambda pos, comment="", paper_mode=None: (
+            calls.append(("close", pos.ticket, paper_mode))
+            or SimpleNamespace(ok=True)
+        ),
+    )
+    app = SimpleNamespace(connector=connector)
+    paper = SimpleNamespace(ticket="PAPER-3")
+    real = SimpleNamespace(ticket="8123")
+
+    main.BotUI._modify_position_for_mode(app, paper, 10, 20)
+    main.BotUI._close_position_for_mode(app, real, "Manual_Close")
+
+    assert calls == [
+        ("modify", "PAPER-3", True),
+        ("close", "8123", False),
+    ]
 
 
 def test_ui_mode_switch_disarms_bot_and_reloads_matching_state(monkeypatch):
@@ -137,10 +192,11 @@ def test_ui_mode_switch_disarms_bot_and_reloads_matching_state(monkeypatch):
 
     assert config.PAPER_TRADING is False
     assert (False, "Đổi PAPER/REAL") in calls
-    assert "reset" in calls and "connect" in calls and "portfolio" in calls
+    assert "reset" not in calls
+    assert "connect" in calls and "portfolio" in calls
     assert app.trade_mgr.state is next_state
-    assert app.tsl_states_map == {}
-    assert app._ui_all_positions_snapshot == []
+    assert app.tsl_states_map == {"PAPER-1": "Running"}
+    assert app._ui_all_positions_snapshot == ["paper"]
     assert app._mode_switching is False
     assert saved_env[-1] == {"PAPER_TRADING": "False"}
 

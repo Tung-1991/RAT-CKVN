@@ -476,6 +476,7 @@ def claim_due(
     limit: int = 20,
     quote_fn: Optional[Callable[[str, str], Optional[float]]] = None,
     point_fn: Optional[Callable[[str], float]] = None,
+    include_inactive_closes: bool = False,
 ) -> List[Dict[str, Any]]:
     now = _now() if now is None else float(now)
     due: List[Dict[str, Any]] = []
@@ -489,7 +490,12 @@ def claim_due(
             status = str(item.get("status", "")).upper()
             if status != PENDING:
                 continue
-            if str(item.get("execution_mode", "PAPER")).upper() != current_mode:
+            item_mode = str(item.get("execution_mode", "PAPER")).upper()
+            action = str(item.get("action", "OPEN") or "OPEN").upper()
+            if (
+                item_mode != current_mode
+                and not (include_inactive_closes and action == "CLOSE")
+            ):
                 continue
             if float(item.get("retry_at", 0.0) or 0.0) > now:
                 continue
