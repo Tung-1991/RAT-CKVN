@@ -268,7 +268,11 @@ def _line(
     current_price = setup.get("current_price") or price
     entry_price = setup.get("entry_price") or price
     entry_zone = setup.get("entry_zone")
-    entry_tactic = str(setup.get("entry_tactic") or "OFF").upper()
+    entry_tactic = str(
+        setup.get("entry_tactic")
+        or setup.get("entry_exit_tactic")
+        or "OFF"
+    ).upper().split("->", 1)[0]
     sl = setup.get("sl")
     tp = setup.get("tp")
     unit = str(setup.get("quantity_unit") or ("HĐ" if market == "CKPS" else "CP"))
@@ -334,7 +338,7 @@ def _line(
 
 
 def _group_context_line(item: Dict[str, Any]) -> str:
-    """Tóm tắt động G0/G1 của đúng mã; chỉ để hiển thị."""
+    """Tóm tắt các group tham gia chiến thuật của đúng mã; chỉ để hiển thị."""
     symbol = str(item.get("symbol") or "VN30F1M").upper()
     context = item.get("context") if isinstance(item.get("context"), dict) else {}
     details = (
@@ -359,27 +363,82 @@ def _group_context_line(item: Dict[str, Any]) -> str:
         else {}
     )
     labels = {
-        "ema": "EMA50",
-        "ema_cross": "EMA20/50",
-        "supertrend": "ST",
-        "rsi": "RSI",
-        "macd": "MACD",
-        "adx": "ADX",
-        "volume": "VOL",
-        "swing_point": "SWING",
-        "atr": "ATR",
-        "fibonacci": "FIB",
-        "bollinger_bands": "BB",
-        "psar": "PSAR",
-        "stochastic": "STOCH",
-        "simple_breakout": "BREAKOUT",
-        "candle": "CANDLE",
-        "multi_candle": "MULTI",
-        "pivot_points": "PIVOT",
+        "supertrend": "🚦 Supertrend",
+        "rsi": "💪 Relative Strength Index",
+        "macd": "🌊 Moving Average Convergence Divergence",
+        "adx": "🧭 Average Directional Index",
+        "volume": "🔊 Volume",
+        "swing_point": "↕️ Swing Point",
+        "atr": "📏 Average True Range",
+        "fibonacci": "🌀 Fibonacci",
+        "bollinger_bands": "🎯 Bollinger Bands",
+        "psar": "🪂 Parabolic Stop and Reverse",
+        "stochastic": "🎚️ Stochastic Oscillator",
+        "simple_breakout": "🚀 Simple Breakout",
+        "candle": "🕯️ Candle Pattern",
+        "multi_candle": "🕯️ Multi Candle Pattern",
+        "pivot_points": "📍 Pivot Points",
     }
 
+    def _clean_period(value: Any, default: int) -> str:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float(default)
+        return str(int(number)) if number.is_integer() else _number(number)
+
+    def _indicator_label(name: str, cfg: Dict[str, Any], group: str) -> str:
+        params = dict(cfg.get("params") or {})
+        group_params = cfg.get("group_params")
+        if isinstance(group_params, dict) and isinstance(group_params.get(group), dict):
+            params.update(group_params[group])
+        if name == "ema":
+            period = _clean_period(params.get("period"), 50)
+            return f"📈 Exponential Moving Average {period}"
+        if name == "ema_cross":
+            fast = _clean_period(params.get("fast"), 20)
+            slow = _clean_period(params.get("slow"), 50)
+            return f"🔀 Exponential Moving Average {fast}/{slow} Cross"
+        return labels.get(name, f"🔹 {str(name).replace('_', ' ').title()}")
+
+    context_rules = (
+        context.get("group_rules")
+        if isinstance(context.get("group_rules"), dict)
+        else {}
+    )
+    voting_rules = (
+        brain.get("voting_rules")
+        if isinstance(brain.get("voting_rules"), dict)
+        else {}
+    )
+
     parts = []
-    for group in ("G0", "G1"):
+    for group in ("G0", "G1", "G2", "G3"):
+        active_cfgs = []
+        for name, cfg in indicators.items():
+            if not isinstance(cfg, dict) or not cfg.get("active"):
+                continue
+            groups = cfg.get("groups") or []
+            if isinstance(groups, str):
+                groups = [groups]
+            if group in groups:
+                active_cfgs.append((name, cfg))
+
+        fallback_rule = voting_rules.get(group, {})
+        rule = str(
+            context_rules.get(group)
+            or (
+                fallback_rule.get("master_rule")
+                if isinstance(fallback_rule, dict)
+                else ""
+            )
+            or ""
+        ).upper()
+        if rule == "IGNORE":
+            continue
+        if group not in details and not active_cfgs:
+            continue
+
         detail = details.get(group) if isinstance(details.get(group), dict) else {}
         try:
             status = int(detail.get("status") or 0)
@@ -396,13 +455,11 @@ def _group_context_line(item: Dict[str, Any]) -> str:
             or brain.get(f"{group}_TIMEFRAME")
             or group
         ).upper()
-        active = []
-        for name, cfg in indicators.items():
-            if not isinstance(cfg, dict) or not cfg.get("active"):
-                continue
-            if group in (cfg.get("groups") or []):
-                active.append(labels.get(name, str(name).upper()))
-        indicator_text = "·".join(active) if active else "NONE"
+        active = [
+            _indicator_label(name, cfg, group)
+            for name, cfg in active_cfgs
+        ]
+        indicator_text = " · ".join(active) if active else "NONE"
         parts.append(f"{group} {tf} {icon} {votes}/{total} [{indicator_text}]")
     return f"📊 {symbol} | " + " | ".join(parts)
 

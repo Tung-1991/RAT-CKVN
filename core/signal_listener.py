@@ -7,6 +7,7 @@ import os
 import time
 import threading
 import logging
+from copy import deepcopy
 from typing import Callable, Any
 
 import config
@@ -128,8 +129,13 @@ class SignalListener:
                 order_setup=setup,
             )
             if opportunity:
+                # Kho thống kê giữ nguyên plan đầu tiên để chấm kết quả giả lập.
+                # Telegram phải dùng BOT plan vừa tính; plan WAIT/BLOCK hiện tại
+                # không được phép rơi về Entry/SL/TP cũ đã bị freeze.
+                notification = deepcopy(opportunity)
+                notification["order_setup"] = deepcopy(setup)
                 queue_opportunity(
-                    opportunity,
+                    notification,
                     log_cb=lambda msg, error=False: self.log_ui(
                         msg,
                         error=error,

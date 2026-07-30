@@ -105,8 +105,8 @@ def test_formatter_is_compact_and_uses_preview_levels(monkeypatch):
     assert "G0 SELL 4/7 FIX" not in text
     assert "📊 TDM | G0 1D" in text
     assert "📊 AAA | G0 1D" in text
-    assert "[EMA50]" in text
-    assert "[SWING]" in text
+    assert "[📈 Exponential Moving Average 50]" in text
+    assert "[↕️ Swing Point]" in text
     assert "PAPER" not in text and "REAL" not in text and "BOT_OFF" not in text
     assert text.startswith("⚡ CKPS")
     assert "RAT6 GỢI Ý BOT" not in text
@@ -123,6 +123,68 @@ def test_formatter_separates_current_price_from_entry_zone(monkeypatch):
 
     assert "🟢 CKCS BUY" in text
     assert "AAA | Giá 10.2 | Entry NOW 9.8-10 (100 CP)" in text
+
+
+def test_formatter_uses_full_dynamic_indicator_names_entry_tactic_and_g2(monkeypatch):
+    monkeypatch.setattr(opportunity_alerts, "_priority_symbols", lambda: set())
+    monkeypatch.setattr(
+        "core.storage_manager.get_brain_settings_for_symbol",
+        lambda _symbol: {
+            "G0_TIMEFRAME": "1h",
+            "G1_TIMEFRAME": "15m",
+            "G2_TIMEFRAME": "5m",
+            "G3_TIMEFRAME": "1m",
+            "voting_rules": {
+                "G0": {"master_rule": "PASS"},
+                "G1": {"master_rule": "FIX"},
+                "G2": {"master_rule": "PASS"},
+                "G3": {"master_rule": "IGNORE"},
+            },
+            "indicators": {
+                "adx": {"active": True, "groups": ["G0", "G1"]},
+                "ema": {
+                    "active": True,
+                    "groups": ["G0", "G1"],
+                    "params": {"period": 50},
+                    "group_params": {
+                        "G0": {"period": 20},
+                        "G1": {"period": 20},
+                    },
+                },
+                "supertrend": {"active": True, "groups": ["G0", "G1"]},
+                "macd": {"active": True, "groups": ["G1"]},
+                "simple_breakout": {"active": True, "groups": ["G2"]},
+            },
+        },
+    )
+    item = _item("VN30F1M", "BUY", "CKPS", 1)
+    item["context"] = {
+        "group_timeframes": {"G0": "1h", "G1": "15m", "G2": "5m", "G3": "1m"},
+        "group_rules": {"G0": "PASS", "G1": "FIX", "G2": "PASS", "G3": "IGNORE"},
+        "group_details": {
+            "G0": {"B": 3, "S": 0, "N": 0, "status": 1},
+            "G1": {"B": 4, "S": 0, "N": 0, "status": 1},
+            "G2": {"B": 1, "S": 0, "N": 0, "status": 1},
+            "G3": {"B": 0, "S": 0, "N": 0, "status": 0},
+        },
+    }
+    item["order_setup"]["entry_exit_tactic"] = "SWING_REJECTION->FALLBACK_R"
+
+    text = opportunity_alerts.format_digest([item])
+
+    assert (
+        "G0 1H 🟢▲ 3/3 "
+        "[🧭 Average Directional Index · 📈 Exponential Moving Average 20 · 🚦 Supertrend]"
+    ) in text
+    assert (
+        "G1 15M 🟢▲ 4/4 "
+        "[🧭 Average Directional Index · 📈 Exponential Moving Average 20 · "
+        "🚦 Supertrend · 🌊 Moving Average Convergence Divergence]"
+    ) in text
+    assert "G2 5M 🟢▲ 1/1 [🚀 Simple Breakout]" in text
+    assert "G3 " not in text
+    assert "Exponential Moving Average 50" not in text
+    assert "Entry RETEST @10" in text
 
 
 def test_invalid_levels_are_archived_and_not_queued(monkeypatch, tmp_path):

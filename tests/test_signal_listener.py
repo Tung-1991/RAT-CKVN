@@ -145,6 +145,91 @@ def test_record_and_queue_opportunity_is_independent_of_bot_result(monkeypatch):
     assert recorded[0]["order_setup"]["plan_source"] == "BOT"
 
 
+def test_telegram_uses_latest_bot_plan_while_statistics_keep_frozen_plan(monkeypatch):
+    listener = _listener()
+    listener.build_opportunity_plan = lambda *_args, **_kwargs: {
+        "ok": True,
+        "price": 1900,
+        "sl": 1890,
+        "tp": 1915,
+    }
+    frozen = {
+        "symbol": "VN30F1M",
+        "order_setup": {
+            "ok": True,
+            "price": 1880,
+            "sl": 1870,
+            "tp": 1895,
+        },
+    }
+    queued = []
+
+    monkeypatch.setattr(
+        "core.signal_opportunities.record_signal",
+        lambda *_args, **_kwargs: frozen,
+    )
+    monkeypatch.setattr(
+        "telegram_notify.opportunity_alerts.queue_opportunity",
+        lambda item, log_cb=None: queued.append(item) or {"ok": True},
+    )
+
+    result = listener._record_and_queue_opportunity(
+        {"symbol": "VN30F1M", "signal_class": "ENTRY"},
+        "BUY",
+        {"current_price": 1900},
+        "TREND",
+        block_reason="BOT_OFF",
+    )
+
+    assert result is frozen
+    assert frozen["order_setup"]["price"] == 1880
+    assert queued[0] is not frozen
+    assert queued[0]["order_setup"]["price"] == 1900
+    assert queued[0]["order_setup"]["plan_source"] == "BOT"
+
+
+def test_telegram_receives_current_wait_plan_instead_of_frozen_valid_plan(monkeypatch):
+    listener = _listener()
+    listener.build_opportunity_plan = lambda *_args, **_kwargs: {
+        "ok": False,
+        "error": "ENTRY_EXIT_WAIT|RETEST",
+    }
+    frozen = {
+        "symbol": "VN30F1M",
+        "order_setup": {
+            "ok": True,
+            "price": 1880,
+            "sl": 1870,
+            "tp": 1895,
+        },
+    }
+    queued = []
+
+    monkeypatch.setattr(
+        "core.signal_opportunities.record_signal",
+        lambda *_args, **_kwargs: frozen,
+    )
+    monkeypatch.setattr(
+        "telegram_notify.opportunity_alerts.queue_opportunity",
+        lambda item, log_cb=None: queued.append(item) or {
+            "ok": False,
+            "reason": "setup_unavailable",
+        },
+    )
+
+    listener._record_and_queue_opportunity(
+        {"symbol": "VN30F1M", "signal_class": "ENTRY"},
+        "BUY",
+        {"current_price": 1900},
+        "TREND",
+        block_reason="BOT_OFF",
+    )
+
+    assert queued[0]["order_setup"]["ok"] is False
+    assert queued[0]["order_setup"]["error"].startswith("ENTRY_EXIT_WAIT")
+    assert frozen["order_setup"]["price"] == 1880
+
+
 def test_successful_bot_execution_still_queues_telegram_opportunity(monkeypatch):
     listener = _listener()
     listener.get_auto_trade = lambda symbol=None: True
