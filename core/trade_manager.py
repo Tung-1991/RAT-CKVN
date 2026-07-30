@@ -385,6 +385,9 @@ class TradeManager:
         self.state.setdefault("trade_symbols", {})[s_ticket] = symbol
         self.state.setdefault("trade_directions", {})[s_ticket] = direction
         self.state.setdefault("trade_volumes", {})[s_ticket] = float(volume or 0.0)
+        self.state.setdefault("trade_current_volumes", {})[s_ticket] = float(
+            volume or 0.0
+        )
         self.state.setdefault("trade_prices", {})[s_ticket] = float(entry_price or 0.0)
         self.state.setdefault("trade_sl", {})[s_ticket] = float(sl or 0.0)
         self.state.setdefault("trade_tp", {})[s_ticket] = float(tp or 0.0)
@@ -1366,6 +1369,19 @@ class TradeManager:
                 )
         acc_info = self.connector.get_account_info()
         brain = self._get_brain_settings(symbol)
+        if not bypass_checklist:
+            try:
+                from core.market_calendar import entry_phase_block_reason
+
+                phase_block = entry_phase_block_reason(
+                    symbol,
+                    settings=brain.get("market_calendar", {}),
+                )
+            except Exception:
+                phase_block = None
+            if phase_block:
+                reason_code, reason_message = phase_block
+                return f"SAFEGUARD_FAIL|{reason_code}|{reason_message}"
         margin_cfg = margin_rules.settings_from_brain(brain)
         manual_margin_active = settlement.is_cash_stock(symbol) and bool(margin_cfg.get("ENABLE_MANUAL_MARGIN"))
         res = self.checklist.run_pre_trade_checks(
@@ -2309,6 +2325,7 @@ class TradeManager:
                         "last_tsl_rules",
                         "trade_excursions",
                         "trade_margin_meta",
+                        "trade_current_volumes",
                         "closed_history_retry_at",
                         "closed_history_retry_logs",
                         "be_sl_arms",
@@ -2376,7 +2393,14 @@ class TradeManager:
             tracked_positions = [
                 p
                 for p in current_positions
-                if is_bot_position(p, magics) or is_manual_position(p, magics)
+                if (
+                    is_bot_position(p, magics)
+                    or is_manual_position(p, magics)
+                    # A DNSE Mobile/Web position is unmanaged by default, but
+                    # the user can explicitly enroll it by assigning any TSL
+                    # tactic from the running-table edit popup.
+                    or self.get_trade_tactic(p.ticket) != "OFF"
+                )
             ]
 
             needs_save = False
@@ -2433,6 +2457,31 @@ class TradeManager:
                         getattr(pos, "tp", 0.0),
                     )
                     needs_save = True
+                else:
+                    current_volumes = self.state.setdefault(
+                        "trade_current_volumes",
+                        {},
+                    )
+                    previous_volume = float(
+                        current_volumes.get(
+                            s_ticket,
+                            self.state.get("trade_volumes", {}).get(
+                                s_ticket,
+                                pos.volume,
+                            ),
+                        )
+                        or 0.0
+                    )
+                    live_volume = abs(float(pos.volume or 0.0))
+                    if abs(previous_volume - live_volume) > 1e-9:
+                        current_volumes[s_ticket] = live_volume
+                        needs_save = True
+                        self.log(
+                            f"[POSITION SYNC] #{s_ticket} {pos.symbol}: "
+                            f"{previous_volume:g} -> {live_volume:g}. "
+                            "TSL tiếp tục quản lý khối lượng còn lại.",
+                            target="bot-log",
+                        )
 
                 if pos.magic == bot_magic and self.get_trade_tactic(pos.ticket) == "OFF":
                     brain = self._get_brain_settings(pos.symbol)

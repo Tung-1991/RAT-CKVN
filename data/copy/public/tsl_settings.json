@@ -34,7 +34,7 @@
   ],
   "STEP_R_SIZE": 1.0,
   "STEP_R_RATIO": 0.8,
-  "SWING_GROUP": "G2",
+  "SWING_GROUP": "G0",
   "PSAR_GROUP": "G2",
   "PSAR_STEP": 0.02,
   "PSAR_MAX": 0.2,

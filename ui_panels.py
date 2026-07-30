@@ -96,8 +96,9 @@ def setup_left_panel(app, parent):
     def set_force_button_state():
         enabled = app.var_bypass_checklist.get()
         app.btn_force.configure(
-            fg_color=COL_BLUE_ACCENT if enabled else "#424242",
-            hover_color=COL_BLUE_ACCENT_HOVER if enabled else "#616161",
+            text="⚠ BYPASS" if enabled else "BYPASS",
+            fg_color="#EF6C00" if enabled else "#424242",
+            hover_color="#E65100" if enabled else "#616161",
         )
 
     def toggle_force_button():
@@ -132,13 +133,13 @@ def setup_left_panel(app, parent):
 
     setting_label(1, "MODE")
     f_account_row = setting_row(1)
-    stretch_columns(f_account_row, (128, 74, 104))
+    stretch_columns(f_account_row, (124, 82, 100))
     
     app.seg_paper_mode = ctk.CTkSegmentedButton(
         f_account_row,
         values=["REAL", "PAPER"],
         font=FONT_BOLD,
-        width=128,
+        width=124,
         height=30,
         command=app.on_paper_mode_change,
         selected_color="#D32F2F",  # Red for REAL initially (will update dynamically)
@@ -159,10 +160,10 @@ def setup_left_panel(app, parent):
     ).grid(row=0, column=2, sticky="ew")
     app.btn_force = ctk.CTkButton(
         f_account_row,
-        text="Force",
-        font=("Roboto", 11, "bold"),
+        text="BYPASS",
+        font=("Roboto", 10, "bold"),
         text_color="white",
-        width=74,
+        width=82,
         height=30,
         fg_color="#424242",
         hover_color="#616161",
@@ -566,6 +567,16 @@ def setup_left_panel(app, parent):
     if _unified:
         app.lbl_order_status.pack(fill="x", padx=10, pady=(0, 0))
 
+    app.lbl_contract_dates = ctk.CTkLabel(
+        f_dashboard,
+        text="",
+        font=("Consolas", 10, "bold"),
+        text_color="#90A4AE",
+        anchor="center",
+        justify="center",
+    )
+    app.lbl_contract_dates.pack(fill="x", padx=10, pady=(0, 1))
+
     # Trần/Tham chiếu/Sàn (1 dòng nhỏ). Cổ phiếu HOSE ±7%; phái sinh VN30F cũng có biên.
     # Trần/Tham chiếu/Sàn của ngày — để biết khoảng giá khi đặt lệnh thị trường/ATO/ATC.
     app.lbl_band_info = ctk.CTkLabel(
@@ -574,7 +585,10 @@ def setup_left_panel(app, parent):
     # Chỉ pack khi main.py có dữ liệu trần/tham chiếu/sàn; tránh giữ khoảng đen khi rỗng.
     app.lbl_band_info_pack_options = {"fill": "x", "padx": 8, "pady": (0, 1)}
 
-    ctk.CTkFrame(f_dashboard, height=1, fg_color="#444").pack(fill="x", padx=5)
+    app.dashboard_separator = ctk.CTkFrame(
+        f_dashboard, height=1, fg_color="#444"
+    )
+    app.dashboard_separator.pack(fill="x", padx=5)
     f_grid_db = ctk.CTkFrame(f_dashboard, fg_color="transparent")
     f_grid_db.pack(fill="x", padx=5, pady=1)
     f_grid_db.columnconfigure((0, 1), weight=1)
@@ -855,7 +869,7 @@ def setup_right_panel(app, parent):
         "Trạng thái",
         "✖",
     ]
-    widths = [200, 200, 500, 400, 400, 440, 440, 700, 60]
+    widths = [200, 200, 560, 400, 400, 440, 440, 640, 60]
     anchors = [
         "center",
         "center",
@@ -876,7 +890,9 @@ def setup_right_panel(app, parent):
         )
         tree.tag_configure("buy_row", background="#1f4630", foreground="#e0e0e0")
         tree.tag_configure("sell_row", background="#4a2424", foreground="#e0e0e0")
+        tree.tag_configure("external_position", background="#37474F", foreground="#ECEFF1")
         tree.tag_configure("position_closing", background="#51491b", foreground="#FFF3B0")
+        tree.tag_configure("position_close_error", background="#5A1E1E", foreground="#FFCDD2")
         tree.tag_configure("pending_order", background="#5c5417", foreground="#FFF3B0")
         tree.tag_configure("matched_stock", background="#5c3a17", foreground="#FFD7A0")
         tree.tag_configure("local_pending", background="#5c5417", foreground="#FFF3B0")

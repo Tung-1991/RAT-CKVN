@@ -178,6 +178,73 @@ def test_pending_close_waits_for_open_and_does_not_expire(monkeypatch, tmp_path)
     assert [row["id"] for row in due] == [item["id"]]
 
 
+def test_paper_limit_close_waits_for_executable_price(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    item = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="PAPER-2",
+        side="SELL",
+        lot=1,
+        execution_mode="PAPER",
+        entry_mode="LIMIT",
+        limit_price=1888.4,
+    )
+
+    assert item["entry_mode"] == "LIMIT"
+    assert item["entry_price"] == 1888.4
+    assert item["wait_for_trigger"] is True
+    assert pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 1,
+        quote_fn=lambda _symbol, _side: 1888.3,
+    ) == []
+    due = pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 2,
+        quote_fn=lambda _symbol, _side: 1888.4,
+    )
+    assert [row["id"] for row in due] == [item["id"]]
+
+
+def test_real_limit_close_is_sent_to_broker_without_local_price_trigger(
+    monkeypatch,
+    tmp_path,
+):
+    _isolated_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    item = pending_orders.add_close_order(
+        symbol="VN30F1M",
+        position_ticket="9123",
+        side="SELL",
+        lot=1,
+        execution_mode="REAL",
+        entry_mode="LIMIT",
+        limit_price=1888.4,
+    )
+
+    assert item["wait_for_trigger"] is False
+    due = pending_orders.claim_due(
+        lambda _symbol: ("OPEN", ""),
+        now=item["created_at"] + 1,
+        quote_fn=lambda _symbol, _side: 1800.0,
+    )
+    assert [row["id"] for row in due] == [item["id"]]
+
+
+def test_pending_entry_persists_bypass_choice(monkeypatch, tmp_path):
+    _isolated_account(monkeypatch, tmp_path)
+    item = pending_orders.add_order(
+        symbol="VN30F1M",
+        side="BUY",
+        preset="SCALPING",
+        entry_price=1888.4,
+        bypass_checklist=True,
+    )
+
+    assert item["bypass_checklist"] is True
+
+
 def test_pending_close_is_deduplicated_per_position_and_mode(monkeypatch, tmp_path):
     _isolated_account(monkeypatch, tmp_path)
 

@@ -139,7 +139,7 @@
         "entry_tactics": [
           "SWING_REJECTION"
         ],
-        "exit_tactic": "FALLBACK_R",
+        "exit_tactic": "SWING_REJECTION",
         "sl_mode": "SANDBOX",
         "fallback_tactic": "OFF",
         "signal_ttl_seconds": 900,
@@ -147,9 +147,9 @@
         "tp_policy": "TACTIC_FIRST",
         "sl_source_group": "G1",
         "default_exit": {
-          "use_rr_tp": true,
+          "use_rr_tp": false,
           "tp_rr_ratio": 1.5,
-          "use_swing_tp": false
+          "use_swing_tp": true
         },
         "sl_distance": {
           "min_atr": 0.3,
@@ -165,16 +165,10 @@
         }
       },
       "bot_safeguard": {
-        "BOT_USE_SWING_TP": false,
-        "BOT_USE_RR_TP": true,
+        "BOT_USE_SWING_TP": true,
+        "BOT_USE_RR_TP": false,
         "BOT_TP_RR_RATIO": 1.5
       }
-    },
-    "tsl": {
-      "TSL_CONFIG": {
-        "SWING_GROUP": "G1"
-      },
-      "TSL_LOGIC_MODE": "STATIC"
     }
   }
 }

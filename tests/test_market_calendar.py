@@ -133,6 +133,44 @@ def test_expiry_is_third_thursday_and_moves_to_previous_working_day():
     assert expiry == previous
 
 
+def test_front_contract_period_matches_current_vn30f1m_rotation():
+    cache = market_calendar.empty_cache()
+    first_date, last_date = market_calendar.vn30_front_contract_period(
+        datetime(2026, 7, 30, 10, 0),
+        _settings(),
+        cache,
+    )
+
+    assert first_date == date(2026, 6, 19)
+    assert last_date == date(2026, 8, 20)
+
+
+def test_entry_phase_block_defaults_on_and_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(
+        market_hours,
+        "market_session_phase",
+        lambda _symbol: ("ATO", "ATO"),
+    )
+    assert market_calendar.entry_phase_block_reason(
+        "VN30F1M",
+        _settings(),
+    )[0] == "ATO_ENTRY_BLOCK"
+    assert market_calendar.entry_phase_block_reason(
+        "VN30F1M",
+        _settings(block_entry_ato=False),
+    ) is None
+
+    monkeypatch.setattr(
+        market_hours,
+        "market_session_phase",
+        lambda _symbol: ("ATC", "ATC"),
+    )
+    assert market_calendar.entry_phase_block_reason(
+        "VN30F1M",
+        _settings(),
+    )[0] == "ATC_ENTRY_BLOCK"
+
+
 def test_special_day_gate_only_blocks_vn30f_entry(monkeypatch):
     expiry = market_calendar.third_thursday(2026, 7)
     monkeypatch.setattr(market_calendar, "load_cache", lambda *_args, **_kwargs: market_calendar.empty_cache())

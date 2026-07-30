@@ -117,5 +117,4 @@ Nếu nhiều SAFEGUARD_FAIL, hãy phân biệt gate đang bảo vệ đúng hay
 
 - Các file trong `advisor/` dùng để đánh giá BOT, setting và lịch sử giao dịch.
 - Đọc `user_context.md` để hiểu mục tiêu và `expert_context.md` để đối chiếu nhận định chuyên gia với dữ liệu BOT hiện tại.
-- `ckcs_shortlist.md` và `scan_report.md` trong `ckcs_research/` chỉ là dữ liệu bổ trợ/nghiên cứu CKCS.
 - Không trộn tín hiệu BOT với nhận định chọn CKCS. AI chỉ đề xuất; app không tự chuyển kết quả thành lệnh.

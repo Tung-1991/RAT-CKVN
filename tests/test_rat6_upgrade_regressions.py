@@ -180,6 +180,16 @@ def test_off_hours_real_account_apis_stay_live_while_price_is_cache_only(monkeyp
 def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monkeypatch):
     calls = []
 
+    class Var:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+        def set(self, value):
+            self.value = value
+
     class ImmediateThread:
         def __init__(self, target, args=(), daemon=None, **_kwargs):
             self.target = target
@@ -201,7 +211,11 @@ def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monke
     app.running_tabs = Tabs()
     app.running_trees = {"CKCS PAPER": object(), "CKPS PAPER": object()}
     app.tree = None
-    app.var_direction = SimpleNamespace(get=lambda: "BUY")
+    app.var_direction = Var("BUY")
+    app.var_manual_entry = Var("1887.7")
+    app.var_manual_lot = Var("1")
+    app.var_manual_tp = Var("1890.67")
+    app.var_manual_sl = Var("1851.17")
     app.lbl_dashboard_price = SimpleNamespace(configure=lambda **_kwargs: None)
     app.lbl_manual_qty_title = SimpleNamespace(configure=lambda **_kwargs: None)
     app.lbl_prev_lot = SimpleNamespace(configure=lambda **_kwargs: None)
@@ -221,6 +235,10 @@ def test_symbol_change_immediately_loads_cached_snapshot_and_selects_scope(monke
     assert calls == ["AAA"]
     assert app.running_tabs.selected == "CKCS PAPER"
     assert app.tree is app.running_trees["CKCS PAPER"]
+    assert app.var_manual_entry.get() == ""
+    assert app.var_manual_lot.get() == ""
+    assert app.var_manual_tp.get() == ""
+    assert app.var_manual_sl.get() == ""
 
 
 def test_manual_trade_closed_session_checks_hours_before_account(monkeypatch):

@@ -16,6 +16,8 @@ from core import storage_manager
 
 PENDING = "PENDING"
 SENDING = "SENDING"
+WORKING = "WORKING"
+ERROR = "ERROR"
 SENT = "SENT"
 FAILED = "FAILED"
 EXPIRED = "EXPIRED"
@@ -148,6 +150,7 @@ def _normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
     item["position_ticket"] = str(item.get("position_ticket", "") or "")
     item.setdefault("close_comment", "")
     item.setdefault("retry_at", 0.0)
+    item["bypass_checklist"] = bool(item.get("bypass_checklist", False))
     # Lệnh hẹn cũ chưa có mode được coi là PAPER để không thể vô tình gửi tiền thật.
     mode = str(item.get("execution_mode", "PAPER") or "PAPER").strip().upper()
     item["execution_mode"] = mode if mode in ("PAPER", "REAL") else "PAPER"
@@ -200,6 +203,7 @@ def add_order(
     trigger_price: float = 0.0,
     slippage_ticks: int = 0,
     opportunity_id: str = "",
+    bypass_checklist: bool = False,
 ) -> Dict[str, Any]:
     created_at = _now()
     hours = _expire_hours() if expire_hours is None else max(0.01, float(expire_hours))
@@ -238,6 +242,7 @@ def add_order(
             "trigger_price": trigger_price or entry_price,
             "slippage_ticks": slippage_ticks,
             "opportunity_id": opportunity_id,
+            "bypass_checklist": bypass_checklist,
         }
     )
     with _LOCK:
@@ -256,6 +261,8 @@ def add_close_order(
     execution_mode: Optional[str] = None,
     comment: str = "Manual_Close",
     note: str = "",
+    entry_mode: str = "MARKET",
+    limit_price: float = 0.0,
 ) -> Dict[str, Any]:
     """Cache a manual close until the next continuous OPEN session.
 
@@ -268,6 +275,11 @@ def add_close_order(
         or ("PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL")
     ).strip().upper()
     mode = mode if mode in ("PAPER", "REAL") else "PAPER"
+    close_mode = str(entry_mode or "MARKET").strip().upper()
+    close_mode = close_mode if close_mode in ("MARKET", "LIMIT") else "MARKET"
+    close_limit = max(0.0, float(limit_price or 0.0))
+    if close_mode == "LIMIT" and close_limit <= 0:
+        raise ValueError("LIMIT close requires limit_price > 0")
     ticket = str(position_ticket or "")
     with _LOCK:
         items = _read_unlocked()
@@ -287,7 +299,7 @@ def add_close_order(
                 "side": side,
                 "preset": "",
                 "lot": lot,
-                "entry_price": 0.0,
+                "entry_price": close_limit,
                 "sl": 0.0,
                 "tp": 0.0,
                 "target": "OPEN",
@@ -295,9 +307,17 @@ def add_close_order(
                 "expire_at": 0.0,
                 "status": PENDING,
                 "note": note or "Đóng vị thế khi thị trường mở",
-                "plan": f"OPEN -> CLOSE #{ticket}",
+                "plan": (
+                    f"OPEN -> CLOSE LIMIT @{close_limit:g} #{ticket}"
+                    if close_mode == "LIMIT"
+                    else f"OPEN -> CLOSE MARKET #{ticket}"
+                ),
                 "execution_mode": mode,
-                "entry_mode": "MARKET",
+                "entry_mode": close_mode,
+                # PAPER has no resting broker order.  Wait until its executable
+                # bid/ask reaches the requested limit, then close at that tick.
+                "wait_for_trigger": close_mode == "LIMIT" and mode == "PAPER",
+                "trigger_price": close_limit,
                 "position_ticket": ticket,
                 "close_comment": comment,
             }
@@ -366,7 +386,12 @@ def cancel(order_id: str, result: str = "User cancelled") -> Optional[Dict[str, 
         found = None
         for item in items:
             if str(item.get("id")) == str(order_id):
-                if str(item.get("status", "")).upper() in (PENDING, FAILED, EXPIRED):
+                if str(item.get("status", "")).upper() in (
+                    PENDING,
+                    FAILED,
+                    EXPIRED,
+                    ERROR,
+                ):
                     item["status"] = CANCELLED
                     item["result"] = result
                     found = _normalize(item)
@@ -433,7 +458,11 @@ def purge_stale(max_age_sec: Optional[float] = None, now: Optional[float] = None
         kept = []
         for item in items:
             status = str(item.get("status", "")).upper()
-            if status in _PURGEABLE_STATUSES:
+            is_final_close = (
+                str(item.get("action", "OPEN")).upper() == "CLOSE"
+                and status == SENT
+            )
+            if status in _PURGEABLE_STATUSES or is_final_close:
                 ref = float(
                     item.get("finalized_at")
                     or item.get("expire_at")

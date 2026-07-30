@@ -21,19 +21,22 @@ class JsonAndManualBoundaryTests(unittest.TestCase):
             override = symbol_config["sandbox"]
         with (root / "presets_config.json").open("r", encoding="utf-8") as handle:
             manual = json.load(handle)["SCALPING"]
+        with (root / "tsl_settings.json").open("r", encoding="utf-8") as handle:
+            tsl = json.load(handle)
 
         self.assertEqual(override["G0_TIMEFRAME"], "1h")
         self.assertEqual(override["G1_TIMEFRAME"], "15m")
         self.assertEqual(override["entry_exit"]["entry_tactics"], ["SWING_REJECTION"])
-        self.assertEqual(override["entry_exit"]["exit_tactic"], "FALLBACK_R")
+        self.assertEqual(override["entry_exit"]["exit_tactic"], "SWING_REJECTION")
         self.assertEqual(override["entry_exit"]["sl_mode"], "SANDBOX")
-        self.assertFalse(override["bot_safeguard"]["BOT_USE_SWING_TP"])
-        self.assertTrue(override["bot_safeguard"]["BOT_USE_RR_TP"])
+        self.assertTrue(override["bot_safeguard"]["BOT_USE_SWING_TP"])
+        self.assertFalse(override["bot_safeguard"]["BOT_USE_RR_TP"])
         self.assertEqual(override["bot_safeguard"]["BOT_TP_RR_RATIO"], 1.5)
-        self.assertEqual(symbol_config["tsl"]["TSL_CONFIG"]["SWING_GROUP"], "G1")
+        self.assertEqual(tsl["SWING_GROUP"], "G0")
 
         self.assertEqual(manual["MANUAL_SL_MODE"], "SWING_REJECTION")
-        self.assertEqual(manual["MANUAL_TP_MODE"], "FIB")
+        self.assertEqual(manual["MANUAL_TP_MODE"], "RR")
+        self.assertEqual(manual["TP_RR_RATIO"], 1.2)
         self.assertEqual(manual["MANUAL_SL_GROUP"], "G1")
         self.assertEqual(manual["MANUAL_TP_GROUP"], "G1")
 
@@ -54,19 +57,37 @@ class JsonAndManualBoundaryTests(unittest.TestCase):
             for name, value in vn30["indicators"].items()
             if value.get("active")
         }
-        expected = {"adx", "ema", "supertrend", "macd", "simple_breakout"}
+        expected_vn30 = {"adx", "ema", "supertrend", "macd", "simple_breakout"}
+        expected_ckcs = expected_vn30 | {"swing_point", "volume"}
 
-        self.assertEqual(active_global, expected)
-        self.assertEqual(active_vn30, expected)
-        self.assertEqual(global_config["voting_rules"], vn30["voting_rules"])
+        self.assertEqual(active_global, expected_ckcs)
+        self.assertEqual(active_vn30, expected_vn30)
+        self.assertEqual(
+            global_config["voting_rules"],
+            {
+                "G0": {"max_opposite": 0, "max_none": 0, "master_rule": "FIX"},
+                "G1": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+                "G2": {"max_opposite": 0, "max_none": 2, "master_rule": "PASS"},
+                "G3": {"max_opposite": 0, "max_none": 1, "master_rule": "IGNORE"},
+            },
+        )
+        self.assertEqual(
+            vn30["voting_rules"],
+            {
+                "G0": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+                "G1": {"max_opposite": 0, "max_none": 2, "master_rule": "FIX"},
+                "G2": {"max_opposite": 0, "max_none": 1, "master_rule": "PASS"},
+                "G3": {"max_opposite": 0, "max_none": 1, "master_rule": "IGNORE"},
+            },
+        )
         self.assertEqual(global_config["G0_TIMEFRAME"], "1d")
         self.assertEqual(global_config["G1_TIMEFRAME"], "1h")
         self.assertEqual(vn30["G0_TIMEFRAME"], "1h")
         self.assertEqual(vn30["G1_TIMEFRAME"], "15m")
-        self.assertFalse(global_config["indicators"]["volume"]["active"])
-        self.assertTrue(global_config["entry_exit"]["preview_only"])
+        self.assertTrue(global_config["indicators"]["volume"]["active"])
+        self.assertFalse(global_config["entry_exit"]["preview_only"])
         self.assertFalse(vn30["entry_exit"]["preview_only"])
-        self.assertFalse(
+        self.assertTrue(
             global_config["ai_advisor_schedule"]["ckcs_liquidity_filter_enabled"]
         )
 

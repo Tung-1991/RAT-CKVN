@@ -17,6 +17,8 @@ import config
 DEFAULT_SETTINGS = {
     "use_dnse_working_dates": True,
     "manual_closed_dates": [],
+    "block_entry_ato": True,
+    "block_entry_atc": True,
     "avoid_vn30_expiry_entry": False,
     "avoid_vn30_rebalance_entry": False,
     "vn30_rebalance_dates": [],
@@ -79,6 +81,8 @@ def normalize_settings(raw=None) -> dict:
     if isinstance(raw, dict):
         result.update(raw)
     result["use_dnse_working_dates"] = bool(result.get("use_dnse_working_dates", True))
+    result["block_entry_ato"] = bool(result.get("block_entry_ato", True))
+    result["block_entry_atc"] = bool(result.get("block_entry_atc", True))
     result["avoid_vn30_expiry_entry"] = bool(result.get("avoid_vn30_expiry_entry", False))
     result["avoid_vn30_rebalance_entry"] = bool(result.get("avoid_vn30_rebalance_entry", False))
     result["avoid_ckcs_open_entry"] = bool(result.get("avoid_ckcs_open_entry", True))
@@ -261,11 +265,82 @@ def next_vn30_expiry(value=None, settings=None, cache=None) -> date:
     return vn30_expiry_date(year, month, settings=settings, cache=cache)
 
 
+def _shift_month(year: int, month: int, offset: int) -> tuple[int, int]:
+    absolute = (int(year) * 12) + (int(month) - 1) + int(offset)
+    return absolute // 12, (absolute % 12) + 1
+
+
+def _next_trading_date(value: date, settings=None, cache=None) -> date:
+    settings = normalize_settings(settings if settings is not None else load_settings())
+    cache = cache if cache is not None else load_cache()
+    candidate = _date_value(value) + timedelta(days=1)
+    while date_status(candidate, settings=settings, cache=cache)["status"] in {
+        "HOLIDAY",
+        "WEEKEND",
+    }:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def vn30_front_contract_period(value=None, settings=None, cache=None) -> tuple[date, date]:
+    """Return the first/last trading dates of the current VN30F1M contract.
+
+    A newly listed monthly contract becomes the second monthly maturity on the
+    trading day after the expiry two months before its own maturity.  This
+    matches the VSDC contract rotation while the final date remains the third
+    Thursday adjusted for holidays.
+    """
+    settings = normalize_settings(settings if settings is not None else load_settings())
+    cache = cache if cache is not None else load_cache()
+    expiry = next_vn30_expiry(value, settings=settings, cache=cache)
+    anchor_year, anchor_month = _shift_month(expiry.year, expiry.month, -2)
+    listing_anchor = vn30_expiry_date(
+        anchor_year,
+        anchor_month,
+        settings=settings,
+        cache=cache,
+    )
+    return _next_trading_date(listing_anchor, settings=settings, cache=cache), expiry
+
+
+def entry_phase_block_reason(symbol: str, settings=None, value=None):
+    """Block only new entries in ATO/ATC; position management remains allowed."""
+    settings = normalize_settings(settings if settings is not None else load_settings())
+    # Explicit values are used by historical/calendar checks. Do not mix those
+    # timestamps with market_session_phase(), which intentionally uses "now".
+    if value is not None:
+        return None
+    try:
+        from core.market_hours import market_session_phase
+
+        phase = market_session_phase(str(symbol or ""))[0]
+    except Exception:
+        return None
+    if phase == "ATO" and settings.get("block_entry_ato", True):
+        return (
+            "ATO_ENTRY_BLOCK",
+            f"{str(symbol or '').upper()} đang trong ATO; chờ phiên liên tục mới mở ENTRY",
+        )
+    if phase == "ATC" and settings.get("block_entry_atc", True):
+        return (
+            "ATC_ENTRY_BLOCK",
+            f"{str(symbol or '').upper()} đang trong ATC; không mở ENTRY mới",
+        )
+    return None
+
+
 def bot_entry_block_reason(symbol: str, signal_class: str, settings=None, value=None):
     if str(signal_class or "ENTRY").upper() != "ENTRY":
         return None
     settings = normalize_settings(settings if settings is not None else load_settings())
     symbol_key = str(symbol or "").upper()
+    phase_block = entry_phase_block_reason(
+        symbol_key,
+        settings=settings,
+        value=value,
+    )
+    if phase_block:
+        return phase_block
     if not symbol_key.startswith("VN30F"):
         if settings.get("avoid_ckcs_open_entry"):
             # Giá trị chỉ có ngày được các hàm kiểm tra lịch sử dùng; không đủ giờ để

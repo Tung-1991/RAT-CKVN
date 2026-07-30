@@ -245,6 +245,52 @@ class ModeBoundConnector:
         params["paper_mode"] = self._paper_mode
         return self._connector.get_orders(**params)
 
+    def place_order(
+        self,
+        symbol,
+        order_type,
+        lot,
+        sl,
+        tp,
+        magic=0,
+        comment="",
+        order_kind=None,
+        price=0.0,
+    ) -> BrokerOrderResult:
+        return self._connector.place_order(
+            symbol,
+            order_type,
+            lot,
+            sl,
+            tp,
+            magic,
+            comment,
+            order_kind=order_kind,
+            price=price,
+            paper_mode=self._paper_mode,
+        )
+
+    def place_close_limit_order(
+        self,
+        symbol,
+        order_type,
+        lot,
+        price,
+        comment="",
+    ) -> BrokerOrderResult:
+        return self._connector.place_close_limit_order(
+            symbol,
+            order_type,
+            lot,
+            price,
+            comment=comment,
+            paper_mode=self._paper_mode,
+        )
+
+    def cancel_order(self, order_id: str, **params) -> BrokerOrderResult:
+        params["paper_mode"] = self._paper_mode
+        return self._connector.cancel_order(order_id, **params)
+
     def get_paper_closed_trade(self, ticket: Any):
         if not self._paper_mode:
             return None
@@ -333,6 +379,14 @@ class DNSEConnector:
         self._positions_suppressed_errors: int = 0
         self._orders_cache: List[Dict[str, Any]] = []
         self._orders_cache_ts: float = 0.0
+        # Orders belong to separate CKPS/CKCS accounts.  A single cache can
+        # make a fresh derivative response incorrectly suppress a stock fetch
+        # (or vice versa), so retain one snapshot per account + market.
+        self._orders_cache_by_scope: Dict[
+            Tuple[str, str],
+            List[Dict[str, Any]],
+        ] = {}
+        self._orders_cache_ts_by_scope: Dict[Tuple[str, str], float] = {}
         # DNSE order service may temporarily return
         # ``400 AccountRepository: cannot find object`` during maintenance even
         # though GET /accounts and /balances still work.  Do not hammer the
@@ -440,6 +494,8 @@ class DNSEConnector:
         self._positions_suppressed_errors = 0
         self._orders_cache = []
         self._orders_cache_ts = 0.0
+        self._orders_cache_by_scope = {}
+        self._orders_cache_ts_by_scope = {}
         self._orders_unavailable_until = 0.0
         self._orders_failure_streak = 0
         self._orders_outage_logged = False
@@ -1041,17 +1097,33 @@ class DNSEConnector:
         if use_paper:
             return []
         symbol = params.pop("symbol", None)
+        all_symbols = bool(params.pop("all_symbols", False))
         market_type = self.market_type_for_symbol(symbol) if symbol else self.market_type
         account_no = self.account_no_for_symbol(symbol) if symbol else self.account_no
+        cache_scope = (str(account_no or ""), str(market_type or "").upper())
+        scoped_caches = getattr(self, "_orders_cache_by_scope", {})
+        scoped_timestamps = getattr(self, "_orders_cache_ts_by_scope", {})
+        if cache_scope in scoped_caches:
+            scope_rows = list(scoped_caches[cache_scope])
+            scope_timestamp = float(scoped_timestamps.get(cache_scope, 0.0) or 0.0)
+        elif not scoped_caches:
+            # Compatibility for old sessions/tests that only have the legacy
+            # single cache populated.
+            scope_rows = list(getattr(self, "_orders_cache", []) or [])
+            scope_timestamp = float(getattr(self, "_orders_cache_ts", 0.0) or 0.0)
+        else:
+            scope_rows = []
+            scope_timestamp = 0.0
 
         def _cached_rows() -> List[Dict[str, Any]]:
-            rows = list(self._orders_cache)
-            if symbol:
+            rows = list(scope_rows)
+            if symbol and not all_symbols:
                 wanted = str(symbol).upper()
                 rows = [
                     item
                     for item in rows
-                    if str(item.get("symbol", "")).upper() == wanted
+                    if not str(item.get("symbol", "") or "").strip()
+                    or str(item.get("symbol", "")).upper() == wanted
                 ]
             return rows
 
@@ -1062,24 +1134,30 @@ class DNSEConnector:
         except Exception:
             ws_connected = False
             ws_events = []
-        if ws_events and self._orders_cache:
-            merged = {str(item.get("id") or item.get("orderId")): dict(item) for item in self._orders_cache}
+        if ws_events and scope_rows:
+            merged = {str(item.get("id") or item.get("orderId")): dict(item) for item in scope_rows}
             for event in ws_events:
+                event_symbol = str(event.get("symbol", "") or "")
+                if (
+                    event_symbol
+                    and self.market_type_for_symbol(event_symbol) != market_type
+                ):
+                    continue
                 merged[str(event.get("id") or event.get("orderId"))] = dict(event)
             rows = list(merged.values())
-            if symbol:
+            if symbol and not all_symbols:
                 rows = [item for item in rows if str(item.get("symbol", "")).upper() == str(symbol).upper()]
             return rows
-        reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 300.0) or 300.0)
-        if ws_connected and self._orders_cache_ts and (time.time() - self._orders_cache_ts) < reconcile:
+        reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 30.0) or 30.0)
+        if ws_connected and scope_timestamp and (time.time() - scope_timestamp) < reconcile:
             return _cached_rows()
         cache_ttl = float(
             getattr(config, "DNSE_ORDERS_CACHE_TTL_SECONDS", 5.0) or 0.0
         )
         if (
             cache_ttl > 0
-            and self._orders_cache_ts
-            and (time.time() - self._orders_cache_ts) < cache_ttl
+            and scope_timestamp
+            and (time.time() - scope_timestamp) < cache_ttl
         ):
             return _cached_rows()
 
@@ -1172,14 +1250,30 @@ class DNSEConnector:
                 market_type,
                 self._orders_suppressed_errors,
             )
-        self._orders_cache = [dict(item) for item in rows if isinstance(item, dict)]
-        self._orders_cache_ts = time.time()
+        normalized_rows = [dict(item) for item in rows if isinstance(item, dict)]
+        now_cached = time.time()
+        self._orders_cache_by_scope[cache_scope] = normalized_rows
+        self._orders_cache_ts_by_scope[cache_scope] = now_cached
+        self._orders_cache = [
+            dict(item)
+            for scope_items in self._orders_cache_by_scope.values()
+            for item in scope_items
+        ]
+        self._orders_cache_ts = now_cached
         self._orders_unavailable_until = 0.0
         self._orders_failure_streak = 0
         self._orders_outage_logged = False
         self._read_auth_blocked_marker = None
         self._orders_error_key = ""
         self._orders_suppressed_errors = 0
+        if symbol and not all_symbols:
+            wanted = str(symbol).upper()
+            return [
+                item
+                for item in rows
+                if not str(item.get("symbol", "") or "").strip()
+                or str(item.get("symbol", "")).upper() == wanted
+            ]
         return rows
 
     def _fallback_fee_profile(self, source: str = "fallback", market_type: str = "DERIVATIVE") -> BrokerFeeProfile:
@@ -1501,10 +1595,10 @@ class DNSEConnector:
             self._positions_cache = list(merged.values())
             self._positions_cache_ts = time.time()
             return list(self._positions_cache)
-        reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 300.0) or 300.0)
+        reconcile = float(getattr(config, "DNSE_WS_RECONCILE_SECONDS", 30.0) or 30.0)
         if ws_connected and self._positions_cache_ts and (time.time() - self._positions_cache_ts) < reconcile:
             return list(self._positions_cache)
-        cache_ttl = float(getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 2.0) or 0.0)
+        cache_ttl = float(getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 5.0) or 0.0)
         if cache_ttl > 0 and (time.time() - self._positions_cache_ts) < cache_ttl:
             return list(self._positions_cache)
         now = time.time()
@@ -1682,13 +1776,16 @@ class DNSEConnector:
         comment: str = "",
         magic: int = 0,
         order_kind: Optional[str] = None,
+        paper_mode: Optional[bool] = None,
+        allow_when_auto_disabled: bool = False,
     ) -> BrokerOrderResult:
         # Chuẩn hoá khối lượng + luật CK (lô 100 + biên trần/sàn) — áp cho CẢ paper lẫn real
         # để test paper sát thực tế. Phái sinh chỉ làm tròn số nguyên.
         quantity, norm_err = self._normalize_stock_order(symbol, order_type, volume, price, order_kind)
         if norm_err is not None:
             return norm_err
-        if self._is_paper_mode():
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
             return self._paper().place_order(
                 symbol,
                 order_type,
@@ -1712,7 +1809,10 @@ class DNSEConnector:
                         "Chỉ cho phép lệnh LO nhập giá thủ công sau xác nhận."
                     ),
                 )
-        if not bool(getattr(config, "AUTO_TRADE_ENABLED", False)):
+        if (
+            not allow_when_auto_disabled
+            and not bool(getattr(config, "AUTO_TRADE_ENABLED", False))
+        ):
             return BrokerOrderResult(
                 ok=False,
                 error="AUTO_TRADE_DISABLED",
@@ -1825,9 +1925,64 @@ class DNSEConnector:
             pass
         return None
 
-    def place_order(self, symbol, order_type, lot, sl, tp, magic=0, comment="", order_kind=None, price=0.0) -> BrokerOrderResult:
+    def place_order(
+        self,
+        symbol,
+        order_type,
+        lot,
+        sl,
+        tp,
+        magic=0,
+        comment="",
+        order_kind=None,
+        price=0.0,
+        paper_mode: Optional[bool] = None,
+    ) -> BrokerOrderResult:
         # order_kind: None -> tự LO/MOK; "ATO"/"ATC" -> lệnh phiên định kỳ mở/đóng cửa.
-        return self.send_order(symbol, order_type, lot, price=price, sl=sl, tp=tp, comment=comment, magic=magic, order_kind=order_kind)
+        return self.send_order(
+            symbol,
+            order_type,
+            lot,
+            price=price,
+            sl=sl,
+            tp=tp,
+            comment=comment,
+            magic=magic,
+            order_kind=order_kind,
+            paper_mode=paper_mode,
+        )
+
+    def place_close_limit_order(
+        self,
+        symbol,
+        order_type,
+        lot,
+        price,
+        *,
+        comment="",
+        paper_mode: Optional[bool] = None,
+    ) -> BrokerOrderResult:
+        """Place an opposite LO to close risk without requiring BOT to be armed."""
+        use_paper = self._is_paper_mode() if paper_mode is None else bool(paper_mode)
+        if use_paper:
+            return BrokerOrderResult(
+                ok=False,
+                error="PAPER_LIMIT_CLOSE_USES_TRIGGER",
+                message="PAPER LIMIT close is executed by the local price trigger.",
+            )
+        return self.send_order(
+            symbol,
+            order_type,
+            lot,
+            price=float(price or 0.0),
+            sl=0.0,
+            tp=0.0,
+            comment=comment or "[USER]_CLOSE_LIMIT",
+            magic=0,
+            order_kind=None,
+            paper_mode=False,
+            allow_when_auto_disabled=True,
+        )
 
     def replace_order(self, order_id: str, *, price: Optional[float] = None, quantity: Optional[float] = None, account_no: Optional[str] = None, symbol: Optional[str] = None) -> BrokerOrderResult:
         if self._is_paper_mode():

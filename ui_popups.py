@@ -4520,7 +4520,7 @@ def build_cache_and_symbols_tab(app, parent):
     e_ttl_tick = _cache_entry("Tick TTL (s)", getattr(config, "DNSE_TICK_CACHE_TTL_SECONDS", 2.0), 1, 0)
     e_ttl_ohlc = _cache_entry("OHLC TTL (s)", getattr(config, "DNSE_OHLC_CACHE_TTL_SECONDS", 30.0), 1, 2)
     e_ttl_acc = _cache_entry("Account TTL (s)", getattr(config, "DNSE_ACCOUNT_CACHE_TTL_SECONDS", 5.0), 2, 0)
-    e_ttl_pos = _cache_entry("Positions TTL (s)", getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 2.0), 2, 2)
+    e_ttl_pos = _cache_entry("Positions TTL (s)", getattr(config, "DNSE_POSITIONS_CACHE_TTL_SECONDS", 5.0), 2, 2)
 
     lbl_ws_status = ctk.CTkLabel(f_cache, text="WS: ...", font=("Consolas", 11), text_color="#90A4AE", justify="left")
     lbl_ws_status.grid(row=3, column=0, columnspan=4, sticky="w", padx=10, pady=(4, 8))
@@ -4951,6 +4951,103 @@ def build_manual_margin_tab(app, parent):
     ctk.CTkButton(buttons, text="Refresh Snapshot", width=150, fg_color="#455A64", command=_refresh_snapshot).pack(side="left", padx=(8, 0))
 
 
+def prompt_pending_close_mode(app, position):
+    """Choose MARKET or LIMIT for a manual close cached outside OPEN."""
+    symbol = str(getattr(position, "symbol", "") or "").upper()
+    current_price = float(
+        getattr(position, "price_current", 0.0)
+        or getattr(position, "price_open", 0.0)
+        or 0.0
+    )
+    result = {"value": None}
+    top = ctk.CTkToplevel(app)
+    top.title("Đóng lệnh ngoài phiên")
+    top.geometry("460x290")
+    top.resizable(False, False)
+    top.transient(app)
+
+    ctk.CTkLabel(
+        top,
+        text=f"ĐÓNG {symbol} KHI PHIÊN LIÊN TỤC MỞ",
+        font=("Roboto", 16, "bold"),
+        text_color="#FFD54F",
+    ).pack(pady=(18, 10))
+
+    mode_var = tk.StringVar(value="MARKET")
+    mode = ctk.CTkSegmentedButton(
+        top,
+        values=["MARKET", "LIMIT"],
+        variable=mode_var,
+        height=34,
+    )
+    mode.pack(fill="x", padx=28)
+
+    price_frame = ctk.CTkFrame(top, fg_color="transparent")
+    price_frame.pack(fill="x", padx=28, pady=(12, 2))
+    ctk.CTkLabel(price_frame, text="Giá LIMIT:", width=100, anchor="w").pack(side="left")
+    price_entry = ctk.CTkEntry(price_frame, justify="center")
+    price_entry.insert(0, app._price_internal_to_input(current_price, symbol))
+    price_entry.pack(side="left", fill="x", expand=True)
+
+    hint = ctk.CTkLabel(
+        top,
+        text="MARKET ưu tiên thoát. LIMIT bảo vệ giá nhưng có thể không khớp.",
+        text_color="#B0BEC5",
+        wraplength=400,
+        justify="left",
+    )
+    hint.pack(fill="x", padx=28, pady=(8, 2))
+    error = ctk.CTkLabel(top, text="", text_color="#EF5350")
+    error.pack(fill="x", padx=28)
+
+    def refresh_mode(*_args):
+        price_entry.configure(
+            state="normal" if mode_var.get().upper() == "LIMIT" else "disabled"
+        )
+
+    def accept():
+        selected = mode_var.get().upper()
+        limit_price = 0.0
+        if selected == "LIMIT":
+            limit_price = app._price_input_to_internal(price_entry.get(), symbol)
+            if limit_price <= 0:
+                error.configure(text="LIMIT phải có giá lớn hơn 0.")
+                return
+        result["value"] = {
+            "entry_mode": selected,
+            "limit_price": limit_price,
+        }
+        top.destroy()
+
+    def cancel():
+        result["value"] = None
+        top.destroy()
+
+    mode.configure(command=lambda _value: refresh_mode())
+    refresh_mode()
+    buttons = ctk.CTkFrame(top, fg_color="transparent")
+    buttons.pack(fill="x", padx=28, pady=(12, 16))
+    ctk.CTkButton(
+        buttons,
+        text="HỦY",
+        width=120,
+        fg_color="#455A64",
+        command=cancel,
+    ).pack(side="left")
+    ctk.CTkButton(
+        buttons,
+        text="XÁC NHẬN",
+        fg_color="#EF6C00",
+        hover_color="#E65100",
+        command=accept,
+    ).pack(side="right", fill="x", expand=True, padx=(12, 0))
+
+    top.protocol("WM_DELETE_WINDOW", cancel)
+    top.grab_set()
+    app.wait_window(top)
+    return result["value"]
+
+
 def build_market_calendar_tab(app, parent):
     """Lịch giao dịch global: DNSE working dates + ngày né ENTRY VN30F."""
     import threading
@@ -5032,6 +5129,8 @@ def build_market_calendar_tab(app, parent):
     ).pack(anchor="w", padx=12, pady=(10, 4))
 
     var_use_dnse = tk.BooleanVar(value=settings["use_dnse_working_dates"])
+    var_block_ato = tk.BooleanVar(value=settings["block_entry_ato"])
+    var_block_atc = tk.BooleanVar(value=settings["block_entry_atc"])
     var_expiry = tk.BooleanVar(value=settings["avoid_vn30_expiry_entry"])
     var_rebalance = tk.BooleanVar(value=settings["avoid_vn30_rebalance_entry"])
     var_ckcs_open_delay = tk.BooleanVar(value=settings["avoid_ckcs_open_entry"])
@@ -5041,6 +5140,20 @@ def build_market_calendar_tab(app, parent):
         variable=var_use_dnse,
         font=("Roboto", 12, "bold"),
     ).pack(anchor="w", padx=12, pady=5)
+    phase_row = ctk.CTkFrame(config_box, fg_color="transparent")
+    phase_row.pack(fill="x", padx=12, pady=5)
+    ctk.CTkCheckBox(
+        phase_row,
+        text="Chặn ENTRY ATO",
+        variable=var_block_ato,
+        font=("Roboto", 12, "bold"),
+    ).pack(side="left")
+    ctk.CTkCheckBox(
+        phase_row,
+        text="Chặn ENTRY ATC",
+        variable=var_block_atc,
+        font=("Roboto", 12, "bold"),
+    ).pack(side="left", padx=(22, 0))
     ctk.CTkCheckBox(
         config_box,
         text="Né ngày đáo hạn VN30F (app tự tính)",
@@ -5086,7 +5199,7 @@ def build_market_calendar_tab(app, parent):
 
     ctk.CTkLabel(
         config_box,
-        text="Chỉ chặn BOT mở lệnh mới; DCA/PCA và quản lý lệnh đang giữ vẫn chạy.",
+        text="Chỉ chặn ENTRY mới; đóng lệnh và quản lý vị thế vẫn chạy. Manual chỉ vượt khi bật BYPASS.",
         font=("Roboto", 11, "bold"),
         text_color="#FFB74D",
         wraplength=590,
@@ -5100,6 +5213,8 @@ def build_market_calendar_tab(app, parent):
             next_settings = market_calendar.normalize_settings({
                 "use_dnse_working_dates": var_use_dnse.get(),
                 "manual_closed_dates": market_calendar.parse_date_text(txt_closed.get("1.0", "end")),
+                "block_entry_ato": var_block_ato.get(),
+                "block_entry_atc": var_block_atc.get(),
                 "avoid_vn30_expiry_entry": var_expiry.get(),
                 "avoid_vn30_rebalance_entry": var_rebalance.get(),
                 "vn30_rebalance_dates": market_calendar.parse_date_text(txt_rebalance.get("1.0", "end")),

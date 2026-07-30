@@ -303,6 +303,286 @@ def test_pending_close_executes_and_marks_sent(monkeypatch):
     assert marked[0][0:2] == ("close-7", pending_orders.SENT)
 
 
+def test_real_limit_close_becomes_working_broker_order(monkeypatch):
+    position = SimpleNamespace(
+        ticket="7788",
+        position_id="7788",
+        symbol="VN30F1M",
+        volume=2,
+    )
+    broker_calls = []
+    manager = SimpleNamespace(
+        set_exit_reason=lambda *_args: None,
+        connector=SimpleNamespace(
+            place_close_limit_order=lambda *args, **kwargs: (
+                broker_calls.append((args, kwargs))
+                or SimpleNamespace(
+                    ok=True,
+                    order_id="DNSE-LO-1",
+                    ticket="",
+                    message="NEW",
+                    error="",
+                )
+            )
+        ),
+    )
+    marked = []
+    app = SimpleNamespace(
+        _ui_all_positions_snapshot=[position],
+        log_message=lambda *_args, **_kwargs: None,
+        _fmt_price=lambda value, _symbol=None: f"{float(value):.2f}",
+    )
+    monkeypatch.setattr(
+        main.BotUI,
+        "_trade_manager_for_position",
+        lambda _self, _position: manager,
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "mark",
+        lambda order_id, status, result="", **updates: marked.append(
+            (order_id, status, result, updates)
+        ),
+    )
+
+    main.BotUI._send_pending_close(
+        app,
+        {
+            "id": "close-real",
+            "action": "CLOSE",
+            "position_ticket": "7788",
+            "symbol": "VN30F1M",
+            "side": "SELL",
+            # Stale cached quantity must not override the live broker position.
+            "lot": 5,
+            "entry_mode": "LIMIT",
+            "entry_price": 1888.4,
+        },
+    )
+
+    assert broker_calls[0][0][0:4] == ("VN30F1M", "SELL", 2.0, 1888.4)
+    assert marked[0][0:2] == ("close-real", pending_orders.WORKING)
+    assert marked[0][3]["dnse_order_id"] == "DNSE-LO-1"
+    assert marked[0][3]["lot"] == 2.0
+
+
+def test_working_limit_is_reduced_after_external_partial_close(monkeypatch):
+    position = SimpleNamespace(
+        ticket="9911",
+        position_id="9911",
+        symbol="VN30F1M",
+        type=0,
+        volume=4,
+    )
+    replaced = []
+    cancelled = []
+    marked = []
+    app = SimpleNamespace(
+        _ui_all_positions_snapshot=[position],
+        connector=SimpleNamespace(
+            get_orders=lambda **_kwargs: [
+                {
+                    "orderId": "DNSE-LO-2",
+                    "orderStatus": "New",
+                    "side": "SELL",
+                    "quantity": 5,
+                    "matchedQuantity": 0,
+                }
+            ],
+            replace_order=lambda order_id, **kwargs: (
+                replaced.append((order_id, kwargs))
+                or SimpleNamespace(ok=True, message="REPLACED", error="")
+            ),
+            cancel_order=lambda order_id, **_kwargs: (
+                cancelled.append(order_id)
+                or SimpleNamespace(ok=True, message="CANCELLED", error="")
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "list_all",
+        lambda: [
+            {
+                "id": "close-risk",
+                "action": "CLOSE",
+                "status": pending_orders.WORKING,
+                "position_ticket": "9911",
+                "symbol": "VN30F1M",
+                "lot": 5,
+                "dnse_order_id": "DNSE-LO-2",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "mark",
+        lambda order_id, status, result="", **updates: marked.append(
+            (order_id, status, result, updates)
+        ),
+    )
+
+    main.BotUI._reconcile_working_pending_closes(app)
+
+    assert replaced == [
+        ("DNSE-LO-2", {"quantity": 4.0, "symbol": "VN30F1M"})
+    ]
+    assert cancelled == []
+    assert marked[-1][0:2] == ("close-risk", pending_orders.WORKING)
+    assert marked[-1][3]["lot"] == 4.0
+
+
+def test_working_limit_partial_fill_does_not_trigger_false_resize(monkeypatch):
+    position = SimpleNamespace(
+        ticket="9911",
+        position_id="9911",
+        symbol="VN30F1M",
+        type=0,
+        volume=4,
+    )
+    replaced = []
+    app = SimpleNamespace(
+        _ui_all_positions_snapshot=[position],
+        connector=SimpleNamespace(
+            get_orders=lambda **_kwargs: [
+                {
+                    "orderId": "DNSE-LO-2",
+                    "orderStatus": "PARTIALLY_FILLED",
+                    "side": "SELL",
+                    "quantity": 5,
+                    "matchedQuantity": 1,
+                }
+            ],
+            replace_order=lambda *args, **kwargs: replaced.append((args, kwargs)),
+        ),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "list_all",
+        lambda: [
+            {
+                "id": "close-risk",
+                "action": "CLOSE",
+                "status": pending_orders.WORKING,
+                "position_ticket": "9911",
+                "symbol": "VN30F1M",
+                "dnse_order_id": "DNSE-LO-2",
+            }
+        ],
+    )
+    monkeypatch.setattr(pending_orders, "mark", lambda *_args, **_kwargs: None)
+
+    main.BotUI._reconcile_working_pending_closes(app)
+
+    assert replaced == []
+
+
+def test_working_limit_is_cancelled_if_external_trade_flips_position(
+    monkeypatch,
+):
+    position = SimpleNamespace(
+        ticket="9911",
+        position_id="9911",
+        symbol="VN30F1M",
+        type=1,
+        volume=1,
+    )
+    cancelled = []
+    marked = []
+    app = SimpleNamespace(
+        _ui_all_positions_snapshot=[position],
+        connector=SimpleNamespace(
+            get_orders=lambda **_kwargs: [
+                {
+                    "orderId": "DNSE-LO-2",
+                    "orderStatus": "New",
+                    "side": "SELL",
+                    "quantity": 1,
+                    "matchedQuantity": 0,
+                }
+            ],
+            cancel_order=lambda order_id, **_kwargs: (
+                cancelled.append(order_id)
+                or SimpleNamespace(ok=True, message="CANCELLED", error="")
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "list_all",
+        lambda: [
+            {
+                "id": "close-risk",
+                "action": "CLOSE",
+                "status": pending_orders.WORKING,
+                "position_ticket": "9911",
+                "symbol": "VN30F1M",
+                "dnse_order_id": "DNSE-LO-2",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "mark",
+        lambda order_id, status, result="", **updates: marked.append(
+            (order_id, status, result, updates)
+        ),
+    )
+
+    main.BotUI._reconcile_working_pending_closes(app)
+
+    assert cancelled == ["DNSE-LO-2"]
+    assert marked[-1][0:2] == ("close-risk", pending_orders.ERROR)
+    assert "POSITION_DIRECTION_CHANGED" in marked[-1][2]
+
+
+def test_working_limit_remainder_is_cancelled_if_position_closed_elsewhere(
+    monkeypatch,
+):
+    marked = []
+    cancelled = []
+    app = SimpleNamespace(
+        _ui_all_positions_snapshot=[],
+        connector=SimpleNamespace(
+            get_all_open_positions=lambda **_kwargs: [],
+            get_orders=lambda **_kwargs: [
+                {"orderId": "DNSE-LO-2", "orderStatus": "New"}
+            ],
+            cancel_order=lambda order_id, **_kwargs: (
+                cancelled.append(order_id)
+                or SimpleNamespace(ok=True, message="CANCELLED", error="")
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "list_all",
+        lambda: [
+            {
+                "id": "close-risk",
+                "action": "CLOSE",
+                "status": pending_orders.WORKING,
+                "position_ticket": "9911",
+                "symbol": "VN30F1M",
+                "dnse_order_id": "DNSE-LO-2",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        pending_orders,
+        "mark",
+        lambda order_id, status, result="", **updates: marked.append(
+            (order_id, status, result, updates)
+        ),
+    )
+
+    main.BotUI._reconcile_working_pending_closes(app)
+
+    assert cancelled == ["DNSE-LO-2"]
+    assert marked[-1][0:2] == ("close-risk", pending_orders.SENT)
+    assert "LIMIT_REMAINDER_CANCELLED" in marked[-1][2]
+
+
 def test_save_brain_live_config_preserves_unmanaged_sections(monkeypatch):
     source = {"indicators": {"rsi": {"active": True}}, "custom": "keep"}
     saved = []

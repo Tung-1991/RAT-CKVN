@@ -127,6 +127,84 @@ def test_real_closed_receipt_uses_dnse_position_prices_and_fee_profile():
     assert receipt["mfe"] == 197500.0
 
 
+def test_external_partial_close_updates_current_volume_and_keeps_tsl(
+    monkeypatch,
+):
+    position = SimpleNamespace(
+        ticket=7788,
+        symbol="VN30F1M",
+        type=0,
+        price_open=1900.0,
+        price_current=1901.0,
+        sl=1895.0,
+        tp=1910.0,
+        volume=4.0,
+        profit=400000.0,
+        swap=0.0,
+        commission=0.0,
+        time=time.time() - 300,
+        magic=0,
+        comment="",
+    )
+
+    class Connector:
+        def get_all_open_positions(self):
+            return [position]
+
+        def _is_paper_mode(self):
+            return False
+
+        def get_account_info(self):
+            return {"balance": 100000000.0, "equity": 100000000.0}
+
+    applied = []
+    manager = TradeManager.__new__(TradeManager)
+    manager.connector = Connector()
+    manager.checklist = None
+    manager.log_callback = None
+    manager.state = apply_state_defaults(
+        {
+            "active_trades": ["7788"],
+            "trade_symbols": {"7788": "VN30F1M"},
+            "trade_directions": {"7788": "BUY"},
+            "trade_volumes": {"7788": 5.0},
+            "trade_current_volumes": {"7788": 5.0},
+            "trade_prices": {"7788": 1900.0},
+            "trade_tactics": {"7788": "BE+SWING"},
+            "trade_excursions": {"7788": {}},
+        }
+    )
+    manager._sync_state_lifecycle = lambda: False
+    manager._market_data_state = lambda: "HEALTHY"
+    manager._market_pause_warning_due = lambda *_args: False
+    manager._update_trade_excursion = lambda _pos: {}
+    manager._apply_independent_tsl = lambda pos, _ctx: (
+        applied.append(pos.volume) or "Running"
+    )
+    manager._check_anti_cash = lambda _pos: None
+    manager._check_recovery = lambda _pos, _ctx: None
+    manager._get_brain_settings = lambda _symbol=None: {
+        "risk_tsl": {},
+        "symbol_configs": {},
+        "bot_safeguard": {},
+    }
+    manager.get_trade_tactic = lambda _ticket: "BE+SWING"
+    manager.log = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
+    monkeypatch.setattr(
+        "telegram_notify.position_alerts.observe_position",
+        lambda *_args, **_kwargs: None,
+    )
+
+    manager.update_running_trades(
+        all_market_contexts={"VN30F1M": {"current_price": 1901.0}}
+    )
+
+    assert manager.state["trade_volumes"]["7788"] == 5.0
+    assert manager.state["trade_current_volumes"]["7788"] == 4.0
+    assert applied == [4.0]
+
+
 def _position(**updates):
     values = {
         "ticket": 7,

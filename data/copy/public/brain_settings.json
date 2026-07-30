@@ -99,17 +99,17 @@
   "voting_rules": {
     "G0": {
       "max_opposite": 0,
-      "max_none": 1,
-      "master_rule": "PASS"
+      "max_none": 0,
+      "master_rule": "FIX"
     },
     "G1": {
       "max_opposite": 0,
-      "max_none": 2,
-      "master_rule": "FIX"
+      "max_none": 1,
+      "master_rule": "PASS"
     },
     "G2": {
       "max_opposite": 0,
-      "max_none": 1,
+      "max_none": 2,
       "master_rule": "PASS"
     },
     "G3": {
@@ -137,7 +137,6 @@
     "adx": {
       "active": true,
       "groups": [
-        "G0",
         "G1"
       ],
       "is_trend": false,
@@ -147,9 +146,9 @@
       ],
       "params": {
         "period": 14,
-        "strong": 20
+        "strong": 23
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -165,14 +164,18 @@
         "ANY"
       ],
       "params": {
-        "period": 20
+        "period": 50
       },
-      "trigger_mode": "REALTIME_TICK",
-      "group_trigger_modes": {},
-      "group_params": {}
+      "trigger_mode": "STRICT_CLOSE",
+      "group_params": {
+        "G1": {
+          "period": 20
+        }
+      },
+      "group_trigger_modes": {}
     },
     "swing_point": {
-      "active": false,
+      "active": true,
       "groups": [
         "G2"
       ],
@@ -242,7 +245,7 @@
       "group_params": {}
     },
     "volume": {
-      "active": false,
+      "active": true,
       "groups": [
         "G2"
       ],
@@ -262,8 +265,7 @@
     "supertrend": {
       "active": true,
       "groups": [
-        "G0",
-        "G1"
+        "G0"
       ],
       "is_trend": true,
       "macro_role": "NONE",
@@ -272,9 +274,9 @@
       ],
       "params": {
         "period": 10,
-        "multiplier": 2.0
+        "multiplier": 3.0
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -386,7 +388,7 @@
         "slow": 26,
         "signal": 9
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -440,7 +442,7 @@
         "lookback": 2,
         "atr_buffer": 0.0
       },
-      "trigger_mode": "REALTIME_TICK",
+      "trigger_mode": "STRICT_CLOSE",
       "group_trigger_modes": {},
       "group_params": {}
     }
@@ -673,14 +675,14 @@
   },
   "entry_exit": {
     "enabled": true,
-    "preview_only": true,
+    "preview_only": false,
     "active_tactics": [
       "SWING_REJECTION"
     ],
     "entry_tactics": [
       "SWING_REJECTION"
     ],
-    "exit_tactic": "FALLBACK_R",
+    "exit_tactic": "SWING_REJECTION",
     "sl_mode": "SANDBOX",
     "fallback_tactic": "OFF",
     "signal_ttl_seconds": 900,
@@ -688,9 +690,9 @@
     "tp_policy": "TACTIC_FIRST",
     "sl_source_group": "BASE_SL",
     "default_exit": {
-      "use_rr_tp": true,
+      "use_rr_tp": false,
       "tp_rr_ratio": 1.5,
-      "use_swing_tp": false
+      "use_swing_tp": true
     },
     "sl_distance": {
       "min_atr": 1.0,
@@ -748,6 +750,8 @@
   "market_calendar": {
     "use_dnse_working_dates": true,
     "manual_closed_dates": [],
+    "block_entry_ato": true,
+    "block_entry_atc": true,
     "avoid_vn30_expiry_entry": false,
     "avoid_vn30_rebalance_entry": false,
     "vn30_rebalance_dates": [],
@@ -756,7 +760,7 @@
   },
   "opportunity_settings": {
     "enabled": true,
-    "show_in_running_table": true,
+    "show_in_running_table": false,
     "retention_hours": 24.0,
     "history_enabled": true,
     "default_order_mode": "MARKET",
@@ -776,7 +780,7 @@
     "ckcs_morning_time": "11:35",
     "ckcs_afternoon_time": "14:50",
     "ckcs_report_days": 15,
-    "ckcs_liquidity_filter_enabled": false,
+    "ckcs_liquidity_filter_enabled": true,
     "ckcs_liquidity_sessions": 60,
     "ckcs_liquidity_min_billion": 10.0,
     "ckcs_last_morning_date": "",
@@ -822,7 +826,9 @@
     "LOG_COOLDOWN_MINUTES": 60.0,
     "MANUAL_SIGNAL_LOG_ENABLE": false,
     "BOT_USE_TP": true,
-    "BOT_TP_RR_RATIO": 1.5,
+    "BOT_TP_RR_RATIO": 2.0,
+    "BOT_USE_SWING_TP": true,
+    "BOT_USE_RR_TP": false,
     "STRICT_MIN_LOT": false,
     "POST_CLOSE_COOLDOWN": 0,
     "CLOSE_ON_REVERSE_MIN_TIME": 180,
@@ -843,8 +849,6 @@
     "REJECT_ON_MAX_LOT": false,
     "MAX_BASKET_DRAWDOWN_USD": 0.0,
     "MAX_BASKET_DRAWDOWN_UNIT": "USD",
-    "BOT_USE_SWING_TP": false,
-    "BOT_USE_RR_TP": true,
     "GLOBAL_COOLDOWN_HOURS": 4.0,
     "APPLY_GLOBAL_COOLDOWN_ON_SAFEGUARD": false,
     "GLOBAL_BRAKE_MODE": "Mode 1: Total Freeze"
@@ -928,5 +932,59 @@
       "max_basket_drawdown_unit": "USD",
       "reject_on_max_lot": false
     }
-  }
+  },
+  "AUTO_TRADE_ENABLED": false,
+  "MONEY_DISPLAY_ZERO_TRIM": "000",
+  "MONEY_DISPLAY_UNIT": "K_VND",
+  "PAPER_INITIAL_BALANCE": 100000000.0,
+  "PAPER_SPREAD_POINTS": 0.0,
+  "DNSE_BROKER_FEE_PER_CONTRACT": 0.0,
+  "DNSE_EXCHANGE_FEE_PER_CONTRACT": 2700.0,
+  "DNSE_CLEARING_FEE_PER_CONTRACT": 2550.0,
+  "CKCS_WATCHLIST": [
+    "AAA",
+    "ANV",
+    "CTD",
+    "CTP",
+    "DC4",
+    "DBC",
+    "DCM",
+    "DGC",
+    "DGW",
+    "DIG",
+    "DRC",
+    "DXS",
+    "GEG",
+    "HAG",
+    "HAP",
+    "HAR",
+    "HPG",
+    "HPX",
+    "HT1",
+    "IDC",
+    "ITC",
+    "JVC",
+    "KDH",
+    "LDG",
+    "MBS",
+    "NHA",
+    "NLG",
+    "NVL",
+    "PDR",
+    "PLX",
+    "PNJ",
+    "POW",
+    "QCG",
+    "SCR",
+    "SCS",
+    "TDM",
+    "TLG",
+    "TV2",
+    "VIX",
+    "VPG"
+  ],
+  "CKPS_SYMBOLS": [
+    "VN30F1M"
+  ],
+  "UI_ACTIVE_SYMBOL": "AAA"
 }

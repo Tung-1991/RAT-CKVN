@@ -233,6 +233,31 @@ def test_send_order_builds_derivative_payload_and_uses_trading_token(monkeypatch
     assert call["headers"]["trading-token"] == "tok"
 
 
+def test_close_limit_order_remains_available_when_bot_is_disarmed(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", True)
+    monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", False)
+    session = FakeSession([FakeResponse(200, {"orderId": "CLOSE-LO-1", "status": "NEW"})])
+    conn = _connector(session)
+    conn.trading_token = "tok"
+    conn.trading_token_expires_at = 9999999999
+    conn._symbol_map = {"VN30F1M": "41I1G8000"}
+    conn._symbol_map_ts = 9999999999
+
+    result = conn.place_close_limit_order(
+        "VN30F1M",
+        "SELL",
+        2,
+        1888.4,
+        paper_mode=False,
+    )
+
+    assert result.ok is True
+    assert result.order_id == "CLOSE-LO-1"
+    assert session.calls[0]["json"]["orderType"] == "LO"
+    assert session.calls[0]["json"]["side"] == "NS"
+    assert session.calls[0]["json"]["price"] == 1888.4
+
+
 def test_send_order_without_trading_token_never_calls_or_reconciles(monkeypatch):
     monkeypatch.setattr(config, "PAPER_TRADING", False)
     monkeypatch.setattr(config, "AUTO_TRADE_ENABLED", True)
@@ -415,6 +440,64 @@ def test_orders_success_uses_short_cache_ttl(monkeypatch):
     assert conn.get_orders(symbol="VN30F1M") == []
     assert conn.get_orders(symbol="VN30F1M") == []
     assert len(session.calls) == 1
+
+
+def test_orders_cache_is_separate_for_derivative_and_stock(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    monkeypatch.setattr(
+        config,
+        "DNSE_ORDERS_CACHE_TTL_SECONDS",
+        30.0,
+        raising=False,
+    )
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                {
+                    "orders": [
+                        {"id": "D1", "symbol": "VN30F1M"}
+                    ]
+                },
+            ),
+            FakeResponse(
+                200,
+                {"orders": [{"id": "S1", "symbol": "FPT"}]},
+            ),
+        ]
+    )
+    conn = _connector(session)
+
+    derivative = conn.get_orders(symbol="VN30F1M")
+    stock = conn.get_orders(symbol="FPT")
+    derivative_cached = conn.get_orders(symbol="VN30F1M")
+
+    assert [item["id"] for item in derivative] == ["D1"]
+    assert [item["id"] for item in stock] == ["S1"]
+    assert [item["id"] for item in derivative_cached] == ["D1"]
+    assert len(session.calls) == 2
+
+
+def test_orders_can_show_all_symbols_in_selected_market(monkeypatch):
+    monkeypatch.setattr(config, "PAPER_TRADING", False)
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                {
+                    "orders": [
+                        {"id": "D1", "symbol": "VN30F1M"},
+                        {"id": "D2", "symbol": "VN30F2M"},
+                    ]
+                },
+            )
+        ]
+    )
+    conn = _connector(session)
+
+    rows = conn.get_orders(symbol="VN30F1M", all_symbols=True)
+
+    assert [item["id"] for item in rows] == ["D1", "D2"]
 
 
 def test_stock_symbol_uses_stock_profile_account_and_fee_rate(monkeypatch):

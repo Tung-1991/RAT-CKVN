@@ -28,7 +28,11 @@ from core.money import (
     money_unit_note,
     set_money_display_zero_trim,
 )
-from core.position_classifier import is_bot_position, is_manual_position
+from core.position_classifier import (
+    is_bot_position,
+    is_external_position,
+    is_manual_position,
+)
 from core import margin_rules, pending_orders, settlement, stock_rules
 from signals.signal_generator import signal_generator
 import traceback
@@ -931,6 +935,17 @@ class BotUI(ctk.CTk):
 
     def on_symbol_change(self, new_symbol):
         config.UI_ACTIVE_SYMBOL = new_symbol
+        # Manual inputs belong to the previously selected symbol.  Never carry
+        # a VN30F price/lot/SL/TP into a CKCS preview (or vice versa).
+        for variable_name in (
+            "var_manual_entry",
+            "var_manual_lot",
+            "var_manual_tp",
+            "var_manual_sl",
+        ):
+            variable = getattr(self, variable_name, None)
+            if variable is not None:
+                variable.set("")
         unit = self._quantity_unit(new_symbol)
         label = self._quantity_label(new_symbol)
         if hasattr(self, "lbl_manual_qty_title"):
@@ -1430,6 +1445,36 @@ class BotUI(ctk.CTk):
             shown = raw * 1000.0 / money_display_scale()
             return f"{shown:.6f}".rstrip("0").rstrip(".")
         return f"{raw:g}" if raw > 0 else ""
+
+    def _update_contract_dates_label(self, symbol):
+        label = getattr(self, "lbl_contract_dates", None)
+        if label is None:
+            return
+        is_front_contract = str(symbol or "").upper() == "VN30F1M"
+        if not is_front_contract:
+            try:
+                label.pack_forget()
+            except Exception:
+                pass
+            return
+        try:
+            from core.market_calendar import vn30_front_contract_period
+
+            first_date, last_date = vn30_front_contract_period()
+            text = f"HĐ CKPS: {first_date:%d/%m/%Y} → {last_date:%d/%m/%Y}"
+        except Exception:
+            text = "HĐ CKPS: --/--/---- → --/--/----"
+        try:
+            if not label.winfo_manager():
+                label.pack(
+                    fill="x",
+                    padx=10,
+                    pady=(0, 1),
+                    before=getattr(self, "dashboard_separator", None),
+                )
+            label.configure(text=text)
+        except Exception:
+            pass
 
     def _preview_color_for_status(self, status, direction=None):
         status = str(status or "").upper()
@@ -3949,6 +3994,7 @@ class BotUI(ctk.CTk):
                 tp_source=data.get("tp_source", ""),
                 entry_source=data.get("entry_source", ""),
                 plan=order_plan,
+                bypass_checklist=bool(self.var_bypass_checklist.get()),
             )
             mode = "LO" if data["entry_price"] > 0 else target
             self.log_message(
@@ -3999,6 +4045,7 @@ class BotUI(ctk.CTk):
             # Dọn hẳn lệnh EXPIRED/FAILED/CANCELLED cũ khỏi bảng running (không cần bấm X tay).
             for item in pending_orders.purge_stale():
                 self.log_message(f"[HẸN LỆNH] Đã dọn lệnh chết {item.get('symbol')} id={str(item.get('id'))[:8]}", target="manual")
+            self._reconcile_working_pending_closes()
             from core.market_hours import market_session_phase
             def _quote(symbol, side):
                 ctx = self.latest_market_context.get(str(symbol or "").upper(), {}) or {}
@@ -4021,6 +4068,289 @@ class BotUI(ctk.CTk):
                 self._send_pending_order(item)
         except Exception as exc:
             self.log_message(f"[HẸN LỆNH] Scheduler lỗi: {exc}", error=True, target="manual")
+
+    def _reconcile_working_pending_closes(self):
+        bad_statuses = {
+            "CANCELLED",
+            "CANCELED",
+            "REJECTED",
+            "REJECT",
+            "EXPIRED",
+            "FAILED",
+            "ERROR",
+        }
+        filled_statuses = {"FILLED", "MATCHED", "COMPLETED", "DONE"}
+        order_cache = {}
+        for item in pending_orders.list_all():
+            status = str(item.get("status", "") or "").upper()
+            is_unknown_submission = bool(item.get("unknown_submission", False))
+            if str(item.get("action", "OPEN") or "OPEN").upper() != "CLOSE":
+                continue
+            if status != pending_orders.WORKING and not (
+                status == pending_orders.ERROR and is_unknown_submission
+            ):
+                continue
+            local_id = str(item.get("id", "") or "")
+            ticket = str(item.get("position_ticket", "") or "")
+            symbol = str(item.get("symbol", "") or "").upper()
+            position = BotUI._find_open_position(self, ticket)
+            position_is_open = position is not None
+            broker_order_id = str(item.get("dnse_order_id", "") or "")
+            request_tag = str(item.get("request_tag", "") or "")
+            if not broker_order_id and not request_tag:
+                if not position_is_open:
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.SENT,
+                        "POSITION_CLOSED",
+                    )
+                continue
+            if symbol not in order_cache:
+                try:
+                    order_cache[symbol] = list(
+                        self.connector.get_orders(
+                            paper_mode=False,
+                            symbol=symbol,
+                        )
+                        or []
+                    )
+                except Exception:
+                    order_cache[symbol] = []
+            broker_order = next(
+                (
+                    row
+                    for row in order_cache[symbol]
+                    if (
+                        broker_order_id
+                        and str(
+                            row.get("orderId")
+                            or row.get("id")
+                            or row.get("orderID")
+                            or ""
+                        )
+                        == broker_order_id
+                    )
+                    or (
+                        request_tag
+                        and request_tag
+                        in str(
+                            row.get("remark")
+                            or row.get("comment")
+                            or row.get("note")
+                            or ""
+                        )
+                    )
+                ),
+                None,
+            )
+            if broker_order and not broker_order_id:
+                broker_order_id = str(
+                    broker_order.get("orderId")
+                    or broker_order.get("id")
+                    or broker_order.get("orderID")
+                    or ""
+                )
+                pending_orders.mark(
+                    local_id,
+                    pending_orders.WORKING,
+                    "RECONCILED_AFTER_UNKNOWN_SUBMISSION",
+                    dnse_order_id=broker_order_id,
+                    unknown_submission=False,
+                )
+            broker_status = str(
+                (broker_order or {}).get("orderStatus")
+                or (broker_order or {}).get("status")
+                or (broker_order or {}).get("state")
+                or ""
+            ).upper()
+            if not position_is_open:
+                if broker_status in filled_statuses or broker_status in bad_statuses:
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.SENT,
+                        f"POSITION_CLOSED|DNSE_{broker_status or 'FINAL'}",
+                    )
+                    continue
+                if not broker_order_id:
+                    continue
+                # The position may have been closed by SL/TP while this LO was
+                # resting. Cancel any remainder before it can open a reverse
+                # futures position.
+                try:
+                    cancel_result = self.connector.cancel_order(
+                        broker_order_id,
+                        symbol=symbol,
+                        paper_mode=False,
+                    )
+                except Exception as exc:
+                    cancel_result = SimpleNamespace(
+                        ok=False,
+                        message=str(exc),
+                        error=str(exc),
+                    )
+                if getattr(cancel_result, "ok", False):
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.SENT,
+                        "POSITION_CLOSED|LIMIT_REMAINDER_CANCELLED",
+                    )
+                else:
+                    cancel_message = (
+                        getattr(cancel_result, "message", "")
+                        or getattr(cancel_result, "error", "")
+                        or "CANCEL_REMAINDER_FAILED"
+                    )
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.WORKING,
+                        f"POSITION_GONE|{cancel_message}",
+                    )
+                continue
+            if broker_order:
+                def _broker_number(*keys):
+                    for key in keys:
+                        value = broker_order.get(key)
+                        if value not in (None, ""):
+                            try:
+                                return abs(float(value))
+                            except (TypeError, ValueError):
+                                return 0.0
+                    return 0.0
+
+                current_volume = abs(
+                    float(getattr(position, "volume", 0.0) or 0.0)
+                )
+                order_volume = _broker_number(
+                    "quantity",
+                    "orderQuantity",
+                    "volume",
+                    "qty",
+                )
+                matched_volume = _broker_number(
+                    "matchedQuantity",
+                    "filledQuantity",
+                    "filledQty",
+                    "executedQuantity",
+                )
+                remaining_volume = max(0.0, order_volume - matched_volume)
+                raw_side = str(
+                    broker_order.get("side")
+                    or broker_order.get("orderSide")
+                    or broker_order.get("orderType")
+                    or ""
+                ).upper()
+                broker_side = (
+                    "BUY"
+                    if raw_side in {"BUY", "NB", "0"}
+                    else "SELL"
+                    if raw_side in {"SELL", "NS", "1"}
+                    else ""
+                )
+                expected_side = (
+                    "SELL"
+                    if int(getattr(position, "type", 0) or 0) == 0
+                    else "BUY"
+                )
+
+                # A position can be reduced or even flipped from DNSE Mobile
+                # while our close LO is resting.  Never leave an order that can
+                # exceed/reinforce the live broker position.
+                side_mismatch = bool(
+                    broker_side and broker_side != expected_side
+                )
+                over_close = bool(
+                    order_volume > 0
+                    and remaining_volume > current_volume + 1e-9
+                )
+                if side_mismatch:
+                    try:
+                        cancel_result = self.connector.cancel_order(
+                            broker_order_id,
+                            symbol=symbol,
+                            paper_mode=False,
+                        )
+                    except Exception as exc:
+                        cancel_result = SimpleNamespace(
+                            ok=False,
+                            message=str(exc),
+                            error=str(exc),
+                        )
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.ERROR,
+                        (
+                            "POSITION_DIRECTION_CHANGED|LIMIT_CANCELLED"
+                            if getattr(cancel_result, "ok", False)
+                            else "POSITION_DIRECTION_CHANGED|CANCEL_FAILED"
+                        ),
+                        broker_terminal=bool(
+                            getattr(cancel_result, "ok", False)
+                        ),
+                    )
+                    continue
+                if over_close:
+                    # DNSE replacement quantity is the total order quantity,
+                    # therefore already matched volume must be retained.
+                    replacement_quantity = matched_volume + current_volume
+                    try:
+                        replace_result = self.connector.replace_order(
+                            broker_order_id,
+                            quantity=replacement_quantity,
+                            symbol=symbol,
+                        )
+                    except Exception as exc:
+                        replace_result = SimpleNamespace(
+                            ok=False,
+                            message=str(exc),
+                            error=str(exc),
+                        )
+                    if getattr(replace_result, "ok", False):
+                        pending_orders.mark(
+                            local_id,
+                            pending_orders.WORKING,
+                            (
+                                f"POSITION_VOLUME_SYNCED|"
+                                f"REMAINING={current_volume:g}"
+                            ),
+                            lot=current_volume,
+                            broker_order_quantity=replacement_quantity,
+                        )
+                        continue
+
+                    # If resize is rejected, cancel the unsafe remainder.  Do
+                    # not automatically resubmit until cancellation is certain.
+                    try:
+                        cancel_result = self.connector.cancel_order(
+                            broker_order_id,
+                            symbol=symbol,
+                            paper_mode=False,
+                        )
+                    except Exception as exc:
+                        cancel_result = SimpleNamespace(
+                            ok=False,
+                            message=str(exc),
+                            error=str(exc),
+                        )
+                    pending_orders.mark(
+                        local_id,
+                        pending_orders.ERROR,
+                        (
+                            "OVER_CLOSE_GUARD|UNSAFE_LIMIT_CANCELLED"
+                            if getattr(cancel_result, "ok", False)
+                            else "OVER_CLOSE_GUARD|CANCEL_FAILED"
+                        ),
+                        broker_terminal=bool(
+                            getattr(cancel_result, "ok", False)
+                        ),
+                    )
+                    continue
+            if broker_status in bad_statuses:
+                pending_orders.mark(
+                    local_id,
+                    pending_orders.ERROR,
+                    f"DNSE_{broker_status}",
+                    broker_terminal=True,
+                )
 
     def _send_pending_order(self, item):
         order_id = str(item.get("id", ""))
@@ -4062,7 +4392,7 @@ class BotUI(ctk.CTk):
                 float(item.get("lot", 0.0) or 0.0),
                 float(item.get("tp", 0.0) or 0.0),
                 float(item.get("sl", 0.0) or 0.0),
-                self.var_bypass_checklist.get(),
+                bool(item.get("bypass_checklist", False)),
                 str(item.get("note", "")).replace("TSL=", "") or self.get_current_tactic_string(),
                 order_kind=order_kind,
                 manual_entry_price=entry_price,
@@ -4101,6 +4431,8 @@ class BotUI(ctk.CTk):
         order_id = str(item.get("id", "") or "")
         ticket = str(item.get("position_ticket", "") or "")
         symbol = str(item.get("symbol", "") or "").upper()
+        close_mode = str(item.get("entry_mode", "MARKET") or "MARKET").upper()
+        limit_price = float(item.get("entry_price", 0.0) or 0.0)
         position = BotUI._find_open_position(self, ticket)
         if position is None:
             pending_orders.mark(
@@ -4115,12 +4447,56 @@ class BotUI(ctk.CTk):
             return
         try:
             position_manager = BotUI._trade_manager_for_position(self, position)
-            position_manager.set_exit_reason(position.ticket, "Manual_Close")
-            result = BotUI._close_position_for_mode(
-                self,
-                position,
-                str(item.get("close_comment", "") or "Manual_Close"),
-            )
+            if close_mode == "LIMIT" and not BotUI._position_is_paper(position):
+                close_lot = abs(
+                    float(getattr(position, "volume", 0.0) or 0.0)
+                )
+                close_side = (
+                    "SELL"
+                    if int(getattr(position, "type", 0) or 0) == 0
+                    else "BUY"
+                )
+                if close_lot <= 0:
+                    pending_orders.mark(
+                        order_id,
+                        pending_orders.CANCELLED,
+                        "POSITION_ALREADY_CLOSED",
+                    )
+                    return
+                result = position_manager.connector.place_close_limit_order(
+                    symbol,
+                    close_side,
+                    close_lot,
+                    limit_price,
+                    comment=f"[USER]_CLOSE_LIMIT#{ticket}",
+                )
+                if getattr(result, "ok", False):
+                    broker_order_id = str(
+                        getattr(result, "order_id", "")
+                        or getattr(result, "ticket", "")
+                        or ""
+                    )
+                    pending_orders.mark(
+                        order_id,
+                        pending_orders.WORKING,
+                        getattr(result, "message", "") or "LIMIT_WAITING_FILL",
+                        dnse_order_id=broker_order_id,
+                        lot=close_lot,
+                        side=close_side,
+                    )
+                    self.log_message(
+                        f"[ĐÓNG LỆNH] LIMIT {symbol} #{ticket} "
+                        f"@{self._fmt_price(limit_price, symbol)} đã lên DNSE; chờ khớp.",
+                        target="manual",
+                    )
+                    return
+            else:
+                position_manager.set_exit_reason(position.ticket, "Manual_Close")
+                result = BotUI._close_position_for_mode(
+                    self,
+                    position,
+                    str(item.get("close_comment", "") or "Manual_Close"),
+                )
             if getattr(result, "ok", False):
                 pending_orders.mark(
                     order_id,
@@ -4135,6 +4511,27 @@ class BotUI(ctk.CTk):
 
             error = str(getattr(result, "error", "") or "")
             message = str(getattr(result, "message", "") or error or "CLOSE_FAILED")
+            if error == "ORDER_STATUS_UNKNOWN":
+                raw = getattr(result, "raw", {}) or {}
+                request_tag = str(
+                    raw.get("request_tag", "")
+                    if isinstance(raw, dict)
+                    else ""
+                )
+                pending_orders.mark(
+                    order_id,
+                    pending_orders.ERROR,
+                    message,
+                    unknown_submission=True,
+                    request_tag=request_tag,
+                )
+                self.log_message(
+                    f"[ĐÓNG LỆNH] Chưa xác định DNSE đã nhận LIMIT {symbol} #{ticket}; "
+                    "không tự gửi lại.",
+                    error=True,
+                    target="manual",
+                )
+                return
             if error == "STOCK_NOT_SETTLED_T2":
                 pending_orders.mark(
                     order_id,
@@ -4147,14 +4544,14 @@ class BotUI(ctk.CTk):
                     target="manual",
                 )
                 return
-            pending_orders.mark(order_id, pending_orders.FAILED, message)
+            pending_orders.mark(order_id, pending_orders.ERROR, message)
             self.log_message(
                 f"[ĐÓNG LỆNH] Không đóng được {symbol} #{ticket}: {message}",
                 error=True,
                 target="manual",
             )
         except Exception as exc:
-            pending_orders.mark(order_id, pending_orders.FAILED, str(exc))
+            pending_orders.mark(order_id, pending_orders.ERROR, str(exc))
             self.log_message(
                 f"[ĐÓNG LỆNH] Lỗi đóng {symbol} #{ticket}: {exc}",
                 error=True,
@@ -4515,10 +4912,10 @@ class BotUI(ctk.CTk):
 
         magics = storage_manager.get_magic_numbers()
         self._ui_all_positions_snapshot = list(all_positions)
-        positions = [
-            p for p in all_positions
-            if is_bot_position(p, magics) or is_manual_position(p, magics)
-        ]
+        # The running tables are also an account reconciliation view.  Keep
+        # broker positions opened from DNSE Mobile visible even though they are
+        # intentionally not enrolled in this app's TSL manager.
+        positions = list(all_positions)
         cached_spread = float((self.latest_market_context.get(sym, {}) or {}).get("spread", 0.0) or 0.0)
         pos_extras = {}
         for position in positions:
@@ -4668,20 +5065,16 @@ class BotUI(ctk.CTk):
                     refresh_real=True,
                 )
                 self._ui_all_positions_snapshot = list(all_pos)
-                pos = [
-                    p
-                    for p in all_pos
-                    if (
-                        is_bot_position(p, magics)
-                        or is_manual_position(p, magics)
-                    )
-                ]
+                # Show every broker position.  Ownership filtering belongs to
+                # TradeManager (TSL), not to the account/running-position UI.
+                pos = list(all_pos)
                 open_orders = []
                 try:
                     if hasattr(self.connector, "get_orders"):
                         open_orders = self.connector.get_orders(
                             paper_mode=False,
                             symbol=sym,
+                            all_symbols=True,
                             orderCategory=getattr(
                                 self.connector,
                                 "order_category",
@@ -4716,6 +5109,7 @@ class BotUI(ctk.CTk):
     def update_ui(self, acc, state, check_res, tick, preset, sym, positions, open_orders=None, pos_extras=None):
         # [FREEZE FIX] pos_extras do bg_update_loop gom sẵn (thread nền). Nếu caller khác
         # (vd đường tạo lệnh hẹn thủ công) không truyền -> tự gom ở đây để giữ hành vi cũ.
+        self._update_contract_dates_label(sym)
         if pos_extras is None:
             pos_extras = self._collect_position_market(positions)
         sym_count = len(self.brain_active_symbols)
@@ -5446,6 +5840,12 @@ class BotUI(ctk.CTk):
 
         current_execution_mode = "PAPER" if getattr(config, "PAPER_TRADING", True) else "REAL"
         try:
+            import core.storage_manager as storage_manager
+
+            position_magics = storage_manager.get_magic_numbers()
+        except Exception:
+            position_magics = {}
+        try:
             from core import signal_opportunities
 
             legacy_opportunities = []
@@ -5566,6 +5966,7 @@ class BotUI(ctk.CTk):
 
         pending_items = pending_orders.list_all()
         active_pending_closes = {}
+        active_close_broker_order_ids = set()
         for pending_item in pending_items:
             pending_status = str(pending_item.get("status", "") or "").upper()
             if (
@@ -5580,12 +5981,22 @@ class BotUI(ctk.CTk):
                 )
                 if pending_ticket:
                     active_pending_closes[(pending_mode, pending_ticket)] = pending_item
+                broker_order_id = str(
+                    pending_item.get("dnse_order_id", "") or ""
+                )
+                if broker_order_id:
+                    active_close_broker_order_ids.add(broker_order_id)
 
         for item in pending_items:
             item_mode = str(item.get("execution_mode", "PAPER")).upper()
             action = str(item.get("action", "OPEN") or "OPEN").upper()
             local_id = str(item.get("id", ""))
             if not local_id:
+                continue
+            # A cached CLOSE belongs to its original position row. Rendering a
+            # second [LOCAL] row duplicates one investor action and confuses
+            # selection/cancellation.
+            if action == "CLOSE":
                 continue
             row_id = f"LOCAL:{local_id}"
             scope = _running_scope(str(item.get("symbol", "") or ""), item_mode)
@@ -5662,6 +6073,8 @@ class BotUI(ctk.CTk):
         for order in (open_orders or []):
             order_id = str(_order_pick(order, "orderId", "id", "orderID", "order_id", default=""))
             if not order_id:
+                continue
+            if order_id in active_close_broker_order_ids:
                 continue
             row_id = f"ORDER:{order_id}"
             status = str(_order_pick(order, "orderStatus", "status", "state", default="ORDER")).upper()
@@ -5740,7 +6153,13 @@ class BotUI(ctk.CTk):
             broker_tag = "[PAPER]" if position_mode == "PAPER" else "[REAL]"
             origin_tag = "[MANUAL]"
             pos_comment = str(getattr(p, "comment", "") or "")
-            if "[BOT]_AUTO_DCA" in pos_comment:
+            external_position = (
+                position_mode == "REAL"
+                and is_external_position(p, position_magics)
+            )
+            if external_position:
+                origin_tag = "[EXTERNAL]"
+            elif "[BOT]_AUTO_DCA" in pos_comment:
                 origin_tag = "[BOT-DCA]"
             elif "[BOT]_AUTO_PCA" in pos_comment:
                 origin_tag = "[BOT-PCA]"
@@ -5785,7 +6204,12 @@ class BotUI(ctk.CTk):
             stt_txt = self.tsl_states_map.get(p.ticket, "Running")
 
             # [KAISER FIX] Hiển thị rõ loại lệnh con trên Status nếu là lệnh DCA/PCA
-            if "[BOT]_AUTO_DCA" in pos_comment:
+            if (
+                external_position
+                and position_trade_mgr.get_trade_tactic(p.ticket) == "OFF"
+            ):
+                stt_txt = "DNSE MOBILE/WEB | TSL:OFF"
+            elif "[BOT]_AUTO_DCA" in pos_comment:
                 stt_txt = "DCA Child"
             elif "[BOT]_AUTO_PCA" in pos_comment:
                 stt_txt = "PCA Child"
@@ -5841,6 +6265,8 @@ class BotUI(ctk.CTk):
                     rtt = snap.get("rtt")
                     rtt_txt = "UNK" if rtt is None else f"{float(rtt):.0f}%"
                     stt_txt += f" | M:{margin_meta.get('risk_base', 'EQUITY_NAV')} RTT:{rtt_txt}"
+                if external_position:
+                    stt_txt = f"DNSE EXTERNAL | {stt_txt}"
 
             net_pnl = p.profit + getattr(p, "swap", 0.0)
             excursion = position_trade_mgr.state.get("trade_excursions", {}).get(
@@ -5864,6 +6290,8 @@ class BotUI(ctk.CTk):
                         stt_txt = f"✓ ĐÃ VỀ | {stt_txt}" if stt_txt else "✓ ĐÃ VỀ"
             except Exception:
                 pass
+            if external_position and not settlement.is_cash_stock(p.symbol):
+                tag_to_apply = "external_position"
 
             pending_close = active_pending_closes.get((position_mode, ticket_str))
             action_text = "❌"
@@ -5875,11 +6303,33 @@ class BotUI(ctk.CTk):
                 if pending_status == pending_orders.SENDING:
                     close_badge = "↗ ĐANG GỬI ĐÓNG"
                     action_text = ""
+                elif pending_status == pending_orders.WORKING:
+                    limit_text = self._fmt_price(
+                        pending_close.get("entry_price", 0.0),
+                        p.symbol,
+                    )
+                    close_badge = f"⌛ LIMIT CHỜ KHỚP @{limit_text}"
+                    action_text = "↩"
+                elif pending_status == pending_orders.ERROR:
+                    detail = str(pending_close.get("result", "") or "CLOSE_FAILED")
+                    close_badge = f"⚠ ĐÓNG LỖI: {detail[:36]}"
+                    action_text = "↩"
+                    tag_to_apply = "position_close_error"
                 else:
-                    close_badge = "⏳ CHỜ ĐÓNG"
+                    close_mode = str(
+                        pending_close.get("entry_mode", "MARKET") or "MARKET"
+                    ).upper()
+                    if close_mode == "LIMIT":
+                        limit_text = self._fmt_price(
+                            pending_close.get("entry_price", 0.0),
+                            p.symbol,
+                        )
+                        close_mode += f" @{limit_text}"
+                    close_badge = f"⏳ CHỜ ĐÓNG | {close_mode}"
                     action_text = "↩"
                 stt_txt = f"{close_badge} | {stt_txt}" if stt_txt else close_badge
-                tag_to_apply = "position_closing"
+                if pending_status != pending_orders.ERROR:
+                    tag_to_apply = "position_closing"
 
             values_data = (
                 display_ticket,
@@ -6925,7 +7375,7 @@ class BotUI(ctk.CTk):
                 "",
                 "CACHE TTL",
                 f"  Tick/OHLC    {getattr(config, 'DNSE_TICK_CACHE_TTL_SECONDS', 2.0)}s / {getattr(config, 'DNSE_OHLC_CACHE_TTL_SECONDS', 30.0)}s",
-                f"  Acc/Pos      {getattr(config, 'DNSE_ACCOUNT_CACHE_TTL_SECONDS', 5.0)}s / {getattr(config, 'DNSE_POSITIONS_CACHE_TTL_SECONDS', 2.0)}s",
+                f"  Acc/Pos      {getattr(config, 'DNSE_ACCOUNT_CACHE_TTL_SECONDS', 5.0)}s / {getattr(config, 'DNSE_POSITIONS_CACHE_TTL_SECONDS', 5.0)}s",
                 f"  Size         tick={sizes.get('ticks', 0)} ohlc={sizes.get('ohlc', 0)}",
                 "",
                 "WEBSOCKET",
@@ -7246,6 +7696,11 @@ class BotUI(ctk.CTk):
         for position in positions:
             self._queue_or_execute_position_close(position)
 
+    def _choose_pending_close_mode(self, position):
+        if not hasattr(self, "wait_window"):
+            return {"entry_mode": "MARKET", "limit_price": 0.0}
+        return ui_popups.prompt_pending_close_mode(self, position)
+
     def _queue_or_execute_position_close(self, position):
         from core.market_hours import market_session_phase
 
@@ -7257,6 +7712,9 @@ class BotUI(ctk.CTk):
         symbol = str(getattr(position, "symbol", "") or "").upper()
         phase = market_session_phase(symbol)[0]
         if phase != "OPEN":
+            close_choice = BotUI._choose_pending_close_mode(self, position)
+            if not close_choice:
+                return None
             close_side = (
                 "SELL"
                 if int(getattr(position, "type", 0) or 0) == 0
@@ -7272,10 +7730,15 @@ class BotUI(ctk.CTk):
                 lot=float(getattr(position, "volume", 0.0) or 0.0),
                 execution_mode=execution_mode,
                 comment="Manual_Close",
+                entry_mode=close_choice.get("entry_mode", "MARKET"),
+                limit_price=float(close_choice.get("limit_price", 0.0) or 0.0),
             )
+            close_label = str(pending.get("entry_mode", "MARKET") or "MARKET")
+            if close_label == "LIMIT":
+                close_label += f" @{self._fmt_price(pending.get('entry_price', 0.0), symbol)}"
             self.log_message(
                 f"[ĐÓNG LỆNH] Ngoài phiên: đã cache {symbol} #{ticket} "
-                f"đến phiên OPEN (id={str(pending.get('id', ''))[:8]}).",
+                f"{close_label} đến phiên OPEN (id={str(pending.get('id', ''))[:8]}).",
                 target="manual",
             )
             return pending
@@ -7560,6 +8023,94 @@ class BotUI(ctk.CTk):
                 parts.append(template.format(n=counts[key]))
         return " · ".join(parts) or "Không có thao tác khả dụng"
 
+    def _cancel_pending_close_request(self, item):
+        order_id = str(item.get("id", "") or "")
+        status = str(item.get("status", "") or "").upper()
+        broker_order_id = str(item.get("dnse_order_id", "") or "")
+        symbol = str(item.get("symbol", "") or "").upper()
+        if status == pending_orders.SENDING:
+            return
+        if bool(item.get("unknown_submission", False)):
+            self.log_message(
+                "[ĐÓNG LỆNH] Trạng thái gửi LIMIT chưa xác định; "
+                "chưa thể hủy local cho đến khi đối soát DNSE.",
+                error=True,
+                target="manual",
+            )
+            return
+        requires_broker_cancel = bool(
+            broker_order_id and not bool(item.get("broker_terminal", False))
+        )
+        if status != pending_orders.WORKING and not requires_broker_cancel:
+            pending_orders.cancel(order_id)
+            pending_orders.delete_final(order_id)
+            try:
+                self._delete_running_row_everywhere(f"LOCAL:{order_id}")
+            except Exception:
+                pass
+            self.log_message(
+                f"[ĐÓNG LỆNH] Đã hủy yêu cầu đóng {symbol} #{item.get('position_ticket', '')}.",
+                target="manual",
+            )
+            return
+        if not broker_order_id:
+            pending_orders.mark(
+                order_id,
+                pending_orders.ERROR,
+                "MISSING_DNSE_ORDER_ID",
+            )
+            return
+        if not self._ensure_trading_otp_for_mode(False):
+            return
+
+        def _cancel_working():
+            try:
+                result = self.connector.cancel_order(
+                    broker_order_id,
+                    symbol=symbol,
+                    paper_mode=False,
+                )
+                if getattr(result, "ok", False):
+                    pending_orders.mark(
+                        order_id,
+                        pending_orders.CANCELLED,
+                        "USER_CANCELLED_LIMIT_CLOSE",
+                    )
+                    pending_orders.delete_final(order_id)
+                    self.log_message(
+                        f"[ĐÓNG LỆNH] Đã hủy LIMIT chờ đóng {symbol} #{broker_order_id}.",
+                        target="manual",
+                    )
+                else:
+                    message = (
+                        getattr(result, "message", "")
+                        or getattr(result, "error", "")
+                        or "CANCEL_FAILED"
+                    )
+                    pending_orders.mark(
+                        order_id,
+                        pending_orders.ERROR,
+                        message,
+                    )
+                    self.log_message(
+                        f"[ĐÓNG LỆNH] Không hủy được LIMIT #{broker_order_id}: {message}",
+                        error=True,
+                        target="manual",
+                    )
+            except Exception as exc:
+                pending_orders.mark(
+                    order_id,
+                    pending_orders.ERROR,
+                    str(exc),
+                )
+                self.log_message(
+                    f"[ĐÓNG LỆNH] Lỗi hủy LIMIT #{broker_order_id}: {exc}",
+                    error=True,
+                    target="manual",
+                )
+
+        threading.Thread(target=_cancel_working, daemon=True).start()
+
     def _handle_running_table_action(self, row_id, confirm=True):
         row_id = str(row_id or "")
         if row_id.startswith("OPP:"):
@@ -7593,6 +8144,8 @@ class BotUI(ctk.CTk):
                 "Huy hen lenh", f"Huy lenh hen {item.get('symbol')} #{order_id[:8]}?", parent=self
             ):
                 return
+            if str(item.get("action", "OPEN") or "OPEN").upper() == "CLOSE":
+                return BotUI._cancel_pending_close_request(self, item)
             # Huỷ + xoá khỏi bảng trong 1 lần bấm (trước đây phải bấm 2 lần: huỷ rồi mới xoá).
             pending_orders.cancel(order_id)
             pending_orders.delete_final(order_id)

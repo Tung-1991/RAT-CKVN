@@ -33,3 +33,12 @@ def is_manual_position(pos: Any, magics: Optional[Dict[str, int]] = None) -> boo
     manual_magic = (magics or {}).get("manual_magic")
     comment = _comment(pos)
     return (manual_magic is not None and _magic(pos) == int(manual_magic)) or MANUAL_COMMENT_PREFIX in comment
+
+
+def is_external_position(pos: Any, magics: Optional[Dict[str, int]] = None) -> bool:
+    """A broker position that was not opened/tagged by this application."""
+    return bool(
+        pos is not None
+        and not is_bot_position(pos, magics)
+        and not is_manual_position(pos, magics)
+    )

@@ -51,6 +51,8 @@ MARKET_CALENDAR_CACHE_FILE = os.getenv(
 MARKET_CALENDAR_DEFAULT = {
     "use_dnse_working_dates": True,
     "manual_closed_dates": [],
+    "block_entry_ato": True,
+    "block_entry_atc": True,
     "avoid_vn30_expiry_entry": False,
     "avoid_vn30_rebalance_entry": False,
     "vn30_rebalance_dates": [],
@@ -89,7 +91,7 @@ DNSE_OHLC_CACHE_MAX_ENTRIES = int(os.getenv("DNSE_OHLC_CACHE_MAX_ENTRIES", "512"
 # Bật cờ dưới nếu scalping phái sinh, cần tick CKPS ngay cả khi chưa có vị thế.
 DAEMON_TICK_INCLUDE_CKPS = os.getenv("DAEMON_TICK_INCLUDE_CKPS", "false").strip().lower() in ("1", "true", "yes", "on")
 DNSE_ACCOUNT_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ACCOUNT_CACHE_TTL_SECONDS", "5.0"))
-DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "2.0"))
+DNSE_POSITIONS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_POSITIONS_CACHE_TTL_SECONDS", "5.0"))
 DNSE_ORDERS_CACHE_TTL_SECONDS = float(os.getenv("DNSE_ORDERS_CACHE_TTL_SECONDS", "5.0"))
 DNSE_CLOSED_PRIVATE_SYNC_SECONDS = float(os.getenv("DNSE_CLOSED_PRIVATE_SYNC_SECONDS", "300.0"))
 DNSE_BROKER_BACKOFF_SECONDS = float(os.getenv("DNSE_BROKER_BACKOFF_SECONDS", "60.0"))
@@ -131,7 +133,7 @@ DNSE_MARKET_REST_MAX_SYMBOLS_PER_SECOND = float(
     os.getenv("DNSE_MARKET_REST_MAX_SYMBOLS_PER_SECOND", "2.0")
 )
 DNSE_WS_MAX_CONNECTION_SECONDS = float(os.getenv("DNSE_WS_MAX_CONNECTION_SECONDS", "28200"))  # 7h50
-DNSE_WS_RECONCILE_SECONDS = float(os.getenv("DNSE_WS_RECONCILE_SECONDS", "300"))
+DNSE_WS_RECONCILE_SECONDS = float(os.getenv("DNSE_WS_RECONCILE_SECONDS", "30"))
 RESET_HOUR = 0
 STRICT_MODE_DEFAULT = True
 MAX_PING_MS = 150
