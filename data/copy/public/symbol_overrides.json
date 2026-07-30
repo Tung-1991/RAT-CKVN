@@ -100,7 +100,26 @@
           "active": false
         },
         "swing_point": {
-          "active": false
+          "active": false,
+          "params": {
+            "lookback": 20,
+            "strength": 2,
+            "atr_buffer": 0.5
+          },
+          "group_params": {
+            "G0": {
+              "lookback": 20
+            },
+            "G1": {
+              "lookback": 12
+            },
+            "G2": {
+              "lookback": 12
+            },
+            "G3": {
+              "lookback": 20
+            }
+          }
         }
       },
       "risk_tsl": {
@@ -110,7 +129,52 @@
         "tsl_mode": "STATIC",
         "bot_tsl": "BE+SWING",
         "strict_risk": true
+      },
+      "entry_exit": {
+        "enabled": true,
+        "preview_only": false,
+        "active_tactics": [
+          "SWING_REJECTION"
+        ],
+        "entry_tactics": [
+          "SWING_REJECTION"
+        ],
+        "exit_tactic": "FALLBACK_R",
+        "sl_mode": "SANDBOX",
+        "fallback_tactic": "OFF",
+        "signal_ttl_seconds": 900,
+        "missing_data_policy": "BLOCK",
+        "tp_policy": "TACTIC_FIRST",
+        "sl_source_group": "G1",
+        "default_exit": {
+          "use_rr_tp": true,
+          "tp_rr_ratio": 1.5,
+          "use_swing_tp": false
+        },
+        "sl_distance": {
+          "min_atr": 0.3,
+          "max_atr": 2.5
+        },
+        "swing_rejection": {
+          "source_group": "G1",
+          "max_atr_from_swing": 0.7,
+          "sl_atr_buffer": 0.2,
+          "require_rejection_candle": false,
+          "allow_breakout_entry": false,
+          "max_breakout_atr": 0.5
+        }
+      },
+      "bot_safeguard": {
+        "BOT_USE_SWING_TP": false,
+        "BOT_USE_RR_TP": true,
+        "BOT_TP_RR_RATIO": 1.5
       }
+    },
+    "tsl": {
+      "TSL_CONFIG": {
+        "SWING_GROUP": "G1"
+      },
+      "TSL_LOGIC_MODE": "STATIC"
     }
   }
 }

@@ -4,7 +4,10 @@ import sys
 import types
 
 
-sys.modules.setdefault("core.data_engine", types.SimpleNamespace(data_engine=SimpleNamespace()))
+sys.modules.setdefault(
+    "core.data_engine",
+    types.SimpleNamespace(data_engine=SimpleNamespace(_last_tick={})),
+)
 
 import core.trade_manager as trade_manager_mod
 from core.dnse_connector import BrokerOrderResult
@@ -142,13 +145,57 @@ def test_build_telegram_signal_order_uses_sandbox_defaults(monkeypatch):
     assert result["side"] == "BUY"
     assert result["lot"] == 1.0
     assert result["sl"] == 1978.0
-    assert result["tp"] > 2000.0
+    assert result["tp"] == 2033.0
+    assert result["tp_source"] == "RR"
     assert result["entry_mode"] == "MARKET"
     assert result["tactic"] == "BE+STEP_R+SWING+AUTO_DCA+REV_C"
-    assert result["entry_exit_tactic"] in ("OFF", "FALLBACK_R->AUTO")
+    assert result["entry_exit_tactic"] == "FALLBACK_R->FALLBACK_R"
     assert result["risk_amount"] > 0
     assert result["reward_amount"] > 0
     assert "gate_action" in result
+
+
+def test_build_telegram_signal_order_obeys_bot_entry_exit_wait(monkeypatch):
+    mgr = _manager(monkeypatch)
+    mgr._get_brain_settings = lambda symbol=None: {
+        "risk_tsl": {
+            "base_sl": "G2",
+            "sl_atr_multiplier": 0.2,
+            "bot_tsl": "BE+SWING",
+        },
+        "bot_safeguard": {
+            "BOT_USE_SWING_TP": True,
+            "BOT_USE_RR_TP": False,
+            "RISK_GATE_MAX_PCT_PS": 0.0,
+            "RISK_GATE_MAX_PCT_CS": 0.0,
+        },
+        "entry_exit": {
+            "enabled": True,
+            "preview_only": False,
+            "active_tactics": ["SWING_REJECTION"],
+            "entry_tactics": ["SWING_REJECTION"],
+            "exit_tactic": "SWING_REJECTION",
+            "sl_mode": "SANDBOX",
+            "missing_data_policy": "BLOCK",
+            "swing_rejection": {
+                "source_group": "G2",
+                "max_atr_from_swing": 0.7,
+                "sl_atr_buffer": 0.2,
+            },
+        },
+    }
+    context = {
+        "atr_G2": 10.0,
+        "swing_low_G2": 1980.0,
+        "swing_high_G2": 2020.0,
+    }
+
+    result = mgr.build_telegram_signal_order(
+        "VN30F1M", "BUY", context=context, market_mode="TREND"
+    )
+
+    assert result["ok"] is False
+    assert result["error"].startswith("ENTRY_EXIT_WAIT|")
 
 
 def test_strict_risk_cost_includes_both_sides_and_spread(monkeypatch):

@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -13,6 +14,62 @@ from core.checklist_manager import ChecklistManager
 
 
 class JsonAndManualBoundaryTests(unittest.TestCase):
+    def test_public_defaults_keep_bot_and_manual_plans_separate(self):
+        root = Path(__file__).resolve().parents[1] / "data" / "copy" / "public"
+        with (root / "symbol_overrides.json").open("r", encoding="utf-8") as handle:
+            symbol_config = json.load(handle)["VN30F1M"]
+            override = symbol_config["sandbox"]
+        with (root / "presets_config.json").open("r", encoding="utf-8") as handle:
+            manual = json.load(handle)["SCALPING"]
+
+        self.assertEqual(override["G0_TIMEFRAME"], "1h")
+        self.assertEqual(override["G1_TIMEFRAME"], "15m")
+        self.assertEqual(override["entry_exit"]["entry_tactics"], ["SWING_REJECTION"])
+        self.assertEqual(override["entry_exit"]["exit_tactic"], "FALLBACK_R")
+        self.assertEqual(override["entry_exit"]["sl_mode"], "SANDBOX")
+        self.assertFalse(override["bot_safeguard"]["BOT_USE_SWING_TP"])
+        self.assertTrue(override["bot_safeguard"]["BOT_USE_RR_TP"])
+        self.assertEqual(override["bot_safeguard"]["BOT_TP_RR_RATIO"], 1.5)
+        self.assertEqual(symbol_config["tsl"]["TSL_CONFIG"]["SWING_GROUP"], "G1")
+
+        self.assertEqual(manual["MANUAL_SL_MODE"], "SWING_REJECTION")
+        self.assertEqual(manual["MANUAL_TP_MODE"], "FIB")
+        self.assertEqual(manual["MANUAL_SL_GROUP"], "G1")
+        self.assertEqual(manual["MANUAL_TP_GROUP"], "G1")
+
+    def test_public_ckcs_uses_same_signal_lego_as_vn30_with_slower_timeframes(self):
+        root = Path(__file__).resolve().parents[1] / "data" / "copy" / "public"
+        with (root / "brain_settings.json").open("r", encoding="utf-8") as handle:
+            global_config = json.load(handle)
+        with (root / "symbol_overrides.json").open("r", encoding="utf-8") as handle:
+            vn30 = json.load(handle)["VN30F1M"]["sandbox"]
+
+        active_global = {
+            name
+            for name, value in global_config["indicators"].items()
+            if value.get("active")
+        }
+        active_vn30 = {
+            name
+            for name, value in vn30["indicators"].items()
+            if value.get("active")
+        }
+        expected = {"adx", "ema", "supertrend", "macd", "simple_breakout"}
+
+        self.assertEqual(active_global, expected)
+        self.assertEqual(active_vn30, expected)
+        self.assertEqual(global_config["voting_rules"], vn30["voting_rules"])
+        self.assertEqual(global_config["G0_TIMEFRAME"], "1d")
+        self.assertEqual(global_config["G1_TIMEFRAME"], "1h")
+        self.assertEqual(vn30["G0_TIMEFRAME"], "1h")
+        self.assertEqual(vn30["G1_TIMEFRAME"], "15m")
+        self.assertFalse(global_config["indicators"]["volume"]["active"])
+        self.assertTrue(global_config["entry_exit"]["preview_only"])
+        self.assertFalse(vn30["entry_exit"]["preview_only"])
+        self.assertFalse(
+            global_config["ai_advisor_schedule"]["ckcs_liquidity_filter_enabled"]
+        )
+
     def test_brain_json_values_win_and_defaults_fill_missing_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             original_path = storage_manager.BRAIN_FILE
@@ -46,7 +103,7 @@ class JsonAndManualBoundaryTests(unittest.TestCase):
         self.assertEqual(raw, loaded)
         self.assertTrue(loaded["ETHUSD"]["entry_exit"]["enabled"])
 
-    def test_symbol_indicator_override_merges_and_entry_exit_stays_preview_only(self):
+    def test_symbol_indicator_override_merges_and_preserves_entry_exit_mode(self):
         base = {
             "entry_exit": {"enabled": True, "preview_only": False},
             "indicators": {
@@ -77,7 +134,7 @@ class JsonAndManualBoundaryTests(unittest.TestCase):
 
         self.assertEqual(loaded["indicators"]["ema"]["params"]["period"], 20)
         self.assertTrue(loaded["indicators"]["rsi"]["active"])
-        self.assertTrue(loaded["entry_exit"]["preview_only"])
+        self.assertFalse(loaded["entry_exit"]["preview_only"])
 
     def test_manual_checklist_counts_manual_positions_only(self):
         manual_pos = SimpleNamespace(magic=22, comment="[USER]_SCALPING")

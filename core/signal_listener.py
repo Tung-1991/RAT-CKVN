@@ -77,18 +77,68 @@ class SignalListener:
         self.last_telegram_signal_proposal_action = {}
 
     def _build_opportunity_setup(self, symbol, action, context, market_mode):
-        """Build daemon suggestions from the UI Preview source when available."""
+        """Build daemon suggestions from the BOT order-plan source."""
         if callable(self.build_opportunity_plan):
-            return self.build_opportunity_plan(
+            setup = self.build_opportunity_plan(
                 symbol,
                 action,
                 context=context,
                 market_mode=market_mode,
             )
-        # Không quay lại bộ dựng gợi ý cũ của TradeManager: bộ đó có thể dùng
-        # một cấu hình SL/TP khác Manual Preview. Thiếu nguồn Preview thì bỏ
-        # thông báo, tuyệt đối không tự dựng mức giá thay thế.
-        return {"ok": False, "error": "PREVIEW_SOURCE_UNAVAILABLE"}
+            if not isinstance(setup, dict):
+                setup = {"ok": False, "error": "BOT_PLAN_INVALID_RESULT"}
+            setup = dict(setup)
+            setup["plan_source"] = "BOT"
+            setup["plan_version"] = 1
+            return setup
+        # Không quay lại bộ dựng Manual Preview. Telegram phải đọc đúng kế
+        # hoạch BOT; thiếu nguồn BOT thì bỏ thông báo thay vì tự dựng giá.
+        return {
+            "ok": False,
+            "error": "BOT_PLAN_SOURCE_UNAVAILABLE",
+            "plan_source": "BOT",
+            "plan_version": 1,
+        }
+
+    def _record_and_queue_opportunity(
+        self,
+        signal,
+        action,
+        context,
+        market_mode,
+        *,
+        block_reason,
+    ):
+        """Store/send an ENTRY signal independently from order execution."""
+        if str(signal.get("signal_class") or "ENTRY").upper() != "ENTRY":
+            return None
+        try:
+            from core.signal_opportunities import record_signal
+            from telegram_notify.opportunity_alerts import queue_opportunity
+
+            setup = self._build_opportunity_setup(
+                signal.get("symbol"),
+                action,
+                context=context,
+                market_mode=market_mode,
+            )
+            opportunity = record_signal(
+                signal,
+                block_reason=str(block_reason or ""),
+                order_setup=setup,
+            )
+            if opportunity:
+                queue_opportunity(
+                    opportunity,
+                    log_cb=lambda msg, error=False: self.log_ui(
+                        msg,
+                        error=error,
+                    ),
+                )
+            return opportunity
+        except Exception as exc:
+            logger.error(f"[Listener] Store/send BOT opportunity failed: {exc}")
+            return None
 
     def _auto_trade_for(self, symbol) -> bool:
         """Cờ bật-bot theo nhóm mã. Tương thích ngược:
@@ -424,33 +474,13 @@ class SignalListener:
 
         if not self._auto_trade_for(symbol):
             if str(sig_class or "ENTRY").upper() == "ENTRY":
-                try:
-                    from core.signal_opportunities import record_signal
-
-                    order_setup = self._build_opportunity_setup(
-                        symbol,
-                        action,
-                        context=context,
-                        market_mode=market_mode,
-                    )
-                    opportunity = record_signal(
-                        signal,
-                        block_reason="BOT_OFF",
-                        order_setup=order_setup,
-                    )
-                    if opportunity:
-                        from telegram_notify.opportunity_alerts import (
-                            queue_opportunity,
-                        )
-
-                        queue_opportunity(
-                            opportunity,
-                            log_cb=lambda msg, error=False: self.log_ui(
-                                msg, error=error
-                            ),
-                        )
-                except Exception as exc:
-                    logger.error(f"[Listener] Lưu gợi ý BOT lỗi: {exc}")
+                self._record_and_queue_opportunity(
+                    signal,
+                    action,
+                    context,
+                    market_mode,
+                    block_reason="BOT_OFF",
+                )
             try:
                 from telegram_notify.signal_bridge import maybe_send_signal_proposal
 
@@ -538,33 +568,13 @@ class SignalListener:
 
             if "SUCCESS" not in result:
                 if str(sig_class or "ENTRY").upper() == "ENTRY":
-                    try:
-                        from core.signal_opportunities import record_signal
-
-                        order_setup = self._build_opportunity_setup(
-                            symbol,
-                            action,
-                            context=context,
-                            market_mode=market_mode,
-                        )
-                        opportunity = record_signal(
-                            signal,
-                            block_reason=str(result),
-                            order_setup=order_setup,
-                        )
-                        if opportunity:
-                            from telegram_notify.opportunity_alerts import (
-                                queue_opportunity,
-                            )
-
-                            queue_opportunity(
-                                opportunity,
-                                log_cb=lambda msg, error=False: self.log_ui(
-                                    msg, error=error
-                                ),
-                            )
-                    except Exception as exc:
-                        logger.error(f"[Listener] Lưu gợi ý bị chặn lỗi: {exc}")
+                    self._record_and_queue_opportunity(
+                        signal,
+                        action,
+                        context,
+                        market_mode,
+                        block_reason=str(result),
+                    )
                 # [FIX] Tường minh lý do lỗi
                 if "SAFEGUARD_FAIL" in result:
                     parts = result.split("|")
@@ -604,8 +614,15 @@ class SignalListener:
                         )
                         self.log_ui(f"❌ Bot vào lệnh thất bại: {result}", error=True)
             else:
-                # [V4.3.1] Không xóa bộ nhớ lỗi khi thành công nữa để giữ vững Cooldown Log
-                pass
+                # Telegram độc lập với kết quả đặt lệnh. Trước đây nhánh
+                # SUCCESS không làm gì nên BOT vào lệnh nhưng nhóm Gợi ý im.
+                self._record_and_queue_opportunity(
+                    signal,
+                    action,
+                    context,
+                    market_mode,
+                    block_reason=str(result),
+                )
 
         # Chạy Thread độc lập để Listener không bị kẹt
         threading.Thread(target=run_bot_trade, daemon=True).start()

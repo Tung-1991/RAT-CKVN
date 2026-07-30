@@ -150,7 +150,7 @@ def setup_left_panel(app, parent):
     app.seg_paper_mode.grid(row=0, column=0, sticky="ew", padx=(0, 6))
     ctk.CTkButton(
         f_account_row,
-        text="\u2699 PRESET",
+        text="\u2699 MANUAL PRESET",
         width=92,
         height=30,
         fg_color=COL_SETTING,
@@ -208,29 +208,51 @@ def setup_left_panel(app, parent):
         command=app.open_tsl_popup,
     ).grid(row=0, column=6, sticky="ew", padx=(3, 0))
 
+    # Manual Entry/Exit quick modes. These buttons only drive Manual
+    # Preview/Preset; BOT runtime keeps its own Entry/Exit configuration.
     setting_label(3, "E/E")
     f_entry = setting_row(3)
     stretch_columns(f_entry, (36, 62, 62, 40, 42, 42))
-    app.btn_entry_r = ctk.CTkButton(
-        f_entry, text="R", width=36, height=30, command=lambda: app.toggle_entry_exit_tactic("FALLBACK_R")
+    app.btn_manual_entry_r = ctk.CTkButton(
+        f_entry,
+        text="R",
+        width=36,
+        height=30,
+        command=lambda: app.set_manual_entry_exit_quick_mode("R"),
     )
-    app.btn_entry_r.grid(row=0, column=0, sticky="ew", padx=(0, 3))
-    app.btn_entry_swing = ctk.CTkButton(
-        f_entry, text="RETEST", width=62, height=30, command=lambda: app.toggle_entry_exit_tactic("SWING_REJECTION")
+    app.btn_manual_entry_r.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    app.btn_manual_entry_retest = ctk.CTkButton(
+        f_entry,
+        text="RETEST",
+        width=62,
+        height=30,
+        command=lambda: app.set_manual_entry_exit_quick_mode("RETEST"),
     )
-    app.btn_entry_swing.grid(row=0, column=1, sticky="ew", padx=3)
-    app.btn_entry_struct = ctk.CTkButton(
-        f_entry, text="STRUCT", width=62, height=30, command=lambda: app.toggle_entry_exit_tactic("SWING_STRUCTURE")
+    app.btn_manual_entry_retest.grid(row=0, column=1, sticky="ew", padx=3)
+    app.btn_manual_entry_struct = ctk.CTkButton(
+        f_entry,
+        text="STRUCT",
+        width=62,
+        height=30,
+        command=lambda: app.set_manual_entry_exit_quick_mode("STRUCT"),
     )
-    app.btn_entry_struct.grid(row=0, column=2, sticky="ew", padx=3)
-    app.btn_entry_fib = ctk.CTkButton(
-        f_entry, text="FIB", width=40, height=30, command=lambda: app.toggle_entry_exit_tactic("FIB_RETRACE")
+    app.btn_manual_entry_struct.grid(row=0, column=2, sticky="ew", padx=3)
+    app.btn_manual_entry_fib = ctk.CTkButton(
+        f_entry,
+        text="FIB",
+        width=40,
+        height=30,
+        command=lambda: app.set_manual_entry_exit_quick_mode("FIB"),
     )
-    app.btn_entry_fib.grid(row=0, column=3, sticky="ew", padx=3)
-    app.btn_entry_pullback = ctk.CTkButton(
-        f_entry, text="PULL", width=42, height=30, command=lambda: app.toggle_entry_exit_tactic("PULLBACK_ZONE")
+    app.btn_manual_entry_fib.grid(row=0, column=3, sticky="ew", padx=3)
+    app.btn_manual_entry_pull = ctk.CTkButton(
+        f_entry,
+        text="PULL",
+        width=42,
+        height=30,
+        command=lambda: app.set_manual_entry_exit_quick_mode("PULL"),
     )
-    app.btn_entry_pullback.grid(row=0, column=4, sticky="ew", padx=3)
+    app.btn_manual_entry_pull.grid(row=0, column=4, sticky="ew", padx=3)
     ctk.CTkButton(
         f_entry,
         text="EE",
@@ -238,7 +260,7 @@ def setup_left_panel(app, parent):
         height=30,
         fg_color=COL_SETTING,
         hover_color=COL_SETTING_HOVER,
-        command=app.open_entry_exit_popup,
+        command=app.open_preset_config_popup,
     ).grid(row=0, column=5, sticky="ew", padx=(3, 0))
 
     setting_label(4, "DEF")
@@ -320,6 +342,7 @@ def setup_left_panel(app, parent):
 
     app.update_tactic_buttons_ui()
     app.update_entry_exit_buttons_ui()
+    app.update_manual_entry_exit_buttons_ui()
 
     # 3. MANUAL INPUT PANEL
     f_input = ctk.CTkFrame(parent, fg_color="transparent")
@@ -953,7 +976,8 @@ def setup_right_panel(app, parent):
         command=_clear_active_log,
     ).pack(side="right", padx=(0, 8))
 
-    tab_preview = log_tabview.add("Preview")
+    # Bản xem trước cho lệnh tay, luôn đọc PRESET đang chọn.
+    tab_preview = log_tabview.add("Manual Preview")
 
     tab_manual = log_tabview.add("📋 Manual")
     tab_bot = log_tabview.add("🤖 Bot")
@@ -1084,7 +1108,7 @@ def setup_right_panel(app, parent):
     app.var_preview_tp_group = tk.StringVar(value=_tf_display.get(_preset_tp_group, _tf_display["G2"]))
     _mode_display = {
         "PERCENT": "Percent",
-        "SANDBOX": "SL Sandbox",
+        "SANDBOX": "Swing Retest",
         "RR": "RR",
         "SWING": "Swing Retest",
         "SWING_REJECTION": "Swing Retest",
@@ -1113,7 +1137,7 @@ def setup_right_panel(app, parent):
     ).grid(row=0, column=0, padx=(8, 4), pady=5, sticky="w")
     app.cbo_preview_sl_mode = ctk.CTkOptionMenu(
         selector_row,
-        values=["Percent", "SL Sandbox", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
+        values=["Percent", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
         variable=app.var_preview_sl_mode,
         width=132,
         height=28,

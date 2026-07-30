@@ -3468,6 +3468,9 @@ def open_bot_setting_popup(app):
     var_volatility_telegram = ctk.BooleanVar(
         value=bool(safe_cfg.get("VOLATILITY_BRAKE_TELEGRAM_ENABLED", True))
     )
+    var_volatility_session = ctk.BooleanVar(
+        value=bool(safe_cfg.get("VOLATILITY_BRAKE_SESSION_ENABLED", True))
+    )
     vol_panel = ctk.CTkFrame(
         tab_volatility, fg_color="#20252B", border_width=1, border_color="#FFB300"
     )
@@ -3580,12 +3583,30 @@ def open_bot_setting_popup(app):
     )
     ctk.CTkCheckBox(
         fields,
+        text="Bắt thêm nhịp đi xa trong phiên",
+        variable=var_volatility_session,
+    ).grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(24, 5))
+    e_volatility_session_derivative = _vol_entry(
+        "CKPS cả nhịp (điểm)",
+        safe_cfg.get("VOLATILITY_BRAKE_SESSION_DERIVATIVE_POINTS", 20.0),
+        2,
+        0,
+    )
+    e_volatility_session_stock = _vol_entry(
+        "CKCS cả nhịp (%)",
+        safe_cfg.get("VOLATILITY_BRAKE_SESSION_STOCK_PCT", 3.0),
+        2,
+        1,
+    )
+    ctk.CTkCheckBox(
+        fields,
         text="Gửi biến động giá vào nhóm Gợi ý BOT",
         variable=var_volatility_telegram,
-    ).grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(24, 5))
+    ).grid(row=2, column=2, columnspan=2, sticky="w", padx=6, pady=(24, 5))
     ctk.CTkLabel(
         vol_panel,
         text=(
+            "Hai luật độc lập: cú sốc ngắn 5 điểm/60 giây và nhịp dài 20 điểm từ mốc gần nhất. "
             "Mặc định CHỈ CẢNH BÁO không sửa lệnh, không khóa BOT. "
             "ĐÓNG HẾT chỉ chạy khi Ngài chủ động chọn; khi đó cả vị thế tay cũng bị đóng."
         ),
@@ -3990,6 +4011,13 @@ def open_bot_setting_popup(app):
                     ),
                     "VOLATILITY_BRAKE_CONFIRMATIONS": max(
                         1, int(e_volatility_confirmations.get())
+                    ),
+                    "VOLATILITY_BRAKE_SESSION_ENABLED": var_volatility_session.get(),
+                    "VOLATILITY_BRAKE_SESSION_DERIVATIVE_POINTS": max(
+                        0.01, float(e_volatility_session_derivative.get())
+                    ),
+                    "VOLATILITY_BRAKE_SESSION_STOCK_PCT": max(
+                        0.01, float(e_volatility_session_stock.get())
                     ),
                     "WATERMARK_TRIGGER": money_input_from_display(e_gl_wm_trigger.get(), cbo_gl_wm_trigger_unit.get()),
                     "WATERMARK_TRIGGER_UNIT": unit_from_display(cbo_gl_wm_trigger_unit.get()),
@@ -5565,7 +5593,8 @@ def open_preset_config_popup(app):
         body,
         "- Preset này dùng cho lệnh manual theo preset đang chọn.\n"
         "- Manual input ngoài panel luôn ưu tiên hơn preset.\n"
-        "- Preset chỉ định rule riêng cho SL và TP manual: Percent/RR hoặc SwingPoint.",
+        "- Preset chỉ định rule riêng cho SL và TP manual; không đổi BOT/Telegram.\n"
+        "- Group đọc timeframe của mã đang chọn: VN30F G1=M15; CKCS G1=H1.",
         padx=20,
         pady=(0, 10),
         wraplength=680,
@@ -5587,7 +5616,10 @@ def open_preset_config_popup(app):
         wraplength=460,
     )
     lbl_h_sl.pack(pady=(0, 5))
-    ctk.CTkLabel(body, text="Take Profit (RR):").pack()
+    ctk.CTkLabel(
+        body,
+        text="RR chính khi chọn RR · dự phòng khi mục tiêu kỹ thuật lỗi:",
+    ).pack()
     e_tp = ctk.CTkEntry(body, justify="center")
     e_tp.insert(0, str(data.get("TP_RR_RATIO", 2.0)))
     e_tp.pack()
@@ -5612,7 +5644,7 @@ def open_preset_config_popup(app):
     tp_mode_default = str(data.get("MANUAL_TP_MODE") or ("SWING" if data.get("USE_SWING_TP", False) else "RR")).upper()
     _manual_mode_display = {
         "PERCENT": "Percent",
-        "SANDBOX": "SL Sandbox",
+        "SANDBOX": "Swing Retest",
         "RR": "RR",
         "OFF": "OFF",
         "NO_TP": "OFF",
@@ -5643,7 +5675,7 @@ def open_preset_config_popup(app):
     f_sl_rule.pack(fill="x", padx=20, pady=(0, 10))
     ctk.CTkLabel(
         f_sl_rule,
-        text="Manual SL Rule",
+        text="PREVIEW LỆNH TAY — STOP LOSS",
         font=("Roboto", 13, "bold"),
         text_color="#FFB3AD",
     ).pack(anchor="w", padx=14, pady=(10, 4))
@@ -5658,7 +5690,7 @@ def open_preset_config_popup(app):
     ).pack(side="left")
     ctk.CTkOptionMenu(
         f_manual_sl_group,
-        values=["Percent", "SL Sandbox", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
+        values=["Percent", "Swing Retest", "Swing Struct", "FIB", "Pullback"],
         variable=var_manual_sl_mode,
         width=140,
         command=lambda v: var_swing_sl.set("Swing" in v),
@@ -5684,6 +5716,16 @@ def open_preset_config_popup(app):
         text_color="#D9EEF2",
     ).pack(side="left")
     ctk.CTkEntry(f_manual_sl_group, textvariable=var_manual_sl_buffer, width=58, justify="center").pack(side="left")
+    ctk.CTkLabel(
+        f_sl_rule,
+        text=(
+            "Preset lệnh tay dùng Group/Buffer riêng tại đây; không đọc hoặc ghi đè SL của BOT."
+        ),
+        font=("Roboto", 11, "italic"),
+        text_color="#90CAF9",
+        wraplength=820,
+        justify="left",
+    ).pack(anchor="w", padx=14, pady=(0, 9))
 
     f_tp_rule = ctk.CTkFrame(
         body,
@@ -5695,7 +5737,7 @@ def open_preset_config_popup(app):
     f_tp_rule.pack(fill="x", padx=20, pady=(0, 12))
     ctk.CTkLabel(
         f_tp_rule,
-        text="Manual Exit Target Rule",
+        text="PREVIEW LỆNH TAY — TAKE PROFIT",
         font=("Roboto", 13, "bold"),
         text_color="#9AFFC4",
     ).pack(anchor="w", padx=14, pady=(10, 4))
@@ -5749,19 +5791,43 @@ def open_preset_config_popup(app):
             else:
                 grp = str(var_manual_sl_group.get() or "G2")
                 ctx = {}
+                _sym = ""
                 try:
                     _sym = str(app.cbo_symbol.get() or "").strip()
                     _ctxs = getattr(app, "latest_market_context", {}) or {}
                     ctx = _ctxs.get(_sym) or _ctxs.get(_sym.upper()) or {}
                 except Exception:
                     ctx = {}
+                effective_mult = None
+                if mode_disp == "SL Sandbox" and _sym:
+                    try:
+                        brain = app.trade_mgr._get_brain_settings(_sym) or {}
+                        risk_tsl = brain.get("risk_tsl", {}) or {}
+                        grp = app._sandbox_sl_group_for_symbol(
+                            _sym,
+                            ctx,
+                            risk_tsl.get("base_sl", grp),
+                        )
+                        effective_mult = float(
+                            risk_tsl.get(
+                                "sl_atr_multiplier",
+                                getattr(config, "sl_atr_multiplier", 0.2),
+                            )
+                            or 0.2
+                        )
+                    except Exception:
+                        effective_mult = None
                 if "DYNAMIC" in grp:
                     grp = "G1" if str(ctx.get("market_mode", "ANY")).upper() in ("TREND", "BREAKOUT") else "G2"
                 atr_v = float(ctx.get(f"atr_{grp}", 0) or 0)
                 sw_lo = float(ctx.get(f"swing_low_{grp}", 0) or 0)
                 if atr_v > 0 and sw_lo > 0:
                     try:
-                        mult = float(var_manual_sl_buffer.get() or 0.2)
+                        mult = (
+                            effective_mult
+                            if effective_mult is not None
+                            else float(var_manual_sl_buffer.get() or 0.2)
+                        )
                     except Exception:
                         mult = 0.2
                     _sl_est = sw_lo - atr_v * mult
@@ -5773,7 +5839,7 @@ def open_preset_config_popup(app):
                         )
                     else:
                         lbl_h_sl.configure(
-                            text=f"({mode_disp} {grp}: SL ~ {_sl_est:.2f} cho BUY, swing±ATR)",
+                            text=f"({mode_disp} {grp}, buffer {mult:g} ATR: SL ~ {_sl_est:.2f} cho BUY)",
                             text_color="#FFB74D",
                         )
                 else:
@@ -5781,8 +5847,11 @@ def open_preset_config_popup(app):
                         text=f"({mode_disp}: SL theo swing±ATR — chưa có data, tạm fallback {s:g}%)",
                         text_color="#FFB74D",
                     )
+            tp_mode_now = str(var_manual_tp_mode.get() or "RR")
+            rr_role = "TP chính" if tp_mode_now == "RR" else "mức dự phòng"
             lbl_h_tp.configure(
-                text=f"(~ Lãi {format_vnd_full(risk_usd * t)} nếu chạm TP)", text_color="#66BB6A"
+                text=f"(~ {format_vnd_full(risk_usd * t)} tại {t:g}R · {rr_role})",
+                text_color="#66BB6A",
             )
         except ValueError:
             pass
@@ -5791,6 +5860,7 @@ def open_preset_config_popup(app):
     e_tp.bind("<KeyRelease>", live)
     var_manual_sl_mode.trace_add("write", lambda *a: live())
     var_manual_sl_group.trace_add("write", lambda *a: live())
+    var_manual_tp_mode.trace_add("write", lambda *a: live())
     live()
 
     def save_preset():
@@ -5840,6 +5910,8 @@ def open_preset_config_popup(app):
             app.var_preview_sl_mode.set(_manual_mode_display.get(sl_mode, "Percent"))
         if hasattr(app, "var_preview_tp_mode"):
             app.var_preview_tp_mode.set(_manual_mode_display.get(tp_mode, "RR"))
+        if hasattr(app, "update_manual_entry_exit_buttons_ui"):
+            app.update_manual_entry_exit_buttons_ui()
         app.refresh_manual_preview_tab()
         top.destroy()
     ctk.CTkButton(top, text="LƯU PRESET", command=save_preset, fg_color=COL_GREEN).pack(

@@ -99,17 +99,17 @@
   "voting_rules": {
     "G0": {
       "max_opposite": 0,
-      "max_none": 0,
-      "master_rule": "FIX"
-    },
-    "G1": {
-      "max_opposite": 0,
       "max_none": 1,
       "master_rule": "PASS"
     },
-    "G2": {
+    "G1": {
       "max_opposite": 0,
       "max_none": 2,
+      "master_rule": "FIX"
+    },
+    "G2": {
+      "max_opposite": 0,
+      "max_none": 1,
       "master_rule": "PASS"
     },
     "G3": {
@@ -121,7 +121,7 @@
   "risk_tsl": {
     "base_risk": 1.0,
     "base_sl": "G0",
-    "sl_atr_multiplier": 1.5,
+    "sl_atr_multiplier": 0.2,
     "tsl_mode": "STATIC",
     "bot_tsl": "BE+SWING",
     "mode_multipliers": {
@@ -137,6 +137,7 @@
     "adx": {
       "active": true,
       "groups": [
+        "G0",
         "G1"
       ],
       "is_trend": false,
@@ -146,9 +147,9 @@
       ],
       "params": {
         "period": 14,
-        "strong": 23
+        "strong": 20
       },
-      "trigger_mode": "STRICT_CLOSE",
+      "trigger_mode": "REALTIME_TICK",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -164,18 +165,14 @@
         "ANY"
       ],
       "params": {
-        "period": 50
+        "period": 20
       },
-      "trigger_mode": "STRICT_CLOSE",
+      "trigger_mode": "REALTIME_TICK",
       "group_trigger_modes": {},
-      "group_params": {
-        "G1": {
-          "period": 20
-        }
-      }
+      "group_params": {}
     },
     "swing_point": {
-      "active": true,
+      "active": false,
       "groups": [
         "G2"
       ],
@@ -245,7 +242,7 @@
       "group_params": {}
     },
     "volume": {
-      "active": true,
+      "active": false,
       "groups": [
         "G2"
       ],
@@ -265,7 +262,8 @@
     "supertrend": {
       "active": true,
       "groups": [
-        "G0"
+        "G0",
+        "G1"
       ],
       "is_trend": true,
       "macro_role": "NONE",
@@ -274,9 +272,9 @@
       ],
       "params": {
         "period": 10,
-        "multiplier": 3.0
+        "multiplier": 2.0
       },
-      "trigger_mode": "STRICT_CLOSE",
+      "trigger_mode": "REALTIME_TICK",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -388,7 +386,7 @@
         "slow": 26,
         "signal": 9
       },
-      "trigger_mode": "STRICT_CLOSE",
+      "trigger_mode": "REALTIME_TICK",
       "group_trigger_modes": {},
       "group_params": {}
     },
@@ -442,7 +440,7 @@
         "lookback": 2,
         "atr_buffer": 0.0
       },
-      "trigger_mode": "STRICT_CLOSE",
+      "trigger_mode": "REALTIME_TICK",
       "group_trigger_modes": {},
       "group_params": {}
     }
@@ -677,23 +675,21 @@
     "enabled": true,
     "preview_only": true,
     "active_tactics": [
-      "BREAKOUT_RETEST",
       "SWING_REJECTION"
     ],
     "entry_tactics": [
-      "BREAKOUT_RETEST",
       "SWING_REJECTION"
     ],
     "exit_tactic": "FALLBACK_R",
-    "sl_mode": "SWING_STRUCTURE",
-    "fallback_tactic": "FALLBACK_R",
+    "sl_mode": "SANDBOX",
+    "fallback_tactic": "OFF",
     "signal_ttl_seconds": 900,
     "missing_data_policy": "BLOCK",
-    "tp_policy": "FALLBACK_R",
+    "tp_policy": "TACTIC_FIRST",
     "sl_source_group": "BASE_SL",
     "default_exit": {
       "use_rr_tp": true,
-      "tp_rr_ratio": 2.0,
+      "tp_rr_ratio": 1.5,
       "use_swing_tp": false
     },
     "sl_distance": {
@@ -780,7 +776,7 @@
     "ckcs_morning_time": "11:35",
     "ckcs_afternoon_time": "14:50",
     "ckcs_report_days": 15,
-    "ckcs_liquidity_filter_enabled": true,
+    "ckcs_liquidity_filter_enabled": false,
     "ckcs_liquidity_sessions": 60,
     "ckcs_liquidity_min_billion": 10.0,
     "ckcs_last_morning_date": "",
@@ -806,6 +802,9 @@
     "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
     "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,
     "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
+    "VOLATILITY_BRAKE_SESSION_ENABLED": true,
+    "VOLATILITY_BRAKE_SESSION_DERIVATIVE_POINTS": 20.0,
+    "VOLATILITY_BRAKE_SESSION_STOCK_PCT": 3.0,
     "FORCE_MIN_LOT": false,
     "STOCK_MAX_ORDER_NAV_PCT": 20.0,
     "RISK_GATE_MAX_PCT_PS": 8.0,

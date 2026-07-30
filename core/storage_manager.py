@@ -934,16 +934,16 @@ def update_last_dca_pca_close_time(symbol: str, timestamp: float):
 def load_brain_settings() -> Dict[str, Any]:
     sandbox_defaults = getattr(config, "SANDBOX_CONFIG", {})
     default_entry_exit = {
-        "enabled": False,
-        "preview_only": True,
-        "active_tactics": [],
+        "enabled": True,
+        "preview_only": False,
+        "active_tactics": ["SWING_REJECTION"],
         "entry_tactics": ["SWING_REJECTION"],
-        "exit_tactic": "AUTO",
+        "exit_tactic": "FALLBACK_R",
         "sl_mode": "SANDBOX",
-        "fallback_tactic": "FALLBACK_R",
+        "fallback_tactic": "OFF",
         "signal_ttl_seconds": 900,
-        "missing_data_policy": "FALLBACK_R",
-        "tp_policy": "FALLBACK_R",
+        "missing_data_policy": "BLOCK",
+        "tp_policy": "TACTIC_FIRST",
         "sl_source_group": "BASE_SL",
         "default_exit": {
             "use_rr_tp": True,
@@ -1177,11 +1177,10 @@ def _normalize_brain_settings_shape(data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         data["opportunity_settings"] = copy.deepcopy(getattr(config, "BOT_OPPORTUNITY_DEFAULT", {}))
 
-    # Entry/Exit là lớp Preview/quan sát; cấu hình legacy không được biến nó
-    # thành cổng chặn lệnh BOT.
+    # E/E BOT mặc định là cổng WAIT/READY. Manual Preview là luồng riêng.
     entry_exit = data.get("entry_exit")
     if isinstance(entry_exit, dict):
-        entry_exit["preview_only"] = True
+        entry_exit["preview_only"] = bool(entry_exit.get("preview_only", False))
 
     indicators = data.get("indicators", {})
     if not isinstance(indicators, dict):

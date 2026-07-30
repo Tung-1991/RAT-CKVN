@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import config
 import core.data_engine as data_engine_module
+import pandas as pd
 from core.data_engine import DataEngine
 import ui_bot_strategy
 import ui_popups
@@ -47,6 +48,22 @@ def test_inactive_trend_role_does_not_activate_indicator():
         "G2",
         include_trend=True,
     ) == {}
+
+
+def test_calc_swings_uses_latest_confirmed_pivots_not_window_extremes():
+    engine = DataEngine()
+    frame = pd.DataFrame(
+        {
+            "high": [30.0, 12.0, 14.0, 11.0, 15.0, 10.0, 13.0, 11.0, 12.0],
+            "low": [5.0, 8.0, 9.0, 7.0, 10.0, 6.0, 9.0, 7.5, 8.0],
+            "close": [10.0] * 9,
+        }
+    )
+
+    swing_high, swing_low = engine._calc_swings(frame, lookback=9, strength=1)
+
+    assert swing_high == 13.0
+    assert swing_low == 7.5
 
 
 def test_old_paper_receipt_is_visible_as_history_row(monkeypatch):

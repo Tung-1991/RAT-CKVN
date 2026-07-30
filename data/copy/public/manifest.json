@@ -1,7 +1,7 @@
 {
   "version": 4,
   "category": "public",
-  "created_at": "2026-07-28 21:04:51",
+  "created_at": "2026-07-30 13:31:31",
   "files": [
     "brain_settings.json",
     "symbol_overrides.json",
@@ -21,16 +21,5 @@
     "advisor_prompt.md": "advisor/advisor_prompt.md",
     "advisor_flow.md": "advisor/advisor_flow.md",
     "advisor_api_settings.json": "advisor_api_settings.json"
-  },
-  "sha256": {
-    "brain_settings.json": "e8e77138c589f7620f51548a17a0a1ec5e5307ffe426efee0dc2cc45b578ca94",
-    "symbol_overrides.json": "f84d79b6f062b25daffc92cf61f73e7fe15ee8c307317b91fa1c115d36650572",
-    "tsl_settings.json": "308e85ba4ca9069fe7c1be80ad192bebf6a55810857270c104ab6be0a9d220b6",
-    "presets_config.json": "dcf17c27d6ce5e6d9169e21238ec780c0ede893f7bb1f8c7fe5fbb97d6a2e3b7",
-    "advisor_prompt.md": "28dd8278ca35a2a56711b127544a4a7a45c5b32cc2f1a65d0243730746fab573",
-    "advisor_flow.md": "9c22c20b887f49b02b925316492f476d55a4922f3ee1a34f15c8924e6fbfb8dd",
-    "advisor_api_settings.json": "22f248b72d26e3c07d1157d2c130d7c8c5444a47009c5f29bda6668fe04f001c",
-    "portable_settings.json": "afc58ef1ad211cc879f1c2a66b217c96d591d8aa451c1df11fb57faaea3b1529",
-    "templates_bundle.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
   }
 }

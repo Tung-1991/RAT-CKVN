@@ -89,16 +89,16 @@ EE_MISSING_VALUES = {v: k for k, v in EE_MISSING_LABELS.items()}
 
 def _default_entry_exit_config():
     return {
-        "enabled": False,
-        "preview_only": True,
-        "active_tactics": [],
+        "enabled": True,
+        "preview_only": False,
+        "active_tactics": ["SWING_REJECTION"],
         "entry_tactics": ["SWING_REJECTION"],
-        "exit_tactic": "AUTO",
+        "exit_tactic": "FALLBACK_R",
         "sl_mode": "SANDBOX",
-        "fallback_tactic": "FALLBACK_R",
+        "fallback_tactic": "OFF",
         "signal_ttl_seconds": 900,
-        "missing_data_policy": "FALLBACK_R",
-        "tp_policy": "FALLBACK_R",
+        "missing_data_policy": "BLOCK",
+        "tp_policy": "TACTIC_FIRST",
         "sl_source_group": "BASE_SL",
         "default_exit": {
             "use_rr_tp": True,
@@ -348,7 +348,8 @@ class BotStrategyUI(ctk.CTkToplevel):
         # Bắt đầu vòng lặp cập nhật Preview
         self.after(1000, self.update_preview)
 
-        self.tab_preview_root = self.tabview.add("Preview")
+        # Preview này thuộc riêng BOT/Sandbox; Manual Preview nằm ở màn hình chính.
+        self.tab_preview_root = self.tabview.add("BOT Preview")
         self.tab_inds = self.tabview.add("Signals")
         self.tab_check = self.tabview.add("CHECK")
         self.tab_rules = self.tabview.add("Vote Rules")
@@ -601,7 +602,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                 )
             decision = evaluate_entry_exit(symbol or "---", direction, float(price), context, cfg)
             text = format_decision(decision)
-            if cfg.get("preview_only", True) and text.startswith("E/E:"):
+            if cfg.get("preview_only", False) and text.startswith("E/E:"):
                 text = text.replace("E/E:", "E/E PREVIEW:", 1)
             return text
         except Exception as exc:
@@ -1641,15 +1642,20 @@ class BotStrategyUI(ctk.CTkToplevel):
             cfg["exit_tactic"] = exit_tactic or "AUTO"
             cfg["sl_mode"] = sl_mode or "SANDBOX"
             cfg["missing_data_policy"] = missing_policy or "FALLBACK_R"
+            cfg["fallback_tactic"] = "FALLBACK_R" if use_fallback_r else "OFF"
             cfg.setdefault("default_exit", {})
-            cfg["default_exit"]["use_rr_tp"] = cfg["exit_tactic"] not in ("NO_TP", "OFF")
+            cfg["default_exit"]["use_rr_tp"] = cfg["exit_tactic"] == "FALLBACK_R"
             cfg["default_exit"]["use_swing_tp"] = cfg["exit_tactic"] in (
                 "SWING_REJECTION",
                 "SWING_STRUCTURE",
             )
             cfg["enabled"] = bool(active)
-            # Tactic tại màn này chỉ phục vụ Preview; không chặn lệnh BOT.
-            cfg["preview_only"] = True
+            preview_var = getattr(self, "bot_entry_exit_preview_only_var", None)
+            cfg["preview_only"] = (
+                bool(preview_var.get())
+                if preview_var is not None
+                else bool(cfg.get("preview_only", False))
+            )
         return cfg
 
     def _build_risk_tab(self):
@@ -1711,6 +1717,17 @@ class BotStrategyUI(ctk.CTkToplevel):
             font=("Roboto", 13, "bold"),
             text_color="#F44336",
         ).grid(row=0, column=1, padx=15, pady=10, sticky="w")
+        ctk.CTkLabel(
+            f_adv,
+            text=(
+                "Strict Risk chỉ giảm số HĐ/CP để phần lỗ tại SL cộng spread và phí "
+                "không vượt ngân sách rủi ro; không đổi tín hiệu, Entry, SL hoặc TP."
+            ),
+            text_color="#90CAF9",
+            font=("Roboto", 11, "italic"),
+            wraplength=760,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, padx=15, pady=(0, 10), sticky="w")
 
         # [FIX V4.4] TCH HỢP TNH NĂNG CLOSE ON REVERSE VÀO SANDBOX
         import os, json
@@ -1833,6 +1850,23 @@ class BotStrategyUI(ctk.CTkToplevel):
         ).grid(row=3, column=0, columnspan=6, padx=(0, 5), pady=(4, 0), sticky="ew")
         # -------------------------------------------------------------
 
+        effective_sl_buffer = float(risk_data.get("sl_atr_multiplier", 0.2) or 0.2)
+        scope_text = (
+            f"PHẠM VI: OVERRIDE {self.override_symbol} · "
+            f"BOT SL {risk_data.get('base_sl', 'G2')} · "
+            f"BUFFER {effective_sl_buffer:g} ATR"
+            if self.override_symbol
+            else
+            f"PHẠM VI: GLOBAL · BOT SL {risk_data.get('base_sl', 'G2')} · "
+            f"BUFFER {effective_sl_buffer:g} ATR"
+        )
+        ctk.CTkLabel(
+            self.tab_risk,
+            text=scope_text,
+            font=("Roboto", 13, "bold"),
+            text_color="#FFD54F" if not self.override_symbol else "#69F0AE",
+        ).pack(anchor="w", padx=20, pady=(6, 4))
+
         f_base = ctk.CTkFrame(self.tab_risk, fg_color="transparent")
         f_base.pack(fill="x", padx=20, pady=(5, 5))
         ctk.CTkLabel(
@@ -1859,12 +1893,42 @@ class BotStrategyUI(ctk.CTkToplevel):
         if cur_sl == "entry":
             cur_sl = "G2"
         self.var_base_sl = ctk.StringVar(value=cur_sl)
+        swing_cfg = self.brain_data.get("indicators", {}).get("swing_point", {})
+        swing_params = copy.deepcopy(swing_cfg.get("params", {})) if isinstance(swing_cfg, dict) else {}
+        swing_group_params = copy.deepcopy(swing_cfg.get("group_params", {})) if isinstance(swing_cfg, dict) else {}
+        if not isinstance(swing_params, dict):
+            swing_params = {}
+        if not isinstance(swing_group_params, dict):
+            swing_group_params = {}
+        self.swing_group_params = swing_group_params
+
+        def _effective_swing_group(raw_group):
+            group = str(raw_group or "G2").upper()
+            return "G1" if "DYNAMIC" in group else group if group in {"G0", "G1", "G2", "G3"} else "G2"
+
+        def _swing_lookback_for(raw_group):
+            group = _effective_swing_group(raw_group)
+            group_cfg = self.swing_group_params.get(group, {})
+            if not isinstance(group_cfg, dict):
+                group_cfg = {}
+            return max(
+                5,
+                min(
+                    100,
+                    int(group_cfg.get("lookback", swing_params.get("lookback", 50)) or 50),
+                ),
+            )
+
+        def _sync_swing_lookback(raw_group):
+            if hasattr(self, "var_swing_lookback"):
+                self.var_swing_lookback.set(str(_swing_lookback_for(raw_group)))
         # [NEW] Thêm Option DYNAMIC vào Base SL
         ctk.CTkComboBox(
             f_base_sl,
             values=["G0", "G1", "G2", "G3", "DYNAMIC-G1/G2"],
             variable=self.var_base_sl,
             width=140,
+            command=_sync_swing_lookback,
         ).pack(side="left", padx=15)
         ctk.CTkLabel(
             f_base_sl,
@@ -1889,6 +1953,28 @@ class BotStrategyUI(ctk.CTkToplevel):
         ctk.CTkLabel(
             f_sl_mult,
             text="Buffer cộng thêm quanh SL Sandbox.",
+            font=("Roboto", 11, "italic"),
+            text_color="#B0BEC5",
+        ).pack(side="left", padx=(0, 10))
+
+        f_swing_lookback = ctk.CTkFrame(self.tab_risk, fg_color="transparent")
+        f_swing_lookback.pack(fill="x", padx=20, pady=5)
+        ctk.CTkLabel(
+            f_swing_lookback,
+            text="SWING LOOKBACK (NẾN):",
+            font=("Roboto", 13, "bold"),
+            text_color="#FFD54F",
+        ).pack(side="left")
+        self.var_swing_lookback = ctk.StringVar(value=str(_swing_lookback_for(cur_sl)))
+        ctk.CTkEntry(
+            f_swing_lookback,
+            textvariable=self.var_swing_lookback,
+            width=80,
+            justify="center",
+        ).pack(side="left", padx=15)
+        ctk.CTkLabel(
+            f_swing_lookback,
+            text="Áp dụng cho BOT BASE SL GROUP đang chọn; 5–100 nến. VN30 G1 M15 mặc định 12.",
             font=("Roboto", 11, "italic"),
             text_color="#B0BEC5",
         ).pack(side="left", padx=(0, 10))
@@ -1935,9 +2021,22 @@ class BotStrategyUI(ctk.CTkToplevel):
             border_color="#00B8D4",
         )
         f_entry_btns.pack(fill="x", padx=20, pady=5)
+        self.bot_entry_exit_preview_only_var = ctk.BooleanVar(
+            value=bool(self._entry_exit_cfg().get("preview_only", False))
+        )
+        ctk.CTkCheckBox(
+            f_entry_btns,
+            text=(
+                "E/E CHỈ XEM — bật: chỉ xem, không chặn BOT; "
+                "tắt: BOT phải chờ Swing Retest READY"
+            ),
+            variable=self.bot_entry_exit_preview_only_var,
+            font=("Roboto", 12, "bold"),
+            text_color="#FFCA28",
+        ).pack(anchor="w", padx=12, pady=(10, 4))
         ctk.CTkLabel(
             f_entry_btns,
-            text="1. ENTRY MODE - chọn nhiều, mode READY đầu tiên sẽ vào lệnh:",
+            text="1. ENTRY MODE — mode READY đầu tiên được chọn:",
             font=("Roboto", 12, "bold"),
             text_color="#D7DCE2",
         ).pack(anchor="w", padx=12, pady=(8, 2))
@@ -1976,7 +2075,10 @@ class BotStrategyUI(ctk.CTkToplevel):
         ).pack(side="left", padx=(18, 10))
         ctk.CTkLabel(
             f_entry_btns,
-            text="Fallback R tick ở đây = R chạy sau cùng nếu các Entry mode khác chưa READY. Data Policy dùng R là đường riêng khi tactic thiếu dữ liệu.",
+            text=(
+                "Mặc định tắt: E/E là cổng vào lệnh BOT. "
+                "SL Sandbox dùng SL BOT; TP mặc định dùng Swing Retest, không dùng RR."
+            ),
             font=("Roboto", 11, "italic"),
             text_color="#B0BEC5",
             wraplength=900,
@@ -2003,7 +2105,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         ).pack(side="left", padx=(0, 12))
         ctk.CTkLabel(
             f_policy_pick,
-            text="Thiếu dữ liệu thì chặn lệnh hoặc cho R dự phòng xử lý.",
+            text="Quyết định cách xử lý khi tactic thiếu dữ liệu.",
             font=("Roboto", 11, "italic"),
             text_color="#B0BEC5",
             wraplength=820,
@@ -2030,7 +2132,10 @@ class BotStrategyUI(ctk.CTkToplevel):
         ).pack(side="left", padx=(0, 12))
         ctk.CTkLabel(
             f_sl_pick,
-            text="Entry thắng = mode đầu tiên READY theo thứ tự Retest > Struct > FIB > Pullback > R. SL Sandbox = E/E chỉ lọc entry, SL vẫn dùng rule sandbox gốc.",
+            text=(
+                "Sandbox dùng SL BOT theo mã. Retest/Struct dùng SL của tactic. "
+                "Chỉ tác động lệnh BOT khi CHỈ PREVIEW đã tắt."
+            ),
             font=("Roboto", 11, "italic"),
             text_color="#B0BEC5",
             wraplength=820,
@@ -2057,7 +2162,9 @@ class BotStrategyUI(ctk.CTkToplevel):
         ).pack(side="left", padx=(0, 12))
         ctk.CTkLabel(
             f_exit_pick,
-            text="TP theo Entry thắng = entry thắng bằng rule nào thì TP theo rule đó; nếu entry thắng là R thì TP theo RR. OFF = không đặt TP.",
+            text=(
+                "Mục tiêu theo tactic đã chọn. Khi CHỈ PREVIEW bật, đây chỉ là thông tin xem trước."
+            ),
             font=("Roboto", 11, "italic"),
             text_color="#B0BEC5",
             wraplength=820,
@@ -2297,6 +2404,40 @@ class BotStrategyUI(ctk.CTkToplevel):
                 "group_trigger_modes": dict(widgets.get("group_trigger_modes", {})),
             }
 
+        # Đây là cửa sổ cấu trúc dùng cho SL Sandbox, Entry/Exit Preview và
+        # Telegram; không tự biến SWING_POINT thành phiếu BUY/SELL.
+        swing_group = str(self.var_base_sl.get() or "G2").upper()
+        swing_groups = ["G1", "G2"] if "DYNAMIC" in swing_group else [swing_group]
+        swing_groups = [g for g in swing_groups if g in {"G0", "G1", "G2", "G3"}]
+        try:
+            swing_lookback = max(5, min(100, int(float(self.var_swing_lookback.get() or 50))))
+        except Exception:
+            swing_lookback = 50
+        swing_ind = new_inds.setdefault(
+            "swing_point",
+            {
+                "active": False,
+                "groups": ["G2"],
+                "is_trend": False,
+                "macro_role": "NONE",
+                "active_modes": ["ANY"],
+                "trigger_mode": "STRICT_CLOSE",
+                "params": {"lookback": 50, "strength": 2, "atr_buffer": 0.5},
+                "group_params": {},
+                "group_trigger_modes": {},
+            },
+        )
+        group_params = swing_ind.setdefault("group_params", {})
+        if not isinstance(group_params, dict):
+            group_params = {}
+            swing_ind["group_params"] = group_params
+        for group in swing_groups:
+            params = group_params.setdefault(group, {})
+            if not isinstance(params, dict):
+                params = {}
+                group_params[group] = params
+            params["lookback"] = swing_lookback
+
         new_check_inds = {}
         for ind_name, widgets in self.check_widgets.items():
             params = copy.deepcopy(widgets.get("params", {}))
@@ -2362,6 +2503,17 @@ class BotStrategyUI(ctk.CTkToplevel):
             "MINI_BRAIN": getattr(self, "pca_mb_cfg", {})
         }
         new_entry_exit = self._collect_entry_exit_config()
+        new_bot_safeguard = copy.deepcopy(self.brain_data.get("bot_safeguard", {}) or {})
+        exit_tactic = str(new_entry_exit.get("exit_tactic", "SWING_REJECTION") or "").upper()
+        new_bot_safeguard.update(
+            {
+                "BOT_USE_SWING_TP": exit_tactic in ("SWING_REJECTION", "SWING_STRUCTURE"),
+                "BOT_USE_RR_TP": exit_tactic == "FALLBACK_R",
+                "BOT_TP_RR_RATIO": float(
+                    new_entry_exit.get("default_exit", {}).get("tp_rr_ratio", 1.5) or 1.5
+                ),
+            }
+        )
 
         return {
             "MASTER_EVAL_MODE": self.master_eval_var.get(),
@@ -2376,6 +2528,7 @@ class BotStrategyUI(ctk.CTkToplevel):
             "indicators": new_inds,
             "check_indicators": new_check_inds,
             "entry_exit": new_entry_exit,
+            "bot_safeguard": new_bot_safeguard,
             "dca_config": new_dca,
             "pca_config": new_pca,
         }
@@ -2399,7 +2552,12 @@ class BotStrategyUI(ctk.CTkToplevel):
                 overrides = load_symbol_overrides()
                 if self.override_symbol not in overrides:
                     overrides[self.override_symbol] = {}
-                output_data["bot_safeguard"] = {
+                previous_sandbox = overrides[self.override_symbol].get("sandbox", {}) or {}
+                saved_safeguard = copy.deepcopy(
+                    previous_sandbox.get("bot_safeguard", {}) or {}
+                )
+                saved_safeguard.update(output_data.get("bot_safeguard", {}) or {})
+                saved_safeguard.update({
                     "CLOSE_ON_REVERSE": self.temp_close_rev,
                     "CLOSE_ON_REVERSE_MIN_TIME": self.temp_rev_time,
                     "REV_CONFIRM_SECONDS": self.temp_rev_confirm_seconds,
@@ -2410,11 +2568,8 @@ class BotStrategyUI(ctk.CTkToplevel):
                     "REV_CLOSE_MIN_PROFIT_UNIT": unit_from_display(self.cbo_rev_profit_unit.get()),
                     "REV_CLOSE_MAX_LOSS": money_input_from_display(self.var_rev_loss.get(), self.cbo_rev_loss_unit.get()),
                     "REV_CLOSE_MAX_LOSS_UNIT": unit_from_display(self.cbo_rev_loss_unit.get()),
-                }
-                default_exit = output_data.get("entry_exit", {}).get("default_exit", {})
-                output_data["bot_safeguard"]["BOT_USE_RR_TP"] = bool(default_exit.get("use_rr_tp", True))
-                output_data["bot_safeguard"]["BOT_TP_RR_RATIO"] = float(default_exit.get("tp_rr_ratio", 1.5))
-                output_data["bot_safeguard"]["BOT_USE_SWING_TP"] = bool(default_exit.get("use_swing_tp", False))
+                })
+                output_data["bot_safeguard"] = saved_safeguard
                 overrides[self.override_symbol]["sandbox"] = output_data
                 save_symbol_overrides(overrides)
                 self.destroy()
@@ -2449,11 +2604,6 @@ class BotStrategyUI(ctk.CTkToplevel):
             existing_data["bot_safeguard"]["REV_CLOSE_MIN_PROFIT_UNIT"] = unit_from_display(self.cbo_rev_profit_unit.get())
             existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS"] = money_input_from_display(self.var_rev_loss.get(), self.cbo_rev_loss_unit.get())
             existing_data["bot_safeguard"]["REV_CLOSE_MAX_LOSS_UNIT"] = unit_from_display(self.cbo_rev_loss_unit.get())
-            default_exit = output_data.get("entry_exit", {}).get("default_exit", {})
-            existing_data["bot_safeguard"]["BOT_USE_RR_TP"] = bool(default_exit.get("use_rr_tp", True))
-            existing_data["bot_safeguard"]["BOT_TP_RR_RATIO"] = float(default_exit.get("tp_rr_ratio", 1.5))
-            existing_data["bot_safeguard"]["BOT_USE_SWING_TP"] = bool(default_exit.get("use_swing_tp", False))
-
             from core.storage_manager import save_brain_settings
             save_brain_settings(existing_data)
 

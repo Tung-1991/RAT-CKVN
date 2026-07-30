@@ -234,17 +234,17 @@ DEFAULT_PRESET = "SCALPING"
 PRESETS = {
     "SCALPING": {
         "DESC": "Nhanh, SL ngắn",
-        "SL_PERCENT": 0.4,
+        "SL_PERCENT": 0.5,
         "TP_RR_RATIO": 1.5,
-        "RISK_PERCENT": 0.3,
-        "MANUAL_SL_MODE": "PERCENT",
-        "MANUAL_TP_MODE": "SWING_REJECTION",
-        "USE_SWING_SL": False,
-        "USE_SWING_TP": True,
-        "MANUAL_SL_GROUP": "G2",
-        "MANUAL_TP_GROUP": "G2",
-        "MANUAL_SWING_SL_GROUP": "G2",
-        "MANUAL_SWING_TP_GROUP": "G2",
+        "RISK_PERCENT": 1.0,
+        "MANUAL_SL_MODE": "SWING_REJECTION",
+        "MANUAL_TP_MODE": "FIB",
+        "USE_SWING_SL": True,
+        "USE_SWING_TP": False,
+        "MANUAL_SL_GROUP": "G1",
+        "MANUAL_TP_GROUP": "G1",
+        "MANUAL_SWING_SL_GROUP": "G1",
+        "MANUAL_SWING_TP_GROUP": "G1",
         "MANUAL_SWING_SL_ATR_MULT": 0.2,
         "MANUAL_SWING_TP_ATR_MULT": 0.2,
         "MANUAL_FIB_TP_LEVELS": "1.272,1.618,2.0",
@@ -333,6 +333,11 @@ BOT_SAFEGUARD = {
     "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
     "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5.0,
     "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
+    # Cảnh báo nhịp đi xa trong phiên, độc lập với cú sốc 5 điểm/60 giây.
+    # Sau mỗi cảnh báo detector lấy giá hiện tại làm mốc mới; cooldown vẫn theo mã + chiều.
+    "VOLATILITY_BRAKE_SESSION_ENABLED": True,
+    "VOLATILITY_BRAKE_SESSION_DERIVATIVE_POINTS": 20.0,
+    "VOLATILITY_BRAKE_SESSION_STOCK_PCT": 3.0,
     # [CKCS] Bật: lô CKCS tính theo rủi ro < 1 lô -> ép lên 1 lô chẵn (100 CP), chấp nhận rủi ro > mục tiêu %. Tắt = bỏ lệnh.
     "FORCE_MIN_LOT": False,
     # [CKCS] Cap giá trị 1 lệnh cổ phiếu cơ sở ≤ % NAV (0 = tắt). Chống SL hẹp -> lot khổng lồ, dồn vốn 1 mã.
@@ -357,6 +362,8 @@ BOT_SAFEGUARD = {
     "MANUAL_SIGNAL_LOG_ENABLE": False,
     "BOT_USE_TP": True,
     "BOT_TP_RR_RATIO": 1.5,  # [NEW] Rầu thưởng khi dùng TP theo R (fallback nếu không dùng SwingPoint)
+    "BOT_USE_SWING_TP": False,
+    "BOT_USE_RR_TP": True,
     "STRICT_MIN_LOT": False,  # [NEW V4.4] Chặn Lot < Min_Vol. LƯU Ý: van này gần như không kích hoạt được
     # (calculate_lot_size luôn clamp qty >= volume_min nên không trả 0) — RISK_GATE_MAX_PCT_* kế nhiệm vai trò này.
     "POST_CLOSE_COOLDOWN": 0,  # [NEW V4.4] Thời gian nghỉ nến sau SL (Giây)

@@ -403,7 +403,7 @@ def test_strategy_preview_blanks_votes_from_stale_strategy():
     assert scheduled == ["VN30F1M"]
 
 
-def test_strategy_entry_exit_tactics_remain_preview_only():
+def test_strategy_entry_exit_preserves_preview_toggle():
     class _Var:
         def __init__(self, value):
             self.value = value
@@ -427,9 +427,10 @@ def test_strategy_entry_exit_tactics_remain_preview_only():
         bot_entry_exit_var=_Var("TP theo Entry thắng"),
         bot_entry_exit_sl_var=_Var("SL Sandbox (không override)"),
         bot_entry_exit_missing_var=_Var("Thiếu dữ liệu -> dùng R"),
+        bot_entry_exit_preview_only_var=_Var(False),
     )
 
     cfg = ui_bot_strategy.BotStrategyUI._collect_entry_exit_config(ui)
 
     assert cfg["enabled"] is True
-    assert cfg["preview_only"] is True
+    assert cfg["preview_only"] is False

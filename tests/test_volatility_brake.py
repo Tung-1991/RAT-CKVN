@@ -19,6 +19,9 @@ def _settings(**overrides):
         "VOLATILITY_BRAKE_STOCK_PCT": 1.5,
         "VOLATILITY_BRAKE_DERIVATIVE_POINTS": 5,
         "VOLATILITY_BRAKE_CONFIRMATIONS": 2,
+        "VOLATILITY_BRAKE_SESSION_ENABLED": True,
+        "VOLATILITY_BRAKE_SESSION_DERIVATIVE_POINTS": 20,
+        "VOLATILITY_BRAKE_SESSION_STOCK_PCT": 3,
     }
     data.update(overrides)
     return data
@@ -60,6 +63,34 @@ def test_unlisted_symbol_never_triggers():
     )
     assert detector.observe("AAA", 100.0, cfg, timestamp=1000) is None
     assert detector.observe("AAA", 90.0, cfg, timestamp=1030) is None
+
+
+def test_derivative_session_move_catches_gradual_trend_missed_by_60_seconds():
+    detector = VolatilityBrakeDetector()
+    cfg = _settings(
+        VOLATILITY_BRAKE_SYMBOLS=["VN30F1M"],
+        VOLATILITY_BRAKE_CONFIRMATIONS=2,
+    )
+    assert detector.observe("VN30F1M", 1820.0, cfg, timestamp=1_000) is None
+    assert detector.observe("VN30F1M", 1824.0, cfg, timestamp=1_120) is None
+    assert detector.observe("VN30F1M", 1832.0, cfg, timestamp=1_240) is None
+    event = detector.observe("VN30F1M", 1840.0, cfg, timestamp=1_360)
+
+    assert event["movement_type"] == "SESSION"
+    assert event["direction"] == "UP"
+    assert event["change_points"] == 20.0
+    assert event["window_seconds"] == 360.0
+
+
+def test_session_anchor_resets_on_new_market_day():
+    detector = VolatilityBrakeDetector()
+    cfg = _settings(
+        VOLATILITY_BRAKE_SYMBOLS=["VN30F1M"],
+        VOLATILITY_BRAKE_CONFIRMATIONS=2,
+    )
+    assert detector.observe("VN30F1M", 1820.0, cfg, timestamp=1_000) is None
+    # Sang ngày khác không được so với giá phiên trước.
+    assert detector.observe("VN30F1M", 1850.0, cfg, timestamp=90_000) is None
 
 
 def test_invalid_action_falls_back_to_alert_only():

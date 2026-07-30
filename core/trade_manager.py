@@ -916,7 +916,9 @@ class TradeManager:
             )
             if ee_decision.get("status") != "OFF" and self._should_log_entry_exit_decision(symbol, direction, ee_decision, safeguard_cfg):
                 self.log(f"[E/E] {format_decision(ee_decision)}", target="bot-log")
-            if entry_exit_cfg.get("enabled") and not entry_exit_cfg.get("preview_only", True):
+            if entry_exit_cfg.get("enabled") and not entry_exit_cfg.get(
+                "preview_only", False
+            ):
                 if ee_decision.get("status") == "READY":
                     pending_map.pop(pending_key, None)
                     ee_sl_override = ee_decision.get("sl")
@@ -1201,7 +1203,7 @@ class TradeManager:
                 ee_decision
                 and ee_decision.get("status") == "READY"
                 and entry_exit_cfg.get("enabled")
-                and not entry_exit_cfg.get("preview_only", True)
+                and not entry_exit_cfg.get("preview_only", False)
             ):
                 ee_label = ee_decision.get("entry_tactic") or "OFF"
                 exit_label = ee_decision.get("exit_tactic")
@@ -1867,14 +1869,34 @@ class TradeManager:
                 entry_exit_cfg,
                 pending=pending,
             )
-            if (
-                entry_exit_cfg.get("enabled")
-                and not entry_exit_cfg.get("preview_only", True)
-                and ee_decision.get("status") == "READY"
+            if entry_exit_cfg.get("enabled") and not entry_exit_cfg.get(
+                "preview_only", False
             ):
-                ee_sl_override = ee_decision.get("sl")
-                ee_tp_override = ee_decision.get("tp")
-        except Exception:
+                ee_status = str(ee_decision.get("status") or "ERROR").upper()
+                if ee_status == "READY":
+                    ee_sl_override = ee_decision.get("sl")
+                    ee_tp_override = ee_decision.get("tp")
+                elif ee_status == "WAIT":
+                    return {
+                        "ok": False,
+                        "error": f"ENTRY_EXIT_WAIT|{format_decision(ee_decision)}",
+                    }
+                else:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"ENTRY_EXIT_{ee_status}|"
+                            f"{ee_decision.get('reason', 'Entry/Exit blocked')}"
+                        ),
+                    }
+        except Exception as exc:
+            if entry_exit_cfg.get("enabled") and not entry_exit_cfg.get(
+                "preview_only", False
+            ):
+                return {
+                    "ok": False,
+                    "error": f"ENTRY_EXIT_ERROR|{type(exc).__name__}",
+                }
             ee_decision = None
 
         sl_group = self._resolve_base_sl_group(
@@ -2040,7 +2062,7 @@ class TradeManager:
             ee_decision
             and ee_decision.get("status") == "READY"
             and entry_exit_cfg.get("enabled")
-            and not entry_exit_cfg.get("preview_only", True)
+            and not entry_exit_cfg.get("preview_only", False)
         ):
             entry_exit_tactic = str(ee_decision.get("entry_tactic") or "OFF")
             if ee_decision.get("exit_tactic"):
@@ -3080,7 +3102,12 @@ class TradeManager:
             if "BE_CASH" in active_modes:
                 active_modes.remove("BE_CASH")
 
-        if "BE" in active_modes:
+        # BE_SL loss-recovery is an optional guard layered on top of the normal
+        # break-even rule.  It must not replace BE when the option is disabled.
+        be_loss_enabled = "BE" in active_modes and bool(
+            tsl_cfg.get("BE_SL_LOSS_ENABLE", False)
+        )
+        if be_loss_enabled:
             acc = self.connector.get_account_info()
             balance = acc.get("balance", 0.0) if acc else 0.0
 
@@ -3469,7 +3496,9 @@ class TradeManager:
                             )
                         )
 
-        if "BE_LEGACY" in active_modes:
+        # "BE" is the public/UI tactic name.  Keep accepting BE_LEGACY for old
+        # persisted trades, but both names run the same profit-side BE rule.
+        if "BE" in active_modes or "BE_LEGACY" in active_modes:
             trig_r = tsl_cfg.get("BE_OFFSET_RR", 0.8)
             base = pos.price_open
             be_sl = (
@@ -3483,7 +3512,7 @@ class TradeManager:
 
             if curr_r >= trig_r:
                 candidates.append((be_sl, "BE_SL"))
-            else:
+            elif not (be_loss_enabled and profit_usd < 0):
                 milestones.append(
                     (abs(curr_r - trig_r), f"BE_SL Đợi {trig_p:.2f} ➔ {be_sl:.2f}")
                 )

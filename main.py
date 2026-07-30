@@ -388,7 +388,8 @@ class BotUI(ctk.CTk):
             log_cb=lambda msg, error=False: self.log_message(
                 msg, error=error, target="bot"
             ),
-            build_opportunity_plan_cb=self.build_telegram_preview_order,
+            # Gợi ý Telegram là ảnh chụp kế hoạch BOT, không đọc Manual Preset.
+            build_opportunity_plan_cb=self.trade_mgr.build_telegram_signal_order,
         )
         self.signal_listener.start()
         try:
@@ -845,7 +846,9 @@ class BotUI(ctk.CTk):
         active = [k for k, v in self.entry_exit_tactic_states.items() if v]
         non_r_active = [k for k in active if k != "FALLBACK_R"]
         entry_exit["enabled"] = bool(active)
-        entry_exit["preview_only"] = True
+        # Nút tactic ngoài màn chính chỉ bật/tắt tactic; không được tự đổi
+        # lựa chọn CHỈ PREVIEW của người dùng trong Risk & TSL.
+        entry_exit["preview_only"] = bool(entry_exit.get("preview_only", False))
         entry_exit["active_tactics"] = active
         entry_exit["entry_tactics"] = active
         if len(non_r_active) == 1:
@@ -1116,6 +1119,7 @@ class BotUI(ctk.CTk):
             self.save_settings()
         except Exception as exc:
             self.log_message(f"Save preview SL mode error: {exc}", error=True, target="manual")
+        self.update_manual_entry_exit_buttons_ui()
         self.refresh_manual_preview_tab()
 
     def on_preview_tp_mode_change(self, value):
@@ -1127,7 +1131,88 @@ class BotUI(ctk.CTk):
             self.save_settings()
         except Exception as exc:
             self.log_message(f"Save preview TP mode error: {exc}", error=True, target="manual")
+        self.update_manual_entry_exit_buttons_ui()
         self.refresh_manual_preview_tab()
+
+    def set_manual_entry_exit_quick_mode(self, mode):
+        """Select one coherent SL/TP pair for Manual Preview/Preset only."""
+        mode = str(mode or "").upper()
+        pairs = {
+            "R": ("PERCENT", "RR"),
+            "RETEST": ("SWING_REJECTION", "SWING_REJECTION"),
+            "STRUCT": ("SWING_STRUCTURE", "SWING_STRUCTURE"),
+            "FIB": ("FIB", "FIB"),
+            "PULL": ("PULLBACK", "PULLBACK"),
+        }
+        if mode not in pairs:
+            return
+
+        sl_mode, tp_mode = pairs[mode]
+        preset_cfg = config.PRESETS.setdefault(
+            getattr(config, "DEFAULT_PRESET", "SCALPING"),
+            {},
+        )
+        preset_cfg["MANUAL_SL_MODE"] = sl_mode
+        preset_cfg["MANUAL_TP_MODE"] = tp_mode
+        preset_cfg["USE_SWING_SL"] = sl_mode in (
+            "SWING_REJECTION",
+            "SWING_STRUCTURE",
+        )
+        preset_cfg["USE_SWING_TP"] = tp_mode in (
+            "SWING_REJECTION",
+            "SWING_STRUCTURE",
+        )
+
+        if hasattr(self, "var_preview_sl_mode"):
+            self.var_preview_sl_mode.set(self._manual_mode_display(sl_mode, "SL"))
+        if hasattr(self, "var_preview_tp_mode"):
+            self.var_preview_tp_mode.set(self._manual_mode_display(tp_mode, "TP"))
+        try:
+            self.save_settings()
+        except Exception as exc:
+            self.log_message(
+                f"Save manual Entry/Exit quick mode error: {exc}",
+                error=True,
+                target="manual",
+            )
+        self.update_manual_entry_exit_buttons_ui()
+        self.refresh_manual_preview_tab()
+
+    def update_manual_entry_exit_buttons_ui(self):
+        preset_cfg = config.PRESETS.get(
+            getattr(config, "DEFAULT_PRESET", "SCALPING"),
+            {},
+        )
+        sl_mode = self._manual_mode_value(
+            preset_cfg.get("MANUAL_SL_MODE", "PERCENT"),
+            "PERCENT",
+        )
+        tp_mode = self._manual_mode_value(
+            preset_cfg.get("MANUAL_TP_MODE", "RR"),
+            "RR",
+        )
+        active = {
+            "R": sl_mode == "PERCENT" and tp_mode == "RR",
+            "RETEST": sl_mode == "SWING_REJECTION" and tp_mode == "SWING_REJECTION",
+            "STRUCT": sl_mode == "SWING_STRUCTURE" and tp_mode == "SWING_STRUCTURE",
+            "FIB": sl_mode == "FIB" and tp_mode == "FIB",
+            "PULL": sl_mode == "PULLBACK" and tp_mode == "PULLBACK",
+        }
+        buttons = {
+            "R": getattr(self, "btn_manual_entry_r", None),
+            "RETEST": getattr(self, "btn_manual_entry_retest", None),
+            "STRUCT": getattr(self, "btn_manual_entry_struct", None),
+            "FIB": getattr(self, "btn_manual_entry_fib", None),
+            "PULL": getattr(self, "btn_manual_entry_pull", None),
+        }
+        for name, button in buttons.items():
+            if button is None:
+                continue
+            enabled = active[name]
+            button.configure(
+                fg_color=COL_BLUE_ACCENT if enabled else COL_GRAY_BTN,
+                hover_color=COL_BLUE_ACCENT_HOVER if enabled else "#616161",
+            )
 
     def on_manual_trade_mode_change(self, value):
         # Vẫn cho XEM cả 3 mode, nhưng ngoài phiên đấu giá thì KHÔNG cho dùng ATO/ATC
@@ -1382,7 +1467,8 @@ class BotUI(ctk.CTk):
         mode = str((params or {}).get(mode_key, "") or "").upper()
         if mode:
             if "SANDBOX" in mode:
-                return "SANDBOX"
+                # Gói preset cũ: chuyển về Swing Retest riêng của lệnh tay.
+                return "SWING_REJECTION"
             if mode in ("SWING_REJECTION", "SWING_RETEST", "RETEST"):
                 return "SWING_REJECTION"
             if mode in ("SWING_STRUCTURE", "SWING_STRUCT", "STRUCT"):
@@ -1406,7 +1492,7 @@ class BotUI(ctk.CTk):
         mode = str(mode or "").upper()
         mapping = {
             "PERCENT": "Percent",
-            "SANDBOX": "SL Sandbox",
+            "SANDBOX": "Swing Retest",
             "RR": "RR",
             "OFF": "OFF",
             "NO_TP": "OFF",
@@ -1430,7 +1516,7 @@ class BotUI(ctk.CTk):
         if "STRUCT" in mode:
             return "SWING_STRUCTURE"
         if "SANDBOX" in mode:
-            return "SANDBOX"
+            return "SWING_REJECTION"
         if "RETEST" in mode:
             return "SWING_REJECTION"
         if "FIB" in mode:
@@ -1455,7 +1541,7 @@ class BotUI(ctk.CTk):
         if upper == "MANUAL_TP":
             return "Manual Input"
         if upper.startswith("SANDBOX") or upper.startswith("MANUAL_SANDBOX"):
-            return "SL Sandbox"
+            return "Swing Retest"
         if "SWING_RETEST" in upper or "SWING_REJECTION" in upper:
             return "Swing Retest"
         if "SWING_STRUCTURE" in upper:
@@ -1756,14 +1842,16 @@ class BotUI(ctk.CTk):
         preset_name,
         context,
         manual_values=None,
+        *,
+        tick=None,
+        sym_info=None,
+        account=None,
     ):
         params = config.PRESETS.get(
             preset_name,
             next(iter(config.PRESETS.values()), {"SL_PERCENT": 0.5, "TP_RR_RATIO": 1.5, "RISK_PERCENT": 0.3}),
         )
         context = context or {}
-        tick = None
-        sym_info = None
         if tick is None and context and ("current_price" in context or "bid" in context):
             bid_val = float(context.get("bid", context.get("current_price", 0)))
             ask_val = float(context.get("ask", context.get("current_price", 0)))
@@ -2002,11 +2090,8 @@ class BotUI(ctk.CTk):
                 tp_target_sources = ["S", None, None]
                 tp_source = f"MANUAL_{'SWING_STRUCTURE' if tp_mode == 'SWING_STRUCTURE' else 'SWING_RETEST'}:{tp_group}"
             else:
-                tp_targets = list(rr_targets)
-                tp_target_sources = ["R", "R", "R"]
-                tp_target_multipliers = list(rr_levels)
-                tp_price = tp_targets[0]
-                tp_source = f"{rr:g}R"
+                tp_price = 0.0
+                tp_source = f"MANUAL_SWING_MISSING:{tp_group}"
         elif tp_mode == "FIB":
             tp_atr_key = f"atr_{tp_group}"
             tp_low_key = f"swing_low_{tp_group}"
@@ -2022,11 +2107,8 @@ class BotUI(ctk.CTk):
                 tp_price = tp_targets[0]
                 tp_source = f"MANUAL_FIB:{tp_group}"
             else:
-                tp_targets = list(rr_targets)
-                tp_target_sources = ["R", "R", "R"]
-                tp_target_multipliers = list(rr_levels)
-                tp_price = tp_targets[0]
-                tp_source = f"{rr:g}R"
+                tp_price = 0.0
+                tp_source = f"MANUAL_FIB_MISSING:{tp_group}"
         elif tp_mode == "PULLBACK":
             zone, pull_atr, pull_src = self._pullback_zone_from_context(direction, context, tp_group, params)
             mult = float(params.get("MANUAL_PULLBACK_TP_ATR_MULT", 1.5) or 1.5)
@@ -2043,11 +2125,8 @@ class BotUI(ctk.CTk):
                 tp_price = tp_targets[0]
                 tp_source = f"MANUAL_{pull_src}:{tp_group}"
             else:
-                tp_targets = list(rr_targets)
-                tp_target_sources = ["R", "R", "R"]
-                tp_target_multipliers = list(rr_levels)
-                tp_price = tp_targets[0]
-                tp_source = f"{rr:g}R"
+                tp_price = 0.0
+                tp_source = f"MANUAL_PULLBACK_MISSING:{tp_group}"
         else:
             tp_targets = list(rr_targets)
             tp_target_sources = ["R", "R", "R"]
@@ -2055,9 +2134,8 @@ class BotUI(ctk.CTk):
             tp_price = tp_targets[0]
             tp_source = f"{rr:g}R"
 
-        # Một ladder FIB phải đầy đủ, đúng chiều và đúng thứ tự. Nếu bất kỳ
-        # mức nào hỏng thì fallback toàn bộ sang R để không trộn một ladder
-        # FIB rất xa với một mốc R nằm ngược thứ tự.
+        # FIB chỉ dùng mức FIB thật. Thiếu/sai dữ liệu thì Preview báo chưa sẵn
+        # sàng; không tự đổi sang RR.
         if tp_mode == "FIB":
             fib_ladder_ok = len(tp_targets) >= 3 and all(
                 value is not None for value in tp_targets[:3]
@@ -2073,15 +2151,14 @@ class BotUI(ctk.CTk):
                         fib_ladder_ok = False
                         break
             if not fib_ladder_ok:
-                tp_targets = list(rr_targets)
-                tp_target_sources = ["R", "R", "R"]
-                tp_target_multipliers = list(rr_levels)
-                tp_price = tp_targets[0]
-                tp_source = f"{rr:g}R"
+                tp_targets = [None, None, None]
+                tp_target_sources = [None, None, None]
+                tp_target_multipliers = [None, None, None]
+                tp_price = 0.0
+                tp_source = f"MANUAL_FIB_MISSING:{tp_group}"
 
-        # TP2/TP3 chỉ là mốc hiển thị. Với mode không phải RR, ưu tiên
-        # Fibonacci extension thật; thiếu/sai chiều mới dùng mốc R tương ứng.
-        # TP1 vẫn là mức TP thực tế do mode đã chọn quyết định.
+        # TP2/TP3 chỉ là mốc hiển thị. Với mode kỹ thuật, chỉ bổ sung FIB thật;
+        # RR chỉ xuất hiện khi người dùng chủ động chọn mode RR.
         if tp_mode != "OFF":
             fib_values = [] if tp_mode == "RR" else _fib_candidates()
             used_fib = set()
@@ -2114,7 +2191,7 @@ class BotUI(ctk.CTk):
                         used_fib.add(key)
                         break
 
-                if replacement is None:
+                if replacement is None and tp_mode == "RR":
                     for rr_index in range(index, len(rr_targets)):
                         rr_value = rr_targets[rr_index]
                         if (
@@ -2135,7 +2212,8 @@ class BotUI(ctk.CTk):
                     tp_source = f"{multiplier:g}R"
 
         order_type = 0 if direction == "BUY" else 1
-        account = self.connector.get_account_info() if self.connector else None
+        if account is None:
+            account = self.connector.get_account_info() if self.connector else None
         equity = float((account or {}).get("equity", (account or {}).get("balance", 0.0)) or 0.0)
         risk_pct = float(params.get("RISK_PERCENT", 0.3) or 0.3)
         brain = self.trade_mgr._get_brain_settings(symbol)
@@ -2264,7 +2342,11 @@ class BotUI(ctk.CTk):
         )
         rr_actual = reward_usd / risk_usd if risk_usd > 0 else 0.0
         valid_sl = (direction == "BUY" and sl_price < price) or (direction == "SELL" and sl_price > price)
-        valid_tp = tp_price <= 0 or (direction == "BUY" and tp_price > price) or (direction == "SELL" and tp_price < price)
+        valid_tp = (
+            tp_mode == "OFF"
+            or (tp_price > 0 and direction == "BUY" and tp_price > price)
+            or (tp_price > 0 and direction == "SELL" and tp_price < price)
+        )
 
         return {
             "ready": bool(valid_sl and valid_tp and lot_size > 0),
@@ -2314,7 +2396,7 @@ class BotUI(ctk.CTk):
         }
 
     def build_telegram_preview_order(self, symbol, side, context=None, market_mode="ANY"):
-        """Rút gọn chính Manual Preview cho gợi ý daemon; không đặt lệnh."""
+        """Rút gọn Manual Preview/Preset; không đọc E/E BOT và không đặt lệnh."""
         symbol = str(symbol or "").strip().upper()
         side = str(side or "").strip().upper()
         if not symbol or side not in {"BUY", "SELL"}:
@@ -2429,29 +2511,6 @@ class BotUI(ctk.CTk):
                 "preview_version": 4,
             }
 
-        entry_zone = None
-        entry_status = "OFF"
-        entry_tactic = "OFF"
-        try:
-            ee_cfg = self._manual_preview_entry_exit_cfg(
-                (brain or {}).get("entry_exit", {}) or {}
-            )
-            ee_decision = self._preview_entry_exit_decision(
-                symbol, side, current_price, context, ee_cfg
-            )
-            zone_decision = self._entry_zone_decision(ee_decision)
-            raw_zone = (zone_decision or {}).get("entry_zone")
-            if raw_zone and len(raw_zone) >= 2:
-                lo, hi = float(raw_zone[0]), float(raw_zone[1])
-                if lo > 0 and hi > 0:
-                    entry_zone = [min(lo, hi), max(lo, hi)]
-            entry_status = str((ee_decision or {}).get("status") or "OFF").upper()
-            entry_tactic = str(
-                (zone_decision or ee_decision or {}).get("entry_tactic") or "OFF"
-            ).upper()
-        except Exception:
-            # E/E chỉ là lớp quan sát; thiếu dữ liệu E/E không được làm mất gợi ý.
-            pass
         return {
             "ok": True,
             "preview_source": True,
@@ -2461,9 +2520,9 @@ class BotUI(ctk.CTk):
             "price": current_price,
             "current_price": current_price,
             "entry_price": current_price,
-            "entry_zone": entry_zone,
-            "entry_status": entry_status,
-            "entry_tactic": entry_tactic,
+            "entry_zone": None,
+            "entry_status": "MANUAL",
+            "entry_tactic": "PRESET",
             "lot": float(setup.get("lot", 0.0) or 0.0),
             "display_quantity": display_quantity,
             "quantity_unit": "CP" if is_stock else "HĐ",
@@ -2751,31 +2810,16 @@ class BotUI(ctk.CTk):
         setup["timeframe"] = self._symbol_group_timeframe(symbol, group, context)
         status = "READY" if setup.get("ready") and mode == "NORMAL" else "BLOCK" if mode != "NORMAL" else "WAIT"
         mode_note = "NORMAL manual only" if mode != "NORMAL" else setup.get("reason", "OK")
-        brain = self.trade_mgr._get_brain_settings(symbol)
-        ee_cfg = self._manual_preview_entry_exit_cfg(brain.get("entry_exit", {}) or {})
-        try:
-            from core.entry_exit_engine import format_decision
-
-            ee_decision = self._preview_entry_exit_decision(symbol, direction, setup.get("price", 0.0), context, ee_cfg)
-            ee_txt = format_decision(ee_decision)
-            self.latest_entry_exit_decisions[symbol] = ee_decision
-        except Exception as exc:
-            ee_decision = {}
-            ee_txt = f"E/E: ERROR {exc}"
-        pull_note = self._explain_pullback_data(context, ee_cfg)
         tsl_line1, tsl_line2 = self._build_tsl_preview_lines(setup, context)
         tp_targets = list(setup.get("tp_targets") or [setup.get("tp"), None, None])
         tp_targets = tp_targets[:3] + [None] * max(0, 3 - len(tp_targets))
         tp_ladder_source = setup.get("tp_source_label", setup.get("tp_source", "--"))
         setup["tp_targets"] = tp_targets
         setup["tp_ladder_source"] = tp_ladder_source
-        zone_decision = self._entry_zone_decision(ee_decision)
-        setup["ee_status"] = (ee_decision or {}).get("status", "OFF")
-        setup["ee_gate"] = self._format_ee_gate(zone_decision or ee_decision, setup.get("price", 0.0))
-        setup["entry_zone"] = self._fmt_zone((zone_decision or {}).get("entry_zone"))
-        if setup["entry_zone"] == "--" and str((zone_decision or ee_decision or {}).get("entry_tactic", "")).upper() == "FALLBACK_R":
-            setup["entry_zone"] = "Market"
-        setup["ee_reason"] = (ee_decision or {}).get("reason", "")
+        setup["ee_status"] = "MANUAL"
+        setup["ee_gate"] = f"Preset {preset}"
+        setup["entry_zone"] = "Giá nhập tay / giá live"
+        setup["ee_reason"] = "Manual Preview không dùng cổng E/E của BOT"
         signal_text = "NONE" if latest_signal == 0 else "BUY" if latest_signal > 0 else "SELL"
         trend_bias = "BUY" if trend == "UP" else "SELL" if trend == "DOWN" else "NONE"
         if trend_bias == "NONE":
@@ -2784,7 +2828,6 @@ class BotUI(ctk.CTk):
             trend_kind = "good"
         else:
             trend_kind = "danger"
-        ee_kind = "danger" if setup["ee_status"] == "ERROR" else "warn" if setup["ee_status"] in ("WAIT", "OFF") or "fallback" in ee_txt.lower() else "good"
         tsl_kind = "warn" if "thiếu" in tsl_line2.lower() or "missing" in tsl_line2.lower() else "good"
         manual_sl_group = setup.get("manual_sl_group", setup.get("group", "--"))
         manual_tp_group = setup.get("manual_tp_group", "--")
@@ -2805,7 +2848,7 @@ class BotUI(ctk.CTk):
             self._make_preview_chip("Trend", f"Signal {signal_text} | {self._group_tf_label(group, symbol, context)} {trend} | {market_mode}", trend_kind),
             self._make_preview_chip("ATR", f"SL {manual_sl_label}={self._fmt_price(setup.get('atr'))} | TP {manual_tp_label}", "info"),
             self._make_preview_chip("TSL", tsl_line1.replace("TSL: ", ""), tsl_kind),
-            self._make_preview_chip("Entry Filter", setup.get("ee_gate", ee_txt.replace("E/E: ", "")), ee_kind),
+            self._make_preview_chip("Preset", f"{preset} · không dùng E/E BOT", "info"),
         ]
         if setup.get("margin_enabled"):
             snap = setup.get("margin_snapshot", {}) or {}
@@ -2814,8 +2857,6 @@ class BotUI(ctk.CTk):
             margin_txt = f"{setup.get('risk_base', 'EQUITY_NAV')} | RTT {rtt_txt}"
             margin_kind = "warn" if rtt is None else "good"
             setup["chips"] = [self._make_preview_chip("Margin", margin_txt, margin_kind)] + setup["chips"][:3]
-        if pull_note:
-            setup["chips"][-1] = self._make_preview_chip("Entry Data", pull_note.replace("Pullback thiếu data", "Missing pullback data").strip(" |"), "warn")
         fallback_notes = self._preview_rule_notes(setup)
         if fallback_notes:
             setup["chips"] = (fallback_notes + setup["chips"])[:4]
@@ -4693,49 +4734,42 @@ class BotUI(ctk.CTk):
                 mlot, me, msl, mtp = 0.0, 0.0, 0.0
             entry_calc_price = me if me > 0 else cur_price
 
-            p_sl, active_sl_dist, sl_label, sl_missing = self._resolve_manual_sl_price(
-                sym, d, entry_calc_price, params, sym_ctx, msl
+            # Dùng đúng một bộ giải mức giá cho Dashboard, Preview và Telegram.
+            # Trước đây Dashboard đọc nhánh USE_SWING_TP cũ nên có thể hiện
+            # TARGET LỖI trong khi bộ Preview chuẩn đã có Swing/FIB/R hợp lệ.
+            preview_info = SimpleNamespace(
+                trade_contract_size=c_size,
+                volume_min=vol_min,
+                volume_max=vol_max,
+                volume_step=vol_step,
+                point=point,
             )
-            if sl_missing or active_sl_dist <= 0:
-                active_sl_dist = entry_calc_price * (params["SL_PERCENT"] / 100)
-                p_sl = (entry_calc_price - active_sl_dist) if d == "BUY" else (entry_calc_price + active_sl_dist)
-                sl_label = f"PERCENT:{sl_pct_display}%"
-            def resolve_manual_group(key):
-                group = str(params.get(key, "G2") or "G2")
-                if "DYNAMIC" in group:
-                    market_mode = sym_ctx.get("market_mode", "ANY") if sym_ctx else "ANY"
-                    return "G1" if market_mode in ["TREND", "BREAKOUT"] else "G2"
-                return group
-
-            # 2. XÁC ĐỊNH LỢI NHUẬN MỤC TIÊU (TP)
-            use_swing_tp = params.get("USE_SWING_TP", False)
-            p_tp_tech = 0
-            if use_swing_tp and sym_ctx:
-                tp_group = resolve_manual_group("MANUAL_SWING_TP_GROUP")
-                
-                sh = sym_ctx.get(f"swing_high_{tp_group}")
-                sl_val = sym_ctx.get(f"swing_low_{tp_group}")
-                atr_val = sym_ctx.get(f"atr_{tp_group}")
-                
-                if sh and sl_val and atr_val:
-                    tp_mult = float(params.get("MANUAL_SWING_TP_ATR_MULT", params.get("MANUAL_SWING_SL_ATR_MULT", getattr(config, "sl_atr_multiplier", 0.2))))
-                    buffer = atr_val * tp_mult
-                    p_tp_tech = (sh - buffer) if d == "BUY" else (sl_val + buffer)
-
-            if mtp > 0:
-                p_tp = mtp
-                tp_label = "MANUAL"
-                swing_tp_missing = False
-            elif use_swing_tp:
-                p_tp = p_tp_tech
-                tp_label = "SWING"
-                swing_tp_missing = p_tp_tech <= 0
-            else:
-                p_tp = (
-                    entry_calc_price + (active_sl_dist * params["TP_RR_RATIO"]) if d == "BUY" else entry_calc_price - (active_sl_dist * params["TP_RR_RATIO"])
-                )
-                tp_label = f"{tp_r_display}R"
-                swing_tp_missing = False
+            preview_setup = self._resolve_manual_setup_preview(
+                sym,
+                d,
+                preset,
+                sym_ctx,
+                manual_values={
+                    "entry": me,
+                    "lot": mlot,
+                    "sl": msl,
+                    "tp": mtp,
+                },
+                tick=tick,
+                sym_info=preview_info,
+                account=acc,
+            )
+            p_sl = self._safe_float(preview_setup.get("sl"), 0.0)
+            p_tp = self._safe_float(preview_setup.get("tp"), 0.0)
+            active_sl_dist = abs(entry_calc_price - p_sl)
+            sl_label = str(preview_setup.get("sl_source") or "PERCENT")
+            tp_label = str(
+                preview_setup.get("tp_source_label")
+                or preview_setup.get("tp_source")
+                or "--"
+            )
+            sl_missing = p_sl <= 0
+            swing_tp_missing = p_tp <= 0
 
             # [SANDBOX-FETCH] Preset đòi SL kỹ thuật mà đang phải fallback Percent -> báo rõ (màu cam)
             _req_sl_mode = self._manual_rule_mode(params, "MANUAL_SL_MODE", "USE_SWING_SL", "PERCENT")
@@ -4790,7 +4824,7 @@ class BotUI(ctk.CTk):
                 strict_fee = 0.0
                 if params.get("STRICT_RISK", False):
                     comm_rate = self.calculate_round_trip_trade_fee(
-                        sym, entry_calc_price, sl_price, 1, d
+                        sym, entry_calc_price, p_sl, 1, d
                     )
                     spread_cost_per_lot = (tick.ask - tick.bid) * c_size
                     strict_fee = comm_rate + spread_cost_per_lot
@@ -5109,8 +5143,8 @@ class BotUI(ctk.CTk):
                 setup = item.get("order_setup", {}) if isinstance(item.get("order_setup"), dict) else {}
                 if (
                     not setup
-                    or not setup.get("preview_source")
-                    or self._safe_float(setup.get("preview_version", 0), 0.0) < 4
+                    or str(setup.get("plan_source") or "").upper() != "BOT"
+                    or self._safe_float(setup.get("plan_version", 0), 0.0) < 1
                 ):
                     legacy_opportunities.append(item)
                 setup_ok = bool(setup.get("ok"))
@@ -5179,12 +5213,17 @@ class BotUI(ctk.CTk):
                             symbol = str(legacy.get("symbol", "") or "").upper()
                             side = str(legacy.get("side", "BUY") or "BUY").upper()
                             context = legacy.get("context", {}) if isinstance(legacy.get("context"), dict) else {}
-                            setup = self.build_telegram_preview_order(
+                            setup = self.trade_mgr.build_telegram_signal_order(
                                 symbol,
                                 side,
                                 context=context,
                                 market_mode=str(legacy.get("market_mode", "ANY") or "ANY"),
                             )
+                            if not isinstance(setup, dict):
+                                setup = {"ok": False, "error": "BOT_PLAN_INVALID_RESULT"}
+                            setup = dict(setup)
+                            setup["plan_source"] = "BOT"
+                            setup["plan_version"] = 1
                             signal_opportunities.update_active(
                                 legacy.get("id"),
                                 order_setup=setup,

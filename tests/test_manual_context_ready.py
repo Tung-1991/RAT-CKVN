@@ -102,27 +102,26 @@ def test_sl_and_tp_different_groups_both_required():
 SANDBOX_PARAMS = {"MANUAL_SL_MODE": "SANDBOX", "MANUAL_SL_GROUP": "G2", "SL_PERCENT": 0.5}
 
 
-def test_sandbox_sl_valid_side_buy():
+def test_legacy_sandbox_sl_is_migrated_to_manual_swing_buy():
     # Giá 33.95, swing low 33.30, atr 0.5, buffer 0.2 -> SL 33.20 < giá: hợp lệ
     ctx = {"atr_G2": 0.5, "swing_low_G2": 33.30, "swing_high_G2": 34.50}
     sl, dist, label, missing = APP._resolve_manual_sl_price(
         "CTG", "BUY", 33.95, SANDBOX_PARAMS, ctx
     )
-    assert label.startswith("SANDBOX")
+    assert label.startswith("SWING")
     assert missing is False
     assert sl < 33.95 and abs(sl - 33.20) < 1e-9
 
 
-def test_sandbox_sl_wrong_side_buy_falls_back_percent():
+def test_legacy_sandbox_wrong_side_reports_missing_without_percent_fallback():
     # Giá đã thủng đáy swing 15m: swing low 34.27 > giá 33.95 -> SL 34.17 nằm TRÊN giá
     # -> guard đẩy về Percent thay vì trả SL vô nghĩa + distance hẹp giả.
     ctx = {"atr_G2": 0.5, "swing_low_G2": 34.27, "swing_high_G2": 35.00}
     sl, dist, label, missing = APP._resolve_manual_sl_price(
         "CTG", "BUY", 33.95, SANDBOX_PARAMS, ctx
     )
-    assert label.startswith("PERCENT")
-    assert sl < 33.95  # SL percent luôn dưới giá cho BUY
-    assert abs(dist - 33.95 * 0.005) < 1e-9
+    assert label == "SWING_REJECTION:MISSING"
+    assert missing is True
 
 
 def test_swing_sl_wrong_side_buy_reports_missing():
@@ -160,7 +159,7 @@ class OverrideShim(Shim):
 OVERRIDE_APP = OverrideShim()
 
 
-def test_sandbox_symbol_base_sl_overrides_global_preset_group():
+def test_legacy_sandbox_keeps_manual_group_not_bot_symbol_override():
     params = {
         "MANUAL_SL_MODE": "SANDBOX",
         "MANUAL_SL_GROUP": "G0",
@@ -181,15 +180,20 @@ def test_sandbox_symbol_base_sl_overrides_global_preset_group():
         params,
         context,
     )
-    assert label == "SANDBOX:G1"
+    assert label == "SWING:G0"
     assert missing is False
-    assert sl == 1814.6
+    assert sl == 1698.0
 
 
-def test_context_readiness_uses_symbol_base_sl_group():
+def test_context_readiness_uses_manual_preset_group_not_bot_group():
     params = {"MANUAL_SL_MODE": "SANDBOX", "MANUAL_SL_GROUP": "G0"}
     assert OVERRIDE_APP._manual_context_ready(
         params,
         CTX_G1_FULL,
+        "VN30F1M",
+    ) is False
+    assert OVERRIDE_APP._manual_context_ready(
+        params,
+        {"atr_G0": 1.0, "swing_low_G0": 10.0, "swing_high_G0": 12.0},
         "VN30F1M",
     ) is True

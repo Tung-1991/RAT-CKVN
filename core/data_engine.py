@@ -512,14 +512,42 @@ class DataEngine:
         except:
             return safe_fallback
 
-    def _calc_swings(self, df, lookback=10):
+    def _calc_swings(self, df, lookback=10, strength=2):
         if df.empty: return 0.0, 0.0
         try:
-            if len(df) < lookback: return float(df['high'].max()), float(df['low'].min())
-            recent_df = df.tail(lookback)
-            sh, sl = float(recent_df['high'].max()), float(recent_df['low'].min())
+            lookback = max(int(lookback or 10), 5)
+            strength = max(int(strength or 2), 1)
+            recent_df = df.tail(max(lookback, strength * 2 + 1))
+            highs = [float(value) for value in recent_df["high"].values]
+            lows = [float(value) for value in recent_df["low"].values]
+
+            # "Swing" phải là pivot đã xác nhận gần nhất, không phải đỉnh/đáy
+            # tuyệt đối của cả cửa sổ. Cách cũ lấy max/min 50 nến làm SL/TP
+            # intraday phình ra nhiều phiên và không còn đúng nghĩa Swing Retest.
+            sh = None
+            sl = None
+            for idx in range(len(recent_df) - strength - 1, strength - 1, -1):
+                if sh is None:
+                    left = highs[idx - strength:idx]
+                    right = highs[idx + 1:idx + strength + 1]
+                    if left and right and all(highs[idx] > value for value in left + right):
+                        sh = highs[idx]
+                if sl is None:
+                    left = lows[idx - strength:idx]
+                    right = lows[idx + 1:idx + strength + 1]
+                    if left and right and all(lows[idx] < value for value in left + right):
+                        sl = lows[idx]
+                if sh is not None and sl is not None:
+                    break
+
+            # Cửa sổ quá thẳng có thể chưa tạo đủ pivot; khi đó mới fallback
+            # về biên gần nhất của chính cửa sổ đã cấu hình.
+            if sh is None:
+                sh = float(recent_df["high"].max())
+            if sl is None:
+                sl = float(recent_df["low"].min())
             if pd.isna(sh) or pd.isna(sl): return float(df['high'].iloc[-1]), float(df['low'].iloc[-1])
-            return sh, sl
+            return float(sh), float(sl)
         except:
             current_close = float(df['close'].iloc[-1])
             return current_close * 1.001, current_close * 0.999 
@@ -596,18 +624,35 @@ class DataEngine:
             pass
 
         # [FIX V4.4] Đồng bộ thông số Lookback/Period với cấu hình Indicator thay vì hardcode
-        swing_lookback = int(inds_config.get("swing_point", {}).get("params", {}).get("lookback", 50))
-        swing_strength = int(inds_config.get("swing_point", {}).get("params", {}).get("strength", 2))
+        swing_cfg = inds_config.get("swing_point", {})
+        swing_params = swing_cfg.get("params", {}) if isinstance(swing_cfg, dict) else {}
+        swing_group_params = swing_cfg.get("group_params", {}) if isinstance(swing_cfg, dict) else {}
+        if not isinstance(swing_params, dict):
+            swing_params = {}
+        if not isinstance(swing_group_params, dict):
+            swing_group_params = {}
         atr_period = int(inds_config.get("atr", {}).get("params", {}).get("period", 14))
 
         for grp in ["G0", "G1", "G2", "G3"]:
             df_grp = dfs[grp]
-            sh, sl = self._calc_swings(df_grp, lookback=swing_lookback)
+            resolved_swing_params = dict(swing_params)
+            group_override = swing_group_params.get(grp, {})
+            if isinstance(group_override, dict):
+                resolved_swing_params.update(group_override)
+            swing_lookback = max(int(resolved_swing_params.get("lookback", 50) or 50), 5)
+            swing_strength = max(int(resolved_swing_params.get("strength", 2) or 2), 1)
+            sh, sl = self._calc_swings(
+                df_grp,
+                lookback=swing_lookback,
+                strength=swing_strength,
+            )
             atr = self._calc_atr(df_grp, period=atr_period)
             
             context[f"swing_high_{grp}"] = float(sh)
             context[f"swing_low_{grp}"] = float(sl)
             context[f"atr_{grp}"] = float(atr)
+            context[f"swing_lookback_{grp}"] = int(swing_lookback)
+            context[f"swing_strength_{grp}"] = int(swing_strength)
             try:
                 ema20 = df_grp["close"].ewm(span=20, adjust=False).mean().iloc[-1]
                 context[f"ema20_{grp}"] = float(ema20)

@@ -628,10 +628,14 @@ class StandaloneBotDaemon:
                 if event.get("threshold_unit") == "POINTS"
                 else f"{event.get('change_pct', 0.0):+.2f}%"
             )
+            movement_window = (
+                "trong phiên"
+                if str(event.get("movement_type") or "").upper() == "SESSION"
+                else f"trong {event.get('window_seconds', 0.0):.0f} giây"
+            )
             message = (
                 "⚠️ CẢNH BÁO BIẾN ĐỘNG\n"
-                f"{event.get('symbol')} {direction} {unit_value} trong "
-                f"{event.get('window_seconds', 0.0):.0f} giây\n"
+                f"{event.get('symbol')} {direction} {unit_value} {movement_window}\n"
                 f"Hành động: {self._volatility_action_label(action)}"
             )
             if action == "CLOSE_ALL":

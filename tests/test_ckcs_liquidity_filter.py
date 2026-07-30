@@ -81,7 +81,7 @@ def test_telegram_ckcs_uses_liquidity_gate(monkeypatch):
 
 def test_schedule_liquidity_defaults_and_validation():
     defaults = schedule_settings.normalize({})
-    assert defaults["ckcs_liquidity_filter_enabled"] is True
+    assert defaults["ckcs_liquidity_filter_enabled"] is False
     assert defaults["ckcs_liquidity_sessions"] == 60
     assert defaults["ckcs_liquidity_min_billion"] == 10.0
 

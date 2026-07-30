@@ -9,16 +9,18 @@ ENTRY_ORDER = ["SWING_REJECTION", "SWING_STRUCTURE", "FIB_RETRACE", "PULLBACK_ZO
 
 def default_entry_exit_config():
     return {
+        # Engine thuần không tự bật E/E khi caller không truyền cấu hình.
+        # Storage/UI mới là nơi quyết định mặc định BOT đang bật hay tắt.
         "enabled": False,
-        "preview_only": True,
-        "active_tactics": [],
+        "preview_only": False,
+        "active_tactics": ["SWING_REJECTION"],
         "entry_tactics": ["SWING_REJECTION"],
-        "exit_tactic": "AUTO",
+        "exit_tactic": "FALLBACK_R",
         "sl_mode": "SANDBOX",
-        "fallback_tactic": "FALLBACK_R",
+        "fallback_tactic": "OFF",
         "signal_ttl_seconds": 900,
-        "missing_data_policy": "FALLBACK_R",
-        "tp_policy": "FALLBACK_R",
+        "missing_data_policy": "BLOCK",
+        "tp_policy": "TACTIC_FIRST",
         "sl_source_group": "BASE_SL",
         "default_exit": {
             "use_rr_tp": True,
@@ -412,28 +414,76 @@ def _apply_exit(decision, price, context, cfg):
         exit_tactic = _auto_exit_tactic(decision.get("entry_tactic"))
     decision["exit_tactic"] = exit_tactic
     if exit_tactic == "FIB_RETRACE":
-        tp = _fib_tp(decision.get("direction"), context, cfg)
-        if tp:
-            decision["tp"] = tp
-            decision["tp_source"] = "FIB"
-        else:
-            _apply_r_tp(decision, price, cfg)
+        _apply_tactic_tp(decision, price, _fib_tp(decision.get("direction"), context, cfg), "FIB", cfg)
     elif exit_tactic in ("SWING_REJECTION", "SWING_STRUCTURE"):
-        tp = _swing_tp(decision.get("direction"), context, cfg)
-        if tp:
-            decision["tp"] = tp
-            decision["tp_source"] = "SWING"
-        else:
-            _apply_r_tp(decision, price, cfg)
+        _apply_tactic_tp(
+            decision,
+            price,
+            _swing_tp(
+                decision.get("direction"),
+                context,
+                cfg,
+                exit_tactic=exit_tactic,
+            ),
+            "SWING",
+            cfg,
+        )
     elif exit_tactic == "PULLBACK_ZONE":
-        tp = _pullback_tp(decision.get("direction"), price, context, cfg)
-        if tp:
-            decision["tp"] = tp
-            decision["tp_source"] = "PULLBACK"
-        else:
-            _apply_r_tp(decision, price, cfg)
-    else:
+        _apply_tactic_tp(
+            decision,
+            price,
+            _pullback_tp(decision.get("direction"), price, context, cfg),
+            "PULLBACK",
+            cfg,
+        )
+    elif exit_tactic == "FALLBACK_R":
         _apply_r_tp(decision, price, cfg)
+        if not _valid_tp_direction(decision.get("direction"), price, decision.get("tp")):
+            # SL SANDBOX được BOT tính sau khi E/E READY; lúc này engine chưa
+            # có khoảng R để dựng TP. Giữ READY và để BOT policy hoàn thiện TP.
+            if decision.get("sl_source") == "SANDBOX":
+                decision["tp"] = None
+                decision["tp_source"] = "R:PENDING_SANDBOX_SL"
+            else:
+                _mark_missing_tp(decision, "R")
+    else:
+        _mark_missing_tp(decision, str(exit_tactic or "TP"))
+
+
+def _apply_tactic_tp(decision, price, tp, source, cfg):
+    """Dùng đúng TP của tactic; chỉ về R khi người dùng chủ động cho phép."""
+    if _valid_tp_direction(decision.get("direction"), price, tp):
+        decision["tp"] = float(tp)
+        decision["tp_source"] = source
+        return
+    allow_r = _allow_missing_fallback(cfg) and bool(
+        cfg.get("default_exit", {}).get("use_rr_tp", False)
+    )
+    if allow_r:
+        _apply_r_tp(decision, price, cfg)
+        if _valid_tp_direction(decision.get("direction"), price, decision.get("tp")):
+            return
+    _mark_missing_tp(decision, source)
+
+
+def _valid_tp_direction(direction, price, tp):
+    if not _positive(price) or not _positive(tp):
+        return False
+    if str(direction or "").upper() == "BUY":
+        return float(tp) > float(price)
+    if str(direction or "").upper() == "SELL":
+        return float(tp) < float(price)
+    return False
+
+
+def _mark_missing_tp(decision, source):
+    decision["tp"] = None
+    decision["tp_source"] = f"{source}:MISSING"
+    reason = str(decision.get("reason") or "").strip()
+    suffix = f"Không có TP {source} hợp lệ"
+    decision["reason"] = f"{reason} | {suffix}" if reason else suffix
+    if decision.get("status") == "READY":
+        decision["status"] = "ERROR"
 
 
 def _combine_waits(symbol, direction, price, waits, ttl, now):
@@ -534,12 +584,31 @@ def _fib_tp(direction, context, cfg):
     return float(sl) + leg * level if direction == "BUY" else float(sh) - leg * level
 
 
-def _swing_tp(direction, context, cfg):
-    group = _resolve_group(cfg.get("sl_source_group", "G2"), context)
+def _swing_tp(direction, context, cfg, exit_tactic="SWING_REJECTION"):
+    tactic_key = (
+        "swing_structure"
+        if str(exit_tactic or "").upper() == "SWING_STRUCTURE"
+        else "swing_rejection"
+    )
+    group = _resolve_group(
+        (cfg.get(tactic_key, {}) or {}).get("source_group", "G2"),
+        context,
+    )
     sh, sl, atr = _swing_values(context, group)
+    if str(exit_tactic or "").upper() == "SWING_STRUCTURE":
+        structure = structure_from_context(context, group)
+        if str(direction or "").upper() == "BUY":
+            sh = structure.get("hh") or sh
+        else:
+            sl = structure.get("ll") or sl
     if not _positive(sh) or not _positive(sl):
-        return None
-    buffer = float(atr or 0) * float(cfg.get("swing_rejection", {}).get("sl_atr_buffer", 0.2) or 0.2)
+        # Với Structure chỉ cần mục tiêu đối diện đúng chiều; không bắt buộc
+        # phải có đủ cả swing high và low như Swing Retest.
+        target = sh if str(direction or "").upper() == "BUY" else sl
+        return float(target) if _positive(target) else None
+    buffer = float(atr or 0) * float(
+        (cfg.get(tactic_key, {}) or {}).get("sl_atr_buffer", 0.2) or 0.2
+    )
     return float(sh) - buffer if direction == "BUY" else float(sl) + buffer
 
 

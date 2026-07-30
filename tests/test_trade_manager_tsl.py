@@ -229,6 +229,7 @@ def test_be_loss_recovery_arms_before_cutting(monkeypatch):
     manager = _manager(
         "BE",
         {
+            "BE_SL_LOSS_ENABLE": True,
             "BE_SL_LOSS_TRIGGER": 0.5,
             "BE_SL_LOSS_STEP": 0.15,
             "BE_SL_GUARD_BUFFER": 0.05,
@@ -240,6 +241,27 @@ def test_be_loss_recovery_arms_before_cutting(monkeypatch):
     assert "7" in manager.state["be_sl_arms"]
     assert "BE_SL armed" in result
     assert manager.connector.modified == []
+
+
+def test_be_moves_stop_to_break_even_after_profit_trigger(monkeypatch):
+    monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
+    manager = _manager(
+        "BE",
+        {
+            "BE_SL_LOSS_ENABLE": False,
+            "BE_OFFSET_RR": 0.8,
+            "BE_OFFSET_POINTS": 0,
+        },
+    )
+
+    result = manager._apply_independent_tsl(
+        _position(price_current=101.0, profit=100.0),
+        {},
+    )
+
+    assert manager.state["be_sl_arms"] == {}
+    assert manager.connector.modified[0][1] == pytest.approx(100.0)
+    assert "BE_SL" in result
 
 
 class _ImmediateThread:

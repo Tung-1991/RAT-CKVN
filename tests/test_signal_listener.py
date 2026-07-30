@@ -64,19 +64,20 @@ def test_auto_trade_gate_legacy_noarg():
     assert listener._auto_trade_for("FPT") is True
 
 
-def test_opportunity_uses_preview_callback_without_touching_bot():
+def test_opportunity_uses_bot_plan_callback():
     listener = _listener()
     called = []
     listener.build_opportunity_plan = lambda symbol, side, **kwargs: (
         called.append((symbol, side, kwargs))
-        or {"ok": True, "preview_source": True, "price": 10, "sl": 9, "tp": 12}
+        or {"ok": True, "price": 10, "sl": 9, "tp": 12}
     )
 
     result = listener._build_opportunity_setup(
         "AAA", "BUY", {"current_price": 10}, "TREND"
     )
 
-    assert result["preview_source"] is True
+    assert result["plan_source"] == "BOT"
+    assert result["plan_version"] == 1
     assert called == [
         (
             "AAA",
@@ -93,4 +94,89 @@ def test_opportunity_does_not_fall_back_to_legacy_order_builder():
         "AAA", "BUY", {"current_price": 10}, "TREND"
     )
 
-    assert result == {"ok": False, "error": "PREVIEW_SOURCE_UNAVAILABLE"}
+    assert result == {
+        "ok": False,
+        "error": "BOT_PLAN_SOURCE_UNAVAILABLE",
+        "plan_source": "BOT",
+        "plan_version": 1,
+    }
+
+
+def test_record_and_queue_opportunity_is_independent_of_bot_result(monkeypatch):
+    listener = _listener()
+    listener.build_opportunity_plan = lambda *_args, **_kwargs: {
+        "ok": True,
+        "price": 10,
+        "sl": 9,
+        "tp": 12,
+    }
+    recorded = []
+    queued = []
+
+    def fake_record(signal, block_reason, order_setup):
+        item = {
+            "symbol": signal["symbol"],
+            "block_reason": block_reason,
+            "order_setup": order_setup,
+        }
+        recorded.append(item)
+        return item
+
+    monkeypatch.setattr(
+        "core.signal_opportunities.record_signal",
+        fake_record,
+    )
+    monkeypatch.setattr(
+        "telegram_notify.opportunity_alerts.queue_opportunity",
+        lambda item, log_cb=None: queued.append(item) or {"ok": True},
+    )
+
+    result = listener._record_and_queue_opportunity(
+        {"symbol": "VN30F1M", "signal_class": "ENTRY"},
+        "BUY",
+        {"current_price": 10},
+        "TREND",
+        block_reason="SUCCESS|PAPER-1",
+    )
+
+    assert result is recorded[0]
+    assert queued == recorded
+    assert recorded[0]["block_reason"] == "SUCCESS|PAPER-1"
+    assert recorded[0]["order_setup"]["plan_source"] == "BOT"
+
+
+def test_successful_bot_execution_still_queues_telegram_opportunity(monkeypatch):
+    listener = _listener()
+    listener.get_auto_trade = lambda symbol=None: True
+    listener.trade_manager.execute_bot_trade = (
+        lambda **_kwargs: "SUCCESS|PAPER-1"
+    )
+    queued = []
+    listener._record_and_queue_opportunity = (
+        lambda signal, action, context, market_mode, block_reason: queued.append(
+            (signal["symbol"], action, block_reason)
+        )
+    )
+
+    class ImmediateThread:
+        def __init__(self, target, args=(), kwargs=None, daemon=None):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr("core.signal_listener.threading.Thread", ImmediateThread)
+
+    listener._process_signal(
+        {
+            "symbol": "VN30F1M",
+            "action": "BUY",
+            "signal_class": "ENTRY",
+            "market_mode": "TREND",
+            "context": {"current_price": 1880.0},
+        }
+    )
+
+    assert queued == [("VN30F1M", "BUY", "SUCCESS|PAPER-1")]

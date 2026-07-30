@@ -124,6 +124,40 @@ def test_manual_preview_clamps_fractional_derivative_lot_and_reports_actual_risk
     assert app.connector.tick_reads == 0
 
 
+def test_default_scalping_preview_uses_manual_g1_swing_sl_and_fib_tp_not_bot_g0():
+    app = _PreviewShim()
+    setup = app._resolve_manual_setup_preview(
+        "VN30F1M",
+        "BUY",
+        "SCALPING",
+        {
+            "current_price": 1890.0,
+            "bid": 1890.0,
+            "ask": 1890.0,
+            # G0 cố ý rất xa để bắt lỗi lẫn cấu hình BOT/Manual.
+            "atr_G0": 17.0,
+            "swing_low_G0": 1795.0,
+            "swing_high_G0": 1900.0,
+            # Preset SCALPING hiện phải đọc G1 (15m).
+            "atr_G1": 6.0,
+            "swing_low_G1": 1878.0,
+            "swing_high_G1": 1896.0,
+        },
+        manual_values={"entry": 0.0, "lot": 1.0, "sl": 0.0, "tp": 0.0},
+    )
+
+    assert setup["ready"] is True
+    assert setup["manual_sl_group"] == "G1"
+    assert setup["manual_tp_group"] == "G1"
+    assert setup["sl"] == pytest.approx(1876.8)
+    assert setup["manual_tp_mode"] == "FIB"
+    assert setup["tp"] == pytest.approx(1900.896)
+    assert setup["tp_targets"] == pytest.approx([1900.896, 1907.124, 1914.0])
+    assert setup["tp_target_sources"] == ["F", "F", "F"]
+    assert setup["sl_source"] == "MANUAL_SWING_RETEST:G1"
+    assert setup["tp_source"] == "MANUAL_FIB:G1"
+
+
 def test_telegram_preview_uses_same_stock_lot_and_configured_rr_ladder(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
@@ -328,7 +362,7 @@ def test_swing_tp_uses_real_swing_target_then_fib_display_targets(monkeypatch):
     assert setup["tp_target_sources"] == ["S", "F", "F"]
 
 
-def test_default_retest_tp_follows_effective_symbol_group_then_fib(monkeypatch):
+def test_legacy_sandbox_manual_mode_migrates_to_its_own_swing_group(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "LINKED_RETEST_TEST",
@@ -362,9 +396,10 @@ def test_default_retest_tp_follows_effective_symbol_group_then_fib(monkeypatch):
         manual_values={"entry": 0.0, "lot": 1.0, "sl": 0.0, "tp": 0.0},
     )
 
-    assert setup["manual_sl_group"] == "G1"
-    assert setup["manual_tp_group"] == "G1"
-    assert setup["tp_targets"] == pytest.approx([1809.0, 1815.44, 1822.36])
+    assert setup["manual_sl_mode"] == "SWING_REJECTION"
+    assert setup["manual_sl_group"] == "G0"
+    assert setup["manual_tp_group"] == "G0"
+    assert setup["tp_targets"] == pytest.approx([1894.0, 1954.4, 2023.6])
     assert setup["tp_target_sources"] == ["S", "F", "F"]
 
     monkeypatch.setattr(config, "DEFAULT_PRESET", "LINKED_RETEST_TEST")
@@ -375,14 +410,15 @@ def test_default_retest_tp_follows_effective_symbol_group_then_fib(monkeypatch):
             "current_price": 1800.0,
             "bid": 1800.0,
             "ask": 1800.0,
-            "atr_G1": 5.0,
-            "swing_low_G1": 1790.0,
-            "swing_high_G1": 1810.0,
+            "atr_G0": 30.0,
+            "swing_low_G0": 1700.0,
+            "swing_high_G0": 1900.0,
         },
     )
-    assert telegram["ok"] is True
-    assert telegram["tp_targets"] == pytest.approx([1809.0, 1815.44, 1822.36])
-    assert telegram["tp_target_sources"] == ["S", "F", "F"]
+    # Manual preview vẫn được hiển thị, nhưng lớp gửi Telegram từ preset cũ
+    # phải từ chối kế hoạch có SL vượt trần ATR thay vì lén dùng BOT override.
+    assert telegram["ok"] is False
+    assert "SL_TOO_WIDE" in telegram["error"]
 
 
 def test_fib_tp_keeps_only_explicitly_configured_multiple_levels(monkeypatch):
@@ -457,7 +493,7 @@ def test_telegram_rejects_swing_sl_wider_than_existing_entry_exit_max_atr(
     assert order["preview_version"] == 4
 
 
-def test_invalid_fib_ladder_falls_back_to_ordered_rr_ladder(monkeypatch):
+def test_fib_mode_does_not_silently_fill_missing_targets_with_rr(monkeypatch):
     monkeypatch.setitem(
         config.PRESETS,
         "TELEGRAM_BAD_FIB_TEST",
@@ -488,5 +524,5 @@ def test_invalid_fib_ladder_falls_back_to_ordered_rr_ladder(monkeypatch):
     )
 
     assert order["ok"] is True
-    assert order["tp_targets"] == pytest.approx([13.875, 13.6875, 13.5])
-    assert order["tp_target_sources"] == ["R", "R", "R"]
+    assert order["tp_targets"] == pytest.approx([7.28, 3.82])
+    assert order["tp_target_sources"] == ["F", "F"]

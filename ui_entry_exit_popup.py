@@ -94,16 +94,16 @@ def _value(mapping, display, default):
 
 def default_entry_exit_config():
     return {
-        "enabled": False,
-        "preview_only": True,
-        "active_tactics": [],
+        "enabled": True,
+        "preview_only": False,
+        "active_tactics": ["SWING_REJECTION"],
         "entry_tactics": ["SWING_REJECTION"],
-        "exit_tactic": "AUTO",
+        "exit_tactic": "SWING_REJECTION",
         "sl_mode": "SANDBOX",
-        "fallback_tactic": "FALLBACK_R",
+        "fallback_tactic": "OFF",
         "signal_ttl_seconds": 900,
-        "missing_data_policy": "FALLBACK_R",
-        "tp_policy": "FALLBACK_R",
+        "missing_data_policy": "BLOCK",
+        "tp_policy": "TACTIC_FIRST",
         "sl_source_group": "BASE_SL",
         "default_exit": {
             "use_rr_tp": True,
@@ -257,6 +257,7 @@ def open_entry_exit_popup(app, override_symbol=None):
         tab_overwrite.pack(fill="both", expand=True, padx=4, pady=4)
 
     var_signal_ttl = tk.StringVar()
+    var_preview_only = tk.BooleanVar(value=False)
     var_tp_policy = tk.StringVar()
     var_sl_source = tk.StringVar()
     var_tp_rr = tk.StringVar()
@@ -282,6 +283,7 @@ def open_entry_exit_popup(app, override_symbol=None):
 
     def load_into_form(next_cfg):
         next_cfg = merge_cfg(default_entry_exit_config(), next_cfg)
+        var_preview_only.set(bool(next_cfg.get("preview_only", False)))
         var_signal_ttl.set(str(next_cfg.get("signal_ttl_seconds", 900)))
         var_tp_policy.set(_display(TP_POLICY_DISPLAY, next_cfg.get("tp_policy", "FALLBACK_R"), "FALLBACK_R"))
         var_sl_source.set(_display(SL_SOURCE_DISPLAY, next_cfg.get("sl_source_group", "BASE_SL"), "BASE_SL"))
@@ -337,7 +339,7 @@ def open_entry_exit_popup(app, override_symbol=None):
         sl_mode = cfg.get("sl_mode", "SANDBOX")
         return {
             "enabled": bool(cfg.get("enabled", False)),
-            "preview_only": bool(cfg.get("preview_only", True)),
+            "preview_only": bool(var_preview_only.get()),
             "active_tactics": active,
             "entry_tactics": entry_active or ["SWING_REJECTION"],
             "exit_tactic": exit_tactic,
@@ -394,8 +396,26 @@ def open_entry_exit_popup(app, override_symbol=None):
     ).pack(anchor="w", padx=12, pady=10)
     _hint(
         tab_basic,
-        "Popup này chỉ chỉnh tham số cho từng tactic. Bot dùng Entry nào và TP/Exit nào thì chọn ở Sandbox. Panel ngoài chỉ preview/manual nhanh.",
+        "Chọn tactic/SL/TP ở Sandbox. Công tắc CHỈ PREVIEW bên dưới quyết định E/E chỉ hiển thị hay thật sự chặn BOT tới khi READY.",
     )
+    mode_frame = ctk.CTkFrame(
+        tab_basic,
+        fg_color="#202020",
+        corner_radius=8,
+        border_width=1,
+        border_color="#FFCA28",
+    )
+    mode_frame.pack(fill="x", padx=10, pady=(0, 8))
+    ctk.CTkCheckBox(
+        mode_frame,
+        text=(
+            "CHỈ PREVIEW — bật: chỉ xem; "
+            "tắt: BOT phải chờ E/E READY mới được vào lệnh"
+        ),
+        variable=var_preview_only,
+        font=("Roboto", 12, "bold"),
+        text_color="#FFCA28",
+    ).pack(anchor="w", padx=12, pady=10)
 
     f_r = _section(tab_basic, "1. R / FALLBACK TP", "#FFD600")
     _field(f_r, 1, "Tín hiệu có hiệu lực:", var_signal_ttl, width=90)
@@ -533,4 +553,3 @@ def open_entry_exit_popup(app, override_symbol=None):
         height=38,
         font=("Roboto", 13, "bold"),
     ).pack(fill="x", padx=20, pady=(4, 12))
-

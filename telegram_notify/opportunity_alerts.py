@@ -783,6 +783,8 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
     }.get(action, "CHỈ CẢNH BÁO")
     symbol = str(event.get("symbol") or "").upper()
     window = float(event.get("window_seconds", 0.0))
+    movement_type = str(event.get("movement_type") or "FAST").strip().upper()
+    window_label = "phiên" if movement_type == "SESSION" else f"{window:.0f}s"
     try:
         reference_price = float(event.get("reference_price") or 0.0)
         current_price = float(event.get("current_price") or 0.0)
@@ -792,10 +794,10 @@ def send_volatility_event(event: Dict[str, Any], **_ignored) -> Dict[str, Any]:
         message = (
             f"{direction_icon} {symbol} | "
             f"{_number(reference_price)}→{_number(current_price)} | "
-            f"{value}/{window:.0f}s"
+            f"{value}/{window_label}"
         )
     else:
-        message = f"{direction_icon} {symbol} | {value}/{window:.0f}s"
+        message = f"{direction_icon} {symbol} | {value}/{window_label}"
     if action != "ALERT_ONLY":
         message += f" | ⛔ {action_label}"
     return TelegramClient(
