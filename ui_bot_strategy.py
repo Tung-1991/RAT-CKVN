@@ -506,7 +506,7 @@ class BotStrategyUI(ctk.CTkToplevel):
         return "0m"
 
     @staticmethod
-    def _preview_data_age_text(context, stale=False, now=None):
+    def _preview_data_age_text(context, stale=False, now=None, cached=False):
         """Describe when the displayed indicator context was actually calculated."""
         context = context if isinstance(context, dict) else {}
         timestamp = context.get("timestamp", context.get("tick_timestamp"))
@@ -525,8 +525,36 @@ class BotStrategyUI(ctk.CTkToplevel):
             if age_seconds < 60
             else f"{BotStrategyUI._format_duration(age_seconds)} ago"
         )
-        prefix = "STALE DATA" if stale else "UPDATED"
+        if stale:
+            prefix = "CACHE SETTING CŨ"
+        elif cached:
+            prefix = "CACHE CUỐI PHIÊN"
+        else:
+            prefix = "UPDATED"
         return f"{prefix}: {stamp} · {age_text}"
+
+    @staticmethod
+    def _context_has_preview_snapshot(context):
+        """A persisted context may be displayed, but never treated as live."""
+        if not isinstance(context, dict) or not context:
+            return False
+        details = context.get("group_details")
+        if not isinstance(details, dict) or not details:
+            return False
+        return any(
+            isinstance(details.get(f"G{i}"), dict)
+            and bool(details.get(f"G{i}"))
+            for i in range(4)
+        )
+
+    @staticmethod
+    def _preview_market_open(symbol):
+        try:
+            from core.market_hours import is_symbol_trade_window_open
+
+            return bool(is_symbol_trade_window_open(symbol)[0])
+        except Exception:
+            return False
 
     def _status_text(self, status):
         return {1: "BUY", -1: "SELL", 0: "WAIT"}.get(status, "WAIT")
@@ -737,7 +765,8 @@ class BotStrategyUI(ctk.CTkToplevel):
                 "prev": lbl_prev,
                 "scroll_f": scroll_f,
                 "frame": col,
-                "last_data": "" # ể chống flicker
+                "last_data": "",  # Để chống flicker
+                "last_cached_display": None,
             }
 
     def update_preview(self):
@@ -762,6 +791,7 @@ class BotStrategyUI(ctk.CTkToplevel):
                 context = self._context_for_symbol(all_ctx, active_symbol) if active_symbol else {}
 
             preview_brain = self._effective_preview_brain(active_symbol)
+            market_open = BotStrategyUI._preview_market_open(active_symbol)
             context_strategy_stale = False
             if active_symbol:
                 try:
@@ -775,19 +805,26 @@ class BotStrategyUI(ctk.CTkToplevel):
                         not actual_fingerprint
                         or actual_fingerprint != expected_fingerprint
                     )
-                    if context_strategy_stale:
+                    if context_strategy_stale and market_open:
                         self._schedule_preview_context_fetch(active_symbol)
                 except Exception:
                     context_strategy_stale = bool(context)
-                    self._schedule_preview_context_fetch(active_symbol)
+                    if market_open:
+                        self._schedule_preview_context_fetch(active_symbol)
 
             context_ready = self._context_ready_for_preview(context, preview_brain)
+            has_cached_snapshot = BotStrategyUI._context_has_preview_snapshot(context)
             if active_symbol and not context_ready:
-                # Không ghép phiếu indicator cũ với setting mới. Trong lúc chờ lượt
-                # quét mới, UI chỉ hiển thị cấu hình hiện tại ở trạng thái WAIT.
-                if not context_strategy_stale:
+                # Snapshot cũ chỉ phục vụ quan sát. Engine/E/E vẫn phải chờ
+                # context khớp setting hiện tại trước khi được phép hành động.
+                if not context_strategy_stale and market_open:
                     self._schedule_preview_context_fetch(active_symbol)
-                context = {}
+                if not has_cached_snapshot:
+                    context = {}
+
+            cached_display = bool(context) and (
+                context_strategy_stale or not market_open
+            )
 
             if active_symbol != self.preview_last_symbol:
                 self.preview_status_cache.clear()
@@ -813,20 +850,46 @@ class BotStrategyUI(ctk.CTkToplevel):
                 m_rule = rules_cfg.get("master_rule", "FIX")
                 max_o = rules_cfg.get("max_opposite", 0)
                 max_n = rules_cfg.get("max_none", 0)
-                rule_hint = f"[{m_rule} | O:{max_o}, N:{max_n}]"
+                if context_strategy_stale:
+                    cached_rule = (context.get("group_rules", {}) or {}).get(
+                        grp,
+                        m_rule,
+                    )
+                    rule_hint = f"[CACHE {cached_rule}]"
+                else:
+                    rule_hint = f"[{m_rule} | O:{max_o}, N:{max_n}]"
                 
                 status_val = data.get("status", 0)
-                group_label = self._group_label_for_brain(grp, preview_brain)
+                cached_tf = (context.get("group_timeframes", {}) or {}).get(grp)
+                group_label = (
+                    f"{grp}({self._format_tf_label(cached_tf)})"
+                    if cached_display and cached_tf
+                    else self._group_label_for_brain(grp, preview_brain)
+                )
                 title_text = f"{group_label}: {texts.get(status_val, 'WAIT')}\n{rule_hint}"
-                card["title"].configure(text=title_text, fg_color=colors.get(status_val, "#333"))
-                card["summary"].configure(text=f"B: {data.get('B', 0)}  |  S: {data.get('S', 0)}  |  N: {data.get('N', 0)}")
+                card["title"].configure(
+                    text=title_text,
+                    fg_color="#6D5A00" if cached_display else colors.get(status_val, "#333"),
+                )
+                card["summary"].configure(
+                    text=f"B: {data.get('B', 0)}  |  S: {data.get('S', 0)}  |  N: {data.get('N', 0)}",
+                    text_color="#FFD600" if cached_display else "#FFF",
+                )
                 trend_state = str(context.get(f"trend_{grp}", "NONE") or "NONE").upper()
                 trend_names = []
                 for ind_name, cfg in (preview_brain.get("indicators", {}) or {}).items():
                     groups = cfg.get("groups", [cfg.get("group", "G2")])
                     if cfg.get("is_trend", False) and grp in groups:
                         trend_names.append(ind_name.upper())
-                trend_color = "#00E676" if trend_state == "UP" else "#FF5252" if trend_state == "DOWN" else "#FFD600"
+                trend_color = (
+                    "#FFD600"
+                    if cached_display
+                    else "#00E676"
+                    if trend_state == "UP"
+                    else "#FF5252"
+                    if trend_state == "DOWN"
+                    else "#FFD600"
+                )
                 card["trend"].configure(
                     text=f"TREND: {trend_state} | {','.join(trend_names) if trend_names else '--'}",
                     text_color=trend_color,
@@ -835,7 +898,9 @@ class BotStrategyUI(ctk.CTkToplevel):
                     text=BotStrategyUI._preview_data_age_text(
                         context,
                         stale=context_strategy_stale,
-                    )
+                        cached=cached_display,
+                    ),
+                    text_color="#FFD600" if cached_display else "#BDBDBD",
                 )
                 
                 inds_list = data.get("inds", [])
@@ -851,7 +916,10 @@ class BotStrategyUI(ctk.CTkToplevel):
                 
                 # Chống flicker: Chỉ vẽ lại khi dữ liệu thay đổi
                 current_data_str = json.dumps(inds_list)
-                if card.get("last_data") != current_data_str:
+                if (
+                    card.get("last_data") != current_data_str
+                    or card.get("last_cached_display") != cached_display
+                ):
                     # Xóa widgets cũ
                     for widget in card["scroll_f"].winfo_children():
                         widget.destroy()
@@ -860,10 +928,10 @@ class BotStrategyUI(ctk.CTkToplevel):
                         ctk.CTkLabel(card["scroll_f"], text="-- NO DATA --", font=("Roboto", 14), text_color="gray").pack(fill="x", pady=10)
                     else:
                         for line in inds_list:
-                            t_color = "#999" # Mặc định xám
-                            if "[BUY]" in line:
+                            t_color = "#FFD600" if cached_display else "#999"
+                            if not cached_display and "[BUY]" in line:
                                 t_color = "#00C853" # Xanh lá vibrance
-                            elif "[SELL]" in line:
+                            elif not cached_display and "[SELL]" in line:
                                 t_color = "#FF3D00" # Đỏ rực
                             
                             ctk.CTkLabel(
@@ -876,11 +944,23 @@ class BotStrategyUI(ctk.CTkToplevel):
                             ).pack(fill="x", padx=5, pady=1)
                     
                     card["last_data"] = current_data_str
+                    card["last_cached_display"] = cached_display
 
             # Cập nhật Master Action
             final_sig = context.get("latest_signal", 0)
-            act_color = "#00C853" if final_sig == 1 else "#FF3D00" if final_sig == -1 else "#777"
-            act_text = f"MASTER ACTION: {'BUY' if final_sig == 1 else 'SELL' if final_sig == -1 else 'WAIT'}"
+            act_color = (
+                "#FFD600"
+                if cached_display
+                else "#00C853"
+                if final_sig == 1
+                else "#FF3D00"
+                if final_sig == -1
+                else "#777"
+            )
+            act_text = (
+                f"MASTER ACTION{' [CACHE]' if cached_display else ''}: "
+                f"{'BUY' if final_sig == 1 else 'SELL' if final_sig == -1 else 'WAIT'}"
+            )
             self.master_action_lbl.configure(text=act_text, text_color=act_color)
 
             # [NEW] Cập nhật Market Mode & Macro
@@ -898,7 +978,13 @@ class BotStrategyUI(ctk.CTkToplevel):
                 or self.master_eval_var.get()
             )
             
-            mode_color = "#00E676" if m_mode in ["TREND", "BREAKOUT"] else "#FFB300"
+            mode_color = (
+                "#FFD600"
+                if cached_display
+                else "#00E676"
+                if m_mode in ["TREND", "BREAKOUT"]
+                else "#FFB300"
+            )
             self.market_mode_lbl.configure(
                 text=f"MARKET MODE: {m_mode} (by {m_src}) | BASE TREND: {dir_text} | RULE: {eval_mode}",
                 text_color=mode_color
@@ -906,13 +992,24 @@ class BotStrategyUI(ctk.CTkToplevel):
 
             # Cập nhật Block Reason (Highlight lý do chặn)
             block_reason = context.get("block_reason", "OK / Ready")
-            if context_strategy_stale:
-                block_reason = "CACHE CŨ — chờ lượt quét theo setting mới"
+            if cached_display:
+                cache_kind = (
+                    "CACHE CUỐI PHIÊN / SETTING CŨ"
+                    if context_strategy_stale and not market_open
+                    else "CACHE SETTING CŨ"
+                    if context_strategy_stale
+                    else "CACHE CUỐI PHIÊN"
+                )
+                block_reason = f"{cache_kind} — chỉ xem, không dùng để giao dịch"
             reason_color = "#00C853" if "OK" in block_reason else "#FFAB00"
             self.master_reason_lbl.configure(text=f"REASON: {block_reason}", text_color=reason_color)
             if hasattr(self, "entry_exit_preview_lbl"):
+                ee_context = {} if cached_display else context
+                ee_text = self._entry_exit_preview_text(active_symbol, ee_context)
+                if cached_display:
+                    ee_text += "\nCACHE ONLY: Entry/Exit không dùng snapshot cũ."
                 self.entry_exit_preview_lbl.configure(
-                    text=self._entry_exit_preview_text(active_symbol, context)
+                    text=ee_text
                 )
 
             self.preview_last_render_error = ""

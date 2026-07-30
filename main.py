@@ -5428,7 +5428,13 @@ class BotUI(ctk.CTk):
                 if "BE_CASH" in tactic_modes:
                     tactic_badges.append("BE_CASH")
                 elif "BE" in tactic_modes:
-                    tactic_badges.append("BE_SL")
+                    tactic_badges.append("BE")
+                if "SWING" in tactic_modes:
+                    tactic_badges.append("SWING")
+                if "STEP_R" in tactic_modes:
+                    tactic_badges.append("STEP_R")
+                if "PNL" in tactic_modes:
+                    tactic_badges.append("PNL")
                 if "PSAR_TRAIL" in tactic_modes:
                     tactic_badges.append("PSAR")
                 if "ANTI_CASH" in tactic_modes:
@@ -5443,7 +5449,7 @@ class BotUI(ctk.CTk):
                 if stt_extras:
                     tactic_badges.append("+".join(stt_extras))
                 if tactic_badges:
-                    stt_txt += f" | {'+'.join(tactic_badges)}"
+                    stt_txt += f" | TSL:{'+'.join(tactic_badges)}"
                 ee_tactic = self.trade_mgr.get_trade_entry_exit_tactic(p.ticket)
                 if ee_tactic and ee_tactic != "OFF":
                     ee_labels = {

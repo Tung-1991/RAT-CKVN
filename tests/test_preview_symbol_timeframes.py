@@ -216,21 +216,40 @@ def test_preview_data_age_marks_strategy_cache_as_stale():
         now=1_700_000_030,
     )
 
-    assert text.startswith("STALE DATA:")
+    assert text.startswith("CACHE SETTING CŨ:")
     assert text.endswith("just now")
 
 
+def test_preview_data_age_marks_end_session_snapshot_as_cache():
+    text = ui_bot_strategy.BotStrategyUI._preview_data_age_text(
+        {"timestamp": 1_700_000_000},
+        cached=True,
+        now=1_700_000_125,
+    )
+
+    assert text.startswith("CACHE CUỐI PHIÊN:")
+    assert text.endswith("2m ago")
+
+
 def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypatch):
+    monkeypatch.setattr(
+        ui_bot_strategy.BotStrategyUI,
+        "_preview_market_open",
+        staticmethod(lambda _symbol: False),
+    )
+
     class _Scroll:
         def __init__(self):
             self.labels = []
+            self.colors = []
 
         def winfo_children(self):
             return []
 
     class _Label:
-        def __init__(self, parent, text="", **_kwargs):
+        def __init__(self, parent, text="", **kwargs):
             parent.labels.append(text)
+            parent.colors.append(kwargs.get("text_color"))
 
         def pack(self, **_kwargs):
             return None
@@ -313,9 +332,17 @@ def test_preview_actually_renders_simple_breakout_row_for_legacy_cache(monkeypat
     assert cards["G2"]["scroll_f"].labels == [
         "○ [WAIT] SIMPLE BREAKOUT [NONE|ANY]"
     ]
+    assert cards["G2"]["scroll_f"].colors == ["#FFD600"]
+    assert ui.master_action_lbl.options["text"] == "MASTER ACTION [CACHE]: WAIT"
+    assert "CACHE CUỐI PHIÊN" in ui.master_reason_lbl.options["text"]
 
 
-def test_strategy_preview_blanks_votes_from_stale_strategy():
+def test_strategy_preview_renders_stale_votes_as_yellow_cache(monkeypatch):
+    monkeypatch.setattr(
+        ui_bot_strategy.BotStrategyUI,
+        "_preview_market_open",
+        staticmethod(lambda _symbol: True),
+    )
     brain = {
         "MASTER_EVAL_MODE": "VETO",
         "G0_TIMEFRAME": "1h",
@@ -358,10 +385,11 @@ def test_strategy_preview_blanks_votes_from_stale_strategy():
             "prev": _Widget(),
             "scroll_f": SimpleNamespace(),
             "last_data": (
-                '["\\u25cb [WAIT] EMA [NONE|ANY]"]'
+                '["[SELL] EMA [BASE|ANY]"]'
                 if group == "G0"
                 else "[]"
             ),
+            "last_cached_display": True,
         }
     scheduled = []
     ui = SimpleNamespace(
@@ -396,10 +424,14 @@ def test_strategy_preview_blanks_votes_from_stale_strategy():
 
     ui_bot_strategy.BotStrategyUI.update_preview(ui)
 
-    assert cards["G0"]["summary"].options["text"] == "B: 0  |  S: 0  |  N: 0"
-    assert cards["G0"]["trend"].options["text"] == "TREND: NONE | EMA"
-    assert ui.master_action_lbl.options["text"] == "MASTER ACTION: WAIT"
-    assert "CACHE CŨ" in ui.master_reason_lbl.options["text"]
+    assert cards["G0"]["summary"].options["text"] == "B: 0  |  S: 1  |  N: 0"
+    assert cards["G0"]["summary"].options["text_color"] == "#FFD600"
+    assert cards["G0"]["trend"].options["text"] == "TREND: DOWN | EMA"
+    assert cards["G0"]["trend"].options["text_color"] == "#FFD600"
+    assert ui.master_action_lbl.options["text"] == "MASTER ACTION [CACHE]: SELL"
+    assert ui.master_action_lbl.options["text_color"] == "#FFD600"
+    assert "CACHE SETTING CŨ" in ui.master_reason_lbl.options["text"]
+    assert "CACHE ONLY" in ui.entry_exit_preview_lbl.options["text"]
     assert scheduled == ["VN30F1M"]
 
 
