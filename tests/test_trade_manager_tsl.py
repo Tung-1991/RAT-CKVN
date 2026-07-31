@@ -342,6 +342,43 @@ def test_be_moves_stop_to_break_even_after_profit_trigger(monkeypatch):
     assert "BE_SL" in result
 
 
+@pytest.mark.parametrize(
+    ("position_type", "current_price"),
+    [
+        (0, 100.5),
+        (1, 99.5),
+    ],
+)
+def test_be_status_stays_locked_after_price_retraces_below_trigger(
+    monkeypatch,
+    position_type,
+    current_price,
+):
+    monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
+    manager = _manager(
+        "BE",
+        {
+            "BE_SL_LOSS_ENABLE": False,
+            "BE_OFFSET_RR": 0.8,
+            "BE_OFFSET_POINTS": 0,
+        },
+    )
+
+    result = manager._apply_independent_tsl(
+        _position(
+            type=position_type,
+            price_current=current_price,
+            sl=100.0,
+            profit=50.0,
+        ),
+        {},
+    )
+
+    assert result == "BE ĐÃ KHÓA @100.00"
+    assert "Đợi" not in result
+    assert manager.connector.modified == []
+
+
 def test_tsl_does_not_claim_success_when_broker_rejects(monkeypatch):
     monkeypatch.setattr(trade_manager_module, "save_state", lambda _state: None)
     manager = _manager(

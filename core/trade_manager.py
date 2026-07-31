@@ -3093,6 +3093,7 @@ class TradeManager:
         candidates = []
         milestones = []
         tracking_modes = []
+        locked_states = []
 
         brain = self._get_brain_settings(pos.symbol)
         tsl_cfg = brain.get("TSL_CONFIG", getattr(config, "TSL_CONFIG", {}))
@@ -3306,7 +3307,7 @@ class TradeManager:
                                     f"BE_SL guard {format_vnd_full(guard_pnl, signed=True)} / best {format_vnd_full(best_recovery, signed=True)}",
                                 )
                             )
-                elif loss_usd < loss_trigger_usd:
+                elif loss_usd < loss_trigger_usd and not sl_better_than_entry:
                     milestones.append(
                         (
                             max(loss_trigger_usd - loss_usd, 0.0),
@@ -3585,8 +3586,14 @@ class TradeManager:
             trig_p = (
                 base + (trig_r * one_r_dist) if is_buy else base - (trig_r * one_r_dist)
             )
+            be_locked = current_sl > 0 and (
+                (is_buy and current_sl >= be_sl - (point / 2))
+                or (not is_buy and current_sl <= be_sl + (point / 2))
+            )
 
-            if curr_r >= trig_r:
+            if be_locked:
+                locked_states.append(f"BE ĐÃ KHÓA @{current_sl:.2f}")
+            elif curr_r >= trig_r:
                 candidates.append((be_sl, "BE_SL"))
             elif not (be_loss_enabled and profit_usd < 0):
                 milestones.append(
@@ -3761,7 +3768,18 @@ class TradeManager:
                 return f"{action_rule} Đã kéo ➔ {target_sl:.2f}"
 
         if milestones:
-            return sorted(milestones, key=lambda x: x[0])[0][1]
+            next_status = sorted(milestones, key=lambda x: x[0])[0][1]
+            if locked_states:
+                return f"{' | '.join(locked_states)} | {next_status}"
+            return next_status
+
+        if locked_states:
+            tracking_status = (
+                f" | Theo dõi {'/'.join(tracking_modes)}"
+                if tracking_modes
+                else ""
+            )
+            return f"{' | '.join(locked_states)}{tracking_status}"
 
         if tracking_modes:
             return "Theo dõi: " + "/".join(tracking_modes)
