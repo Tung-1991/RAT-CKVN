@@ -51,10 +51,13 @@ def _layout_scenario(scale):
         assert not hasattr(app,'preview_wait') and app.preview_data.winfo_ismapped()
         assert app.preview_management.winfo_ismapped()
         assert not hasattr(app,'preview_rule_ema') and not hasattr(app,'preview_rule_phase1_card') and not hasattr(app,'preview_rule_phase3_card')
-        assert app.preview_atr.cget('text')=='Chờ nến ngày'
+        assert app.preview_atr.cget('text')=='Chờ nến 1D'
         assert not app.view.get('quotes')  # Configuration Preview does not invent prices.
         assert not app.positions_tree.horizontal.winfo_ismapped()
-        assert app.table_workspace.winfo_height()<app.info_panel.winfo_height()
+        assert app.table_workspace.winfo_height()>app.info_panel.winfo_height()
+        assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
+        assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
+        assert app.preview_state_panel.winfo_ismapped()
         for name in ('LOG','PREVIEW'):
             app._select_info(name);settle()
             assert app.info_choice.get()==name
@@ -153,7 +156,8 @@ def _layout_scenario(scale):
         app.render();app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview();settle()
         assert 'LẶP 2,003.4' in app.preview_exit_value.cget('text')
-        assert 'CHỈ PREVIEW' in app.preview_status_reason.cget('text')
+        assert app.preview_status_reason.cget('text')=='RIÊNG'
+        assert app.preview_management_badge.cget('text')=='QL · CHƯA NHẬN'
         assert app.positions_tree.cell(position.id,'side')['color']=='#22C55E'
         assert app.positions_tree.cell(position.id,'pnl')['color']=='#22C55E'
         assert not app.positions_tree.horizontal.winfo_ismapped()
@@ -163,14 +167,14 @@ def _layout_scenario(scale):
             assert widget.winfo_rootx()+widget.winfo_width()<=app.preview_content.winfo_rootx()+app.preview_content.winfo_width()+2
             assert widget.winfo_rooty()+widget.winfo_height()<=app.status.winfo_rooty(), (widget.cget('text'),widget.winfo_rooty(),widget.winfo_height(),app.status.winfo_rooty())
             assert widget.winfo_rooty()+widget.winfo_height()<=widget.master.winfo_rooty()+widget.master.winfo_height(), widget.cget('text')
-            assert getattr(widget,'_viking_fit_font_size',font[1])>=12, widget.cget('text')
-        for label in (app.preview_normal_value,app.preview_normal_detail,app.preview_normal_config,app.preview_exit_value,app.preview_exit_detail,app.preview_exit_config):
+            assert getattr(widget,'_viking_fit_font_size',font[1])>=14, widget.cget('text')
+        for label in (app.preview_normal_value,app.preview_normal_detail,app.preview_exit_value,app.preview_exit_detail):
             assert label.winfo_rooty()+label.winfo_height()<=label.master.winfo_rooty()+label.master.winfo_height()
             assert NativeFontMetrics(label,label._label.cget('font')).measure(label.cget('text'))<=label.winfo_width()
         app.geometry('1080x700');settle(500)
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.preview_management.winfo_ismapped() and app.preview_exit_value.winfo_ismapped()
-        assert app.status.winfo_rooty()+app.status.winfo_height()<=app.winfo_rooty()+app.winfo_height(), (app.status.winfo_rooty(),app.status.winfo_height(),app.winfo_rooty(),app.winfo_height(),app.right.winfo_height(),app.table_workspace.winfo_height(),app.info_panel.winfo_height(),app._table_height,app.right.grid_rowconfigure(1),app.right.grid_rowconfigure(2),getattr(app,'_dashboard_resize_after',None))
+        assert app.status.winfo_rooty()+app.status.winfo_height()<=app.winfo_rooty()+app.winfo_height(), (app.status.winfo_rooty(),app.status.winfo_height(),app.winfo_rooty(),app.winfo_height(),app.right.winfo_height(),app.table_workspace.winfo_height(),app.info_panel.winfo_height(),app.right.grid_rowconfigure(1),app.right.grid_rowconfigure(2),getattr(app,'_dashboard_resize_after',None))
         for widget,font in app._preview_fit_labels:
             if not widget.winfo_ismapped():continue
             assert widget.winfo_rooty()+widget.winfo_height()<=app.status.winfo_rooty()
@@ -569,13 +573,24 @@ def _split_app_scenario(kind,scale):
             app.show_sample('LẶP');settle()
             app.bot.invoke();settle()
             assert app.view['armed'] and app.preview_status_badge.cget('text')=='BOT ON'
-            assert 'QUẢN LÝ ON' in app.preview_status_reason.cget('text')
+            assert app.preview_management_badge.cget('text')=='QUẢN LÝ ON'
+            assert app.preview_data_badge.cget('text')=='GIÁ MẪU'
+            assert app.market_context_label.cget('text')=='DỮ LIỆU MẪU'
             app.bot.invoke();settle()
             assert not app.view['armed'] and app.runtime is None
             assert app.preview_status_badge.cget('text')=='BOT OFF'
             app.positions_tree.selection_set(());settle()
             assert app.positions_tree.selection()==('DEMO-LONG',)
             assert app.preview_order_title.cget('text').startswith('LONG · 1 HĐ')
+            assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
+            assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
+            app.preview_em_exit._label.event_generate('<Button-1>');settle()
+            detail=app.preview_em_exit._hover_hint.popup
+            assert detail and detail.winfo_ismapped()
+            assert 'Giữ 70% lãi' in detail.body.get('1.0','end')
+            assert detail.cget('highlightbackground')=='#60A5FA'
+            app.preview_em_exit._label.event_generate('<Button-1>');settle()
+            assert app.preview_em_exit._hover_hint.popup is None
             # Click the actual MAIN buttons, not just the popup constructors.
             app.rule_button.invoke();settle()
             rule=app.popups['rule']

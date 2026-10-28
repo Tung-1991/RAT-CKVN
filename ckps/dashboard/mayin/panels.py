@@ -1,12 +1,14 @@
 from __future__ import annotations
 import tkinter as tk
+from math import ceil
 from typing import Any
 import customtkinter as ctk
 from .tokens import *
 from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_entry_text, fit_label_text
+from .hover_hint import _HoverHint
 APP_NAME = 'RAT VN30'
 APP_VERSION = '0.1.0'
-INFO_PANEL_HEIGHT = 390
+INFO_PANEL_HEIGHT = 310
 
 class OriginalPanels:
 
@@ -197,72 +199,86 @@ class OriginalPanels:
         panel=ctk.CTkFrame(parent,width=1,fg_color='transparent')
         panel.grid(row=0,column=0,sticky='nsew')
         panel.grid_columnconfigure(0,weight=1)
-        panel.grid_rowconfigure(0,weight=1)
         self.preview_focus_panel=self.preview_content=panel
         data=ctk.CTkFrame(panel,width=1,fg_color='transparent')
-        data.grid(row=0,column=0,sticky='nsew')
+        data.grid(row=0,column=0,sticky='new')
         data.grid_columnconfigure(0,weight=1)
-        data.grid_rowconfigure(0,weight=1)
         self.preview_data=data
+        self._preview_help={'arm':'TSL bám đỉnh Long / đáy Short sau ARM.',
+                            'dynamic':'DYNAMIC bảo vệ trước ARM bằng ATR và giữ lãi.'}
+        self._preview_position_context=''
         self._preview_fit_labels=[]
-        def label(parent,name,text='',size=13,color=COL_PREVIEW_TEXT,bold=False,mono=False,**grid):
+        def label(parent,name,text='',size=14,color=COL_PREVIEW_TEXT,bold=False,mono=False,**grid):
             font=('Cascadia Mono' if mono else 'Segoe UI',size,*(['bold'] if bold else []))
             widget=StatusLabel(parent,text=text,width=1,height=size+5,font=font,text_color=color,anchor='w')
             widget.grid(sticky='ew',**grid)
             setattr(self,name,widget);self._preview_fit_labels.append((widget,font))
             return widget
         em=ctk.CTkFrame(data,width=1,fg_color='transparent',corner_radius=0)
-        em.grid(row=0,column=0,sticky='nsew',padx=3,pady=(0,4))
+        em.grid(row=0,column=0,sticky='new',padx=3,pady=(0,4))
         em.grid_columnconfigure(0,weight=1)
-        em.grid_rowconfigure(2,weight=1)
         self.market_context_label=ctk.CTkLabel(self.info_header,text='CHỜ GIÁ DNSE',height=28,
-            font=('Segoe UI',12,'bold'),text_color=COL_MUTED,anchor='e')
+            font=('Segoe UI',14,'bold'),text_color=COL_MUTED,anchor='e')
         self.market_context_label.grid(row=0,column=1,sticky='ew',padx=(8,10))
+        self.preview_state_panel=state=ctk.CTkFrame(em,fg_color='transparent')
+        state.grid(row=0,column=0,sticky='ew',pady=(0,5))
+        state.grid_columnconfigure((0,1,2),weight=1,uniform='preview-state')
+        for column,name,text in ((0,'preview_status_badge','BOT OFF'),
+                                  (1,'preview_management_badge','VÉ · CHỈ XEM'),
+                                  (2,'preview_data_badge','GIÁ · CHỜ')):
+            card=ctk.CTkFrame(state,fg_color='#4A3214',border_color=COL_WARN,border_width=1,corner_radius=5)
+            card.grid(row=0,column=column,sticky='ew',padx=(0 if column==0 else 4,0))
+            card.grid_columnconfigure(0,weight=1)
+            badge=label(card,name,text,size=14,color='#FDE68A',bold=True,row=0,column=0,padx=8,pady=5)
+            badge.configure(anchor='center')
         header=ctk.CTkFrame(em,fg_color=COL_PANEL_HEADER,corner_radius=5)
-        header.grid(row=0,column=0,sticky='ew',pady=(0,8))
-        header.grid_columnconfigure(0,weight=1)
+        header.grid(row=1,column=0,sticky='ew',pady=(0,5))
+        header.grid_columnconfigure(0,weight=3)
         header.grid_columnconfigure(1,weight=1)
-        label(header,'preview_order_title','E/M · VÉ LỆNH',17,COL_TEXT,True,row=0,column=0,padx=(12,0),pady=(7,0))
-        label(header,'preview_status_reason',size=12,color=COL_MUTED,row=0,column=1,padx=8,pady=(7,0))
-        self.preview_status_badge=StatusLabel(header,text='BOT OFF',width=80,height=22,font=('Segoe UI',12,'bold'),text_color=COL_MUTED)
-        self.preview_status_badge.grid(row=0,column=2,sticky='e',padx=(0,12),pady=(7,0))
-        label(header,'preview_position_context',size=13,color=COL_MUTED,row=1,column=0,columnspan=3,padx=12,pady=(3,7))
+        title=label(header,'preview_order_title','VÉ LỆNH',16,COL_TEXT,True,row=0,column=0,padx=9,pady=4)
+        title.configure(cursor='hand2')
+        title._hover_hint=_HoverHint(title,lambda:self._preview_position_context,click_to_toggle=True)
+        label(header,'preview_status_reason',size=14,color=COL_MUTED,row=0,column=1,padx=8,pady=4)
         management=ctk.CTkFrame(em,width=1,fg_color='transparent')
-        management.grid(row=1,column=0,sticky='new')
+        management.grid(row=2,column=0,sticky='new')
         management.grid_columnconfigure(0,weight=1)
         self.preview_management=management
         metrics=ctk.CTkFrame(management,width=1,height=1,fg_color=COL_PANEL_BODY,corner_radius=5,border_width=1,border_color=COL_GRID)
         metrics.grid(row=0,column=0,sticky='ew')
         metrics.grid_columnconfigure((0,2,4),weight=1,uniform='levels')
-        branches=ctk.CTkFrame(management,width=1,height=1,fg_color=COL_PANEL_BODY,corner_radius=5,border_width=1,border_color=COL_GRID)
-        branches.grid(row=1,column=0,sticky='ew',pady=(8,0))
+        branches=ctk.CTkFrame(management,width=1,height=1,fg_color='transparent')
+        branches.grid(row=1,column=0,sticky='ew',pady=(5,0))
         branches.grid_columnconfigure((0,2),weight=1,uniform='branches')
         for column in (1,3):
             ctk.CTkFrame(metrics,width=1,height=1,corner_radius=0,fg_color=COL_GRID).grid(row=0,column=column,sticky='ns',pady=9)
-        ctk.CTkFrame(branches,width=1,height=1,corner_radius=0,fg_color=COL_GRID).grid(row=0,column=1,sticky='ns',pady=10)
         self._preview_level_cards=[]
         for i,title,color,names in (
-            (0,'SL',COL_RED,('preview_sl_title','preview_sl_value','preview_sl_detail')),
-            (1,'TP',COL_GREEN,('preview_tp_title','preview_tp_value','preview_tp_detail')),
+            (0,'SL · CẮT LỖ',COL_RED,('preview_sl_title','preview_sl_value','preview_sl_detail')),
+            (1,'TP · CHỐT LÃI',COL_GREEN,('preview_tp_title','preview_tp_value','preview_tp_detail')),
             (2,'ATR14 · NGÀY',COL_ACCENT_BLUE,('preview_atr_title','preview_atr','preview_atr_detail')),
             (3,'TSL / ARM',COL_TEXT,('preview_em_normal','preview_normal_value','preview_normal_detail')),
             (4,'DYNAMIC',COL_TEXT,('preview_em_exit','preview_exit_value','preview_exit_detail'))):
-            cell=ctk.CTkFrame(metrics if i<3 else branches,width=1,fg_color='transparent')
+            cell=ctk.CTkFrame(metrics if i<3 else branches,width=1,
+                fg_color='transparent' if i<3 else '#172D46' if i==3 else '#352B19',
+                border_width=0 if i<3 else 1,border_color=COL_ACCENT_BLUE if i==3 else COL_WARN,corner_radius=5)
             cell.grid_columnconfigure(0,weight=1)
             if i<3:
-                cell.grid(row=0,column=i*2,sticky='nsew',padx=12,pady=9)
-                a=label(cell,names[0],title,size=12,color=COL_TITLE,bold=True,row=0,column=0)
-                b=label(cell,names[1],'Chưa bật',size=20,color=color,mono=True,row=1,column=0,pady=(2,0))
-                c=label(cell,names[2],size=12,color=COL_MUTED,row=2,column=0,pady=(2,0))
+                cell.grid(row=0,column=i*2,sticky='nsew',padx=9,pady=5)
+                a=label(cell,names[0],title,size=14,color=COL_TEXT,bold=True,row=0,column=0)
+                b=label(cell,names[1],'Chưa bật',size=20,color=color,mono=True,row=1,column=0)
+                c=label(cell,names[2],size=14,color=COL_MUTED,row=2,column=0)
             else:
-                cell.grid(row=0,column=(i-3)*2,sticky='nsew',padx=12,pady=10)
-                a=label(cell,names[0],title,size=13,color=COL_ACCENT_BLUE if i==3 else COL_WARN,bold=True,row=0,column=0)
-                b=label(cell,names[1],'Chưa bật',size=16,color=color,row=1,column=0,pady=(4,0))
-                c=label(cell,names[2],size=13,color=COL_PREVIEW_TEXT,row=2,column=0,pady=(3,0))
-                label(cell,'preview_normal_parameters' if i==3 else 'preview_exit_parameters',size=12,color=COL_MUTED,row=3,column=0,pady=(4,0))
-                label(cell,'preview_normal_config' if i==3 else 'preview_exit_config',size=12,color=COL_MUTED,row=4,column=0,pady=(3,0))
+                cell.grid(row=0,column=(i-3)*2,sticky='nsew',padx=(0,3) if i==3 else (3,0))
+                a=label(cell,names[0],title+'  ⓘ',size=14,color=COL_ACCENT_BLUE if i==3 else COL_WARN,bold=True,row=0,column=0,padx=9,pady=(4,0))
+                a.configure(cursor='hand2')
+                branch='arm' if i==3 else 'dynamic'
+                a._hover_hint=_HoverHint(a,lambda key=branch:self._preview_help[key],click_to_toggle=True,
+                    fixed_size=True,max_width=480,font=('Segoe UI',15))
+                b=label(cell,names[1],'Chưa bật',size=17,color=color,row=1,column=0,padx=9,pady=1)
+                c=label(cell,names[2],size=14,color=COL_TEXT,row=2,column=0,padx=9,pady=(0,5))
             self._preview_level_cards.append((a,b,c))
         panel.bind('<Configure>',self._fit_preview_text,add='+')
+        data.bind('<Configure>',self._layout_preview,add='+')
         self.right.bind('<Configure>',self._layout_preview,add='+')
         self.after_idle(self._layout_preview)
 
@@ -272,17 +288,17 @@ class OriginalPanels:
                 if widget.winfo_manager():widget.grid_remove()
                 continue
             if not widget.winfo_manager():widget.grid()
-            if widget.winfo_ismapped():fit_label_text(widget,base_font=font,minimum_size=12)
+            if widget.winfo_ismapped():fit_label_text(widget,base_font=font,minimum_size=14)
 
     def _layout_preview(self,_event=None):
         if getattr(self,'_workspace_editing',False):return
-        height=self.right.winfo_height()/self.right._get_widget_scaling()
-        table_height=max(150,min(340,round((height-38)*.43),round(height-INFO_PANEL_HEIGHT-44)))
-        if getattr(self,'_table_height',None)!=table_height:
-            self._table_height=table_height
-            self.table_workspace.configure(height=table_height)
-        self.right.grid_rowconfigure(1,weight=0,minsize=table_height)
-        self.right.grid_rowconfigure(2,weight=1,minsize=INFO_PANEL_HEIGHT)
+        overhead=max(0,self.info_panel.winfo_height()-self.preview_content.winfo_height())
+        required=ceil((self.preview_data.winfo_reqheight()+overhead)/self.right._get_widget_scaling())+2
+        height=max(INFO_PANEL_HEIGHT,required)
+        self.table_workspace.configure(height=150)
+        if self.info_panel.cget('height')!=height:self.info_panel.configure(height=height)
+        self.right.grid_rowconfigure(1,weight=1,minsize=150)
+        self.right.grid_rowconfigure(2,weight=0,minsize=height)
         self._fit_preview_text()
 
     def _sync_left_scrollbar(self) -> None:

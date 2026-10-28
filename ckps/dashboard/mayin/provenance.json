@@ -71,12 +71,12 @@
   "hint_box.py": {
     "source": "dashboard/hint_box.py",
     "sha256": "ef3f4e0d3fb56b9fd8169a628c3d204953375519c8ade99de23b201040d6ef9a",
-    "adaptation": "Native MayinTien selectable, bounded hints; copied without business dependencies."
+    "adaptation": "Native MayinTien selectable, bounded hints; 14px logical font, larger panel, blue border and high-contrast background. No business dependencies."
   },
   "_HoverHint": {
     "source": "dashboard/windows.py",
     "line": 621,
     "sha256": "34183aeea9157a9c97a4d8d565eb5d3d1dd005fe30551906118f6957cdc38a4e",
-    "adaptation": "Extracted to hover_hint.py; local hint_box imports only."
+    "adaptation": "Extracted to hover_hint.py; local hint_box imports only; optional click toggle for help panels."
   }
 }

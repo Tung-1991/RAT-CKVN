@@ -32,6 +32,8 @@
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
 - E/M phải hiện đầy đủ TSL/ARM và DYNAMIC (ATR, giữ lãi, tỷ lệ đóng, LẶP),
   không giấu trong nâng cao. Giữ hint giải thích và cùng kích thước hai cửa sổ.
+- Preview gọn, trạng thái BOT/quản lý/giá thành panel màu dễ thấy; chữ tối thiểu
+  14. Chi tiết mở bằng panel giải thích; nút vị thế ghi BẢO VỆ LỆNH.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

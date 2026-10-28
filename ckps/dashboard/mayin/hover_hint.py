@@ -8,7 +8,7 @@ from .hint_box import HINT_FONT, HOVER_DELAY_MS, release_hint
 class _HoverHint:
     def __init__(self, widget: Any, text: str | Callable[[], str], placement: str = "side", *,
                  font: tuple | None = None, max_width: int = 440, padding: tuple[int, int] = (10, 6),
-                 fixed_size: bool = False):
+                 fixed_size: bool = False, click_to_toggle: bool = False):
         self.widget, self.text, self.popup = widget, text, None
         self.placement = placement
         self.font, self.max_width, self.padding = font or HINT_FONT, max_width, padding
@@ -19,8 +19,12 @@ class _HoverHint:
         widget.bind("<Motion>", self._motion, add="+")
         widget.bind("<Leave>", self._leave, add="+")
         widget.bind("<Destroy>", self._hide, add="+")
-        for sequence in ("<Button-1>", "<Button-3>", "<MouseWheel>"):
+        widget.bind('<Button-1>', self._toggle if click_to_toggle else self._hide, add='+')
+        for sequence in ("<Button-3>", "<MouseWheel>"):
             widget.bind(sequence, self._hide, add="+")
+
+    def _toggle(self, event=None):
+        self._hide() if self.popup else self._show(event)
 
     def _enter(self, _event: Any = None) -> None:
         if self.leave_timer is not None:

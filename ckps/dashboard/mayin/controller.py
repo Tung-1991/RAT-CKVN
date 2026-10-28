@@ -146,17 +146,16 @@ class MayinController(OriginalPanels):
                 (self.preview_tp_value,self.preview_tp_detail,rules.tp_enabled,rules.tp_distance,1,COL_GREEN)):
                 points=rules.points(distance,entry)
                 value.configure(text=f'{distance:g} {unit}' if enabled else 'Chưa bật',text_color=color if enabled else COL_MUTED)
-                detail.configure(text=f'Long {price(entry+sign*points)} / Short {price(entry-sign*points)}' if enabled and entry else 'Chờ giá để tính mốc' if enabled else '')
+                detail.configure(text=f'L {price(entry+sign*points)} / S {price(entry-sign*points)}' if enabled and entry else 'Chờ giá vào' if enabled else '')
             title=(f'VÉ · LONG {qty} / SHORT {short_capacity.maximum} HĐ' if not self.qty.get().strip()
                    and qty!=short_capacity.maximum else f'VÉ LỆNH · {qty} HĐ')
             if qty_unknown:title='VÉ LỆNH · CHỜ SỨC MỞ'
             self.preview_order_title.configure(text=title)
             self.preview_status_reason.configure(text='LỖ TẠI SL '+sl if rules.sl_enabled else 'CHƯA CÓ SL')
-            self.preview_position_context.configure(text='Giá vào dự kiến '+price(entry)+' · Long / Short')
-            armed=self.view.get('armed',False)
-            self.preview_status_badge.configure(text='BOT ON' if armed else 'BOT OFF',text_color=COL_GREEN if armed else COL_MUTED)
+            self._preview_position_context='VÉ LỆNH\nGiá vào dự kiến '+price(entry)+' · Long / Short\nChỉ tính mốc; vào lệnh phải xác nhận tay.'
+            self._refresh_preview_state()
             atr=self.view.get('atr14_pct')
-            self.preview_atr.configure(text=f'{atr:.2f}%' if atr is not None else 'Chờ nến ngày',text_color='#60A5FA' if atr is not None else COL_MUTED)
+            self.preview_atr.configure(text=f'{atr:.2f}%' if atr is not None else 'Chờ nến 1D',text_color='#60A5FA' if atr is not None else COL_MUTED)
             self.preview_atr_detail.configure(text='')
             self._render_management_milestones(*ticket_milestones(entry, rules, atr))
             self._render_management_config(rules)
@@ -173,24 +172,38 @@ class MayinController(OriginalPanels):
             value.configure(text_color=COL_MUTED if milestone.value=='OFF' else COL_TEXT)
 
     def _render_management_config(self, rules):
-        """Keep the configured action readable even without market data."""
+        """Full configuration stays in a readable panel opened from each title."""
         unit='điểm' if rules.distance_unit=='POINTS' else '%'
-        for prefix,widget in (('arm',self.preview_normal_config),('dynamic',self.preview_exit_config)):
+        for prefix in ('arm','dynamic'):
+            title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
-                widget.configure(text='')
-                (self.preview_normal_parameters if prefix=='arm' else self.preview_exit_parameters).configure(text='')
+                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE hoặc BẢO VỆ LỆNH.'
                 continue
             policy=getattr(rules,prefix+'_policy')
             basis='gốc' if getattr(rules,prefix+'_basis')=='ORIGINAL' else 'còn lại'
             action=f"Đóng {getattr(rules,prefix+'_close_pct'):g}% {basis}" if policy=='AUTO' else 'Chỉ thông báo'
             repeat=f'Lặp {rules.repeat_gap:g} {unit}' if getattr(rules,prefix+'_repeat') else 'Không lặp'
-            widget.configure(text=action+' · '+repeat)
-        self.preview_normal_parameters.configure(text=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} {unit}' if rules.arm_enabled else '')
-        parts=[]
-        if rules.atr_start_enabled:parts.append(f'START {rules.atr_start_multiplier:g} ATR')
-        if rules.atr_trail_enabled:parts.append(f'Lùi {rules.atr_trail_multiplier:g} ATR')
-        if rules.retention_enabled:parts.append(f'Giữ {rules.retention_pct:g}% lãi')
-        self.preview_exit_parameters.configure(text=' · '.join(parts) if rules.dynamic_enabled else '')
+            if prefix=='arm':
+                parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} {unit}'
+                explanation='Đạt ARM rồi bám đỉnh Long / đáy Short. Giá lùi tới mốc thì xử lý.'
+            else:
+                parts=[]
+                if rules.atr_start_enabled:parts.append(f'Bắt đầu {rules.atr_start_multiplier:g} ATR')
+                if rules.atr_trail_enabled:parts.append(f'Lùi {rules.atr_trail_multiplier:g} ATR')
+                if rules.retention_enabled:parts.append(f'Giữ {rules.retention_pct:g}% lãi')
+                parameters=' · '.join(parts)
+                explanation='Bảo vệ trước ARM. Khi đạt ARM, TSL tiếp quản.'
+            self._preview_help[prefix]='\n'.join((title,explanation,parameters,action+' · '+repeat,
+                'AUTO tự đóng khi đủ quyền; ALERT chỉ ghi LOG.'))
+
+    def _refresh_preview_state(self, position=None, rules=None):
+        from .preview_state import preview_state, TONES
+        badges=preview_state(self.view,self.settings.max_quote_age,position,rules,
+            changing_book=bool(self.mode_requested or self.switch_pending),demo=getattr(self,'preview_only',False))
+        for widget,(text,tone) in zip((self.preview_status_badge,self.preview_management_badge,self.preview_data_badge),badges):
+            background,border,foreground=TONES[tone]
+            widget.configure(text=text,text_color=foreground)
+            widget.master.configure(fg_color=background,border_color=border)
 
     def _render_selected_management(self):
         selected=self.positions_tree.selection()
@@ -205,23 +218,23 @@ class MayinController(OriginalPanels):
         tp=position.entry+position.sign*rules.points(rules.tp_distance,position.entry)
         self.preview_order_title.configure(text=f'{position.side} · {position.quantity} HĐ · {position.symbol}')
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
-        managing=self.view.get('armed') and position.managed
-        self.preview_status_reason.configure(text=source+' · '+('QUẢN LÝ ON' if managing else 'CHỈ PREVIEW' if not self.view.get('armed') else 'CHƯA NHẬN QUẢN LÝ'))
+        self.preview_status_reason.configure(text=source)
+        self._refresh_preview_state(position,rules)
         self._render_management_config(rules)
-        self.preview_position_context.configure(text=f'Giá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))} · Còn {position.quantity}/{position.original_quantity} HĐ')
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         self.preview_sl_value.configure(text=price(sl) if rules.sl_enabled else 'Chưa bật')
         self.preview_tp_value.configure(text=price(tp) if rules.tp_enabled else 'Chưa bật')
         self.preview_sl_value.configure(text_color=COL_RED if rules.sl_enabled else COL_MUTED)
         self.preview_tp_value.configure(text_color=COL_GREEN if rules.tp_enabled else COL_MUTED)
-        self.preview_sl_detail.configure(text='Giá cắt lỗ' if rules.sl_enabled else '')
-        self.preview_tp_detail.configure(text='Giá chốt lời' if rules.tp_enabled else '')
+        self.preview_sl_detail.configure(text='')
+        self.preview_tp_detail.configure(text='')
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)
         pending=[o for o in self.view.get('orders',[]) if o.get('position_id')==position.id and o['action']=='CLOSE' and o['status'] not in FINAL]
         self._render_management_milestones(*position_milestones(position,rules,quote.get('last'),atr,ready=ready,pending=pending))
         mfe=max(0,position.sign*((position.best or position.entry)-position.entry))
-        self.preview_atr_detail.configure(text=f'Lãi cao nhất {mfe:+g} điểm' if position.history_verified else 'Chưa có lịch sử đỉnh/đáy')
+        self.preview_atr_detail.configure(text=f'Đỉnh lãi {mfe:+g} điểm' if position.history_verified else 'Chờ đỉnh / đáy')
         if position.symbol!=self.view.get('contract'):
             self.preview_atr.configure(text='CHỜ NẾN MÃ CŨ')
 

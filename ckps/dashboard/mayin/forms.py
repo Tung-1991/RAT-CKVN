@@ -19,9 +19,9 @@ class OriginalRuleForms:
     def _hint_icon(self, parent, text):
         if not text:
             return ctk.CTkLabel(parent, text='', width=1, height=1, fg_color='transparent')
-        icon = ctk.CTkLabel(parent, text='?', width=18, height=18, font=('Segoe UI', 11, 'bold'),
+        icon = ctk.CTkLabel(parent, text='?', width=20, height=20, font=('Segoe UI', 13, 'bold'),
                             fg_color=self.BLUE, text_color=self.TEXT, corner_radius=9, cursor='hand2')
-        icon._hover_hint = _HoverHint(icon, text)
+        icon._hover_hint = _HoverHint(icon, text, click_to_toggle=True)
         return icon
 
     @staticmethod

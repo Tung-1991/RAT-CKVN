@@ -3,10 +3,10 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-HINT_FONT = ("Segoe UI", 12)
+HINT_FONT = ("Segoe UI", 14)
 HOVER_DELAY_MS = 500
-HINT_SIZE = (440, 220)
-COMPACT_HINT_SIZE = (340, 180)
+HINT_SIZE = (480, 280)
+COMPACT_HINT_SIZE = (440, 260)
 
 
 def copy_text(widget, text):
@@ -70,7 +70,7 @@ def fixed_hint(host, text, *, compact=False, font=None, max_width=None, padding=
         measure._hint_measure_key = measure_key
     if compact:
         width = min(width, max(round(100 * scale), measure.winfo_reqwidth() + round(18 * scale) + 2))
-    height = min(max_height, measure.winfo_reqheight() + footer_height + 2)
+    height = min(max_height, measure.winfo_reqheight() + footer_height + 2 + round(4 * scale))
     box = getattr(host, "_viking_hint_spare", None)
     host._viking_hint_spare = None
     layout = (width, height, font, padx, pady, footer_height, scale)
@@ -91,13 +91,13 @@ def fixed_hint(host, text, *, compact=False, font=None, max_width=None, padding=
         box.body.tag_remove("sel", "1.0", "end")
         box.body.yview_moveto(0)
         return box
-    box = tk.Frame(host, width=width, height=height, bg="#252A31", highlightthickness=1,
-                   highlightbackground="#59616E")
+    box = tk.Frame(host, width=width, height=height, bg="#183047", highlightthickness=2,
+                   highlightbackground="#60A5FA")
     box.grid_propagate(False)
     box.grid_rowconfigure(0, weight=1)
     box.grid_columnconfigure(0, weight=1)
     body = tk.Text(box, wrap="word", font=font,
-                   bg="#252A31", fg="#F5F7FA", relief="flat", borderwidth=0,
+                   bg="#183047", fg="#EFF6FF", relief="flat", borderwidth=0,
                    highlightthickness=0, cursor="xterm", padx=padx,
                    pady=pady, spacing1=0, spacing3=0,
                    exportselection=False)
@@ -127,7 +127,7 @@ def fixed_hint(host, text, *, compact=False, font=None, max_width=None, padding=
     body.bind("<<Copy>>", copy_selection)
     body.bind("<Control-c>", copy_selection)
     body.bind("<Control-C>", copy_selection)
-    footer = tk.Frame(box, height=footer_height, bg="#252A31")
+    footer = tk.Frame(box, height=footer_height, bg="#183047")
     footer.grid(row=1, column=0, columnspan=2, sticky="ew")
     footer.grid_propagate(False)
     footer.grid_columnconfigure(0, weight=1)

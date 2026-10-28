@@ -24,6 +24,8 @@ SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE
 
 Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Preview có một dòng bối cảnh MA200 1D và biến động chỉ đọc, cùng SL/TP, ARM/DYNAMIC và LẶP; thiếu nguồn hiện chờ. Không có quyền giao dịch từ tín hiệu. RULE và KẾT NỐI cùng kích thước, giới hạn theo màn hình/DPI; tab KẾT NỐI không tự đổi cỡ. E/M cuộn khi màn hình nhỏ; các nút ? giải thích nghiệp vụ ngay trong cửa sổ. VỐN hiện trực tiếp hạn mức/rủi ro/phí; 0 là không đặt trần riêng.
 
+Preview giữ chiều cao gọn, bảng lệnh nhận phần không gian còn lại. Ba ô trạng thái màu tách BOT, quyền quản lý vị thế và dữ liệu giá/đối soát; giá cũ hoặc chưa đồng bộ không hiện quản lý ON. Bản mẫu luôn ghi GIÁ MẪU, không hiện trạng thái kết nối DNSE. Chỉ giữ mốc và khoảng cách hiện tại trên Preview; bấm tiêu đề TSL/ARM hoặc DYNAMIC để xem panel giải thích, cấu hình và LẶP bằng chữ lớn. Nút BẢO VỆ LỆNH chỉnh riêng vị thế đang chọn; RULE giữ cấu hình chung đầy đủ.
+
 ## Lịch và Telegram
 
 Đáo hạn tính thứ Năm thứ ba, lùi theo ngày nghỉ đã biết; nếu thiếu lịch hiển thị dự kiến. Trước ngày đáo hạn backend gửi nhắc, không chặn giao dịch ngày đó. Ngày nghỉ, đổi rổ và ATO/ATC vẫn theo cấu hình; chỉ chặn mở mới, không chặn đóng/E/M.
