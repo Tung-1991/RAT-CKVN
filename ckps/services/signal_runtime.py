@@ -123,12 +123,13 @@ class SignalRuntime(SignalNotifications):
                 text=f'{contract} · {event["channel"]} · ALERT\n'+event['reason']
                 if event.get('notify',True) and self.owner_enabled and self.owner_token and self.owner_chat and self._private_alert_allowed(text):
                     self.store.notify('owner:'+self.owner_chat,text,key=event['id'])
-        from .market_context import publish_context
+        from .market_context import publish_context, entry_context
         last_move=self.store.get('market','movement:'+contract,{})
         quote=raw_quotes.get(contract,{})
         if quote and -2<=time.time()-quote.get('at',0)<=self.settings.max_quote_age:
             movement=(f"BIẾN ĐỘNG {last_move.get('change_points',0):+g}đ" if 0<=time.time()-last_move.get('at',0)<=60 else 'ĐANG THEO DÕI')
-            publish_context({'contract':contract,'observed_at':quote['at'],'movement':movement})
+            publish_context({'contract':contract,'observed_at':quote['at'],'movement':movement,
+                'entry':entry_context(analysis,contract,max_age=self.settings.max_quote_age)})
         self.events.put(('snapshot',{'contract':contract,'quotes':raw_quotes,'connection':data,'analysis':analysis,
             'history':self.store.all('signal_history')[-200:],'events':self.store.events(),
             'market':market,'telegram_error':self.telegram_error}))

@@ -22,9 +22,15 @@ SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE
 
 ## Giao diện
 
-Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Preview có một dòng bối cảnh MA200 1D và biến động chỉ đọc, cùng SL/TP, ARM/DYNAMIC và LẶP; thiếu nguồn hiện chờ. Không có quyền giao dịch từ tín hiệu. RULE và KẾT NỐI cùng kích thước, giới hạn theo màn hình/DPI; tab KẾT NỐI không tự đổi cỡ. E/M cuộn khi màn hình nhỏ; các nút ? giải thích nghiệp vụ ngay trong cửa sổ. VỐN hiện trực tiếp hạn mức/rủi ro/phí; 0 là không đặt trần riêng.
+Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Bảng chính ẩn PNL; lịch sử giữ số liệu PNL và phí. Không lặp các dòng chờ giá/kết nối ở nhiều khu vực. RULE và KẾT NỐI cùng kích thước theo DPI, tab không tự đổi cỡ; RULE giữ đầy đủ PROTECT.
 
-Preview giữ chiều cao gọn, bảng lệnh nhận phần không gian còn lại. Ba ô trạng thái màu tách BOT, quyền quản lý vị thế và dữ liệu giá/đối soát; giá cũ hoặc chưa đồng bộ không hiện quản lý ON. Bản mẫu luôn ghi GIÁ MẪU, không hiện trạng thái kết nối DNSE. Chỉ giữ mốc và khoảng cách hiện tại trên Preview; bấm tiêu đề TSL/ARM hoặc DYNAMIC để xem panel giải thích, cấu hình và LẶP bằng chữ lớn. Nút BẢO VỆ LỆNH chỉnh riêng vị thế đang chọn; RULE giữ cấu hình chung đầy đủ.
+Preview tập trung hai ô kết quả: ĐIỂM VÀO và THỊ TRƯỜNG. Điểm vào lấy kết quả đã đủ mọi điều kiện từ EMA/RSI và bộ lọc backend; badge READY trung gian không phải điểm vào. Hiện giá Long tại thời điểm phân tích, giấu thông số EMA/RSI và đếm giao cắt. Thị trường UP/DOWN/ĐI NGANG so giá hợp đồng với MA200 từ 200 nến ngày đã đóng; không suy ngược thành tín hiệu Short. Cả hai chỉ để xem, không điền vé, không mở/đóng lệnh hoặc chặn E/M.
+
+Backend chuyển kết quả rút gọn qua tệp JSON local ghi nguyên tử. Chỉ dùng khi đúng mã và thời gian giá/phân tích còn mới; backend chưa chạy, thiếu nến hoặc giá cũ hiện CHỜ. Tắt Telegram không tắt phân tích. Không chuyển trạng thái tín hiệu cũ thành mới chỉ vì có quote mới.
+
+Chỉ khi chọn vị thế mới hiện SL/TP, TSL/ARM, DYNAMIC và một trạng thái quyền quản lý. Chi tiết cấu hình/LẶP mở khi bấm tiêu đề, không tự bung khi rê chuột. Nút BẢO VỆ LỆNH chỉnh riêng vị thế; RULE giữ cấu hình chung. Bản mẫu ghi rõ MẪU, không dùng runtime hoặc dữ liệu tài khoản thật.
+
+Chữ thống nhất theo vai trò: nhãn 14, nội dung 16, số kết quả 22, giá/vốn lớn 28. Preview xuống dòng khi thiếu chỗ, không tự thu nhỏ chữ. Bảng dùng chữ nội dung 16 và dòng phụ 14. Nền trung tính; Long/UP/TP xanh, SL/DOWN đỏ, TSL xanh dương và DYNAMIC cam; trạng thái tạm dừng vàng.
 
 ## Lịch và Telegram
 

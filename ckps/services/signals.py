@@ -103,6 +103,7 @@ class SignalAnalysis:
             elif bars[-1]["time"] == today:
                 bars[-1] = dict(bars[-1], close=price)
         result = {"contract": symbol, "observed_at": now.timestamp(),
+                  "quote_at": quote.get('at'), "quote_price": price,
                   "market_phase": market_phase(now, working_dates, exchange="VN30")[0],
                   "p1": p1_snapshot(bars, price, fresh=fresh),
                   "p2": {"status": "CHỜ DỮ LIỆU", "badge": "WAIT", "mode": p.buy_ema_cross_mode,

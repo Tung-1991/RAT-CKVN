@@ -27,7 +27,7 @@ PALETTE = {
 }
 
 
-FONT_KEY = ("Segoe UI", 14, "bold", "italic")
+FONT_KEY = ("Segoe UI", 14, "bold")
 
 
 FONT_VALUE = ("Segoe UI", 14)

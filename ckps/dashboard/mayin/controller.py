@@ -10,7 +10,7 @@ import customtkinter as ctk
 from ckps.models import FINAL, ExitSettings, Position, Quote, load_record, quantity
 from ..formatting import money, price, clock
 from .panels import OriginalPanels, INFO_PANEL_HEIGHT
-from .management_preview import position_milestones, ticket_milestones
+from .management_preview import position_milestones
 from .widgets import fit_label_text
 from .tokens import *
 
@@ -40,7 +40,7 @@ class MayinController(OriginalPanels):
             entry.configure(textvariable=variable)
             variable.trace_add('write',lambda *_:self._refresh_ticket_preview())
         self.open_buttons=[self.execute_button,self.short_button]
-        self.capacity_label=ctk.CTkLabel(self.left,text='SỨC MỞ: --',font=('Segoe UI',11),text_color=COL_MUTED)
+        self.capacity_label=ctk.CTkLabel(self.left,text='SỨC MỞ: --',font=('Segoe UI',13),text_color=COL_MUTED)
         self.capacity_label.pack(fill='x',padx=12,pady=(2,4))
         self._right_panel()
         # The stock loss-lock does not exist in CKPS. Use that original cell for
@@ -126,7 +126,6 @@ class MayinController(OriginalPanels):
             entry=float(self.limit.get()) if self.kind.get()=='LO' and self.limit.get() else quote.get('last',0)
             rules,_=self.ticket_rules(entry)
             long_capacity=self.ticket_capacity('LONG',entry,rules)
-            short_capacity=self.ticket_capacity('SHORT',entry,rules)
             qty=quantity(self.qty.get()) if self.qty.get().strip() else long_capacity.maximum
             qty_unknown=not self.qty.get().strip() and (account.get('qmax_long') is None or account.get('margin_per_contract') is None)
             sl=(money(-rules.points(rules.sl_distance,entry)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
@@ -138,31 +137,24 @@ class MayinController(OriginalPanels):
             cash=money(margin*qty+fee) if margin is not None else '—'
             for widget,text in ((self.lbl_tp_preview,tp),(self.lbl_sl_preview,sl),(self.lbl_fee_preview,fees),(self.lbl_order_value,cash)):
                 widget.configure(text=text)
-            if not hasattr(self,'preview_sl_value'):
-                return
-            unit='điểm' if rules.distance_unit=='POINTS' else '%'
-            for value,detail,enabled,distance,sign,color in (
-                (self.preview_sl_value,self.preview_sl_detail,rules.sl_enabled,rules.sl_distance,-1,COL_RED),
-                (self.preview_tp_value,self.preview_tp_detail,rules.tp_enabled,rules.tp_distance,1,COL_GREEN)):
-                points=rules.points(distance,entry)
-                value.configure(text=f'{distance:g} {unit}' if enabled else 'Chưa bật',text_color=color if enabled else COL_MUTED)
-                detail.configure(text=f'L {price(entry+sign*points)} / S {price(entry-sign*points)}' if enabled and entry else 'Chờ giá vào' if enabled else '')
-            title=(f'VÉ · LONG {qty} / SHORT {short_capacity.maximum} HĐ' if not self.qty.get().strip()
-                   and qty!=short_capacity.maximum else f'VÉ LỆNH · {qty} HĐ')
-            if qty_unknown:title='VÉ LỆNH · CHỜ SỨC MỞ'
-            self.preview_order_title.configure(text=title)
-            self.preview_status_reason.configure(text='LỖ TẠI SL '+sl if rules.sl_enabled else 'CHƯA CÓ SL')
-            self._preview_position_context='VÉ LỆNH\nGiá vào dự kiến '+price(entry)+' · Long / Short\nChỉ tính mốc; vào lệnh phải xác nhận tay.'
-            self._refresh_preview_state()
-            atr=self.view.get('atr14_pct')
-            self.preview_atr.configure(text=f'{atr:.2f}%' if atr is not None else 'Chờ nến 1D',text_color='#60A5FA' if atr is not None else COL_MUTED)
-            self.preview_atr_detail.configure(text='')
-            self._render_management_milestones(*ticket_milestones(entry, rules, atr))
-            self._render_management_config(rules)
-            self._render_selected_management()
-        except (ValueError,TypeError) as exc:
-            if hasattr(self,'preview_status_reason'):
-                self.preview_status_reason.configure(text=str(exc))
+        except (ValueError,TypeError):
+            pass
+        finally:
+            if hasattr(self,'preview_management'):
+                self._render_signal_preview()
+                self._render_selected_management()
+                self._queue_preview_layout()
+
+    def _render_signal_preview(self):
+        from .signal_preview import signal_preview
+        colors={'green':('#86EFAC','#397B57'),'red':('#FCA5A5','#8B4851'),
+                'neutral':(COL_TEXT,'#435367')}
+        result=signal_preview(self.view,self.settings.max_quote_age)
+        for prefix,card,(value,detail,tone) in zip(('entry','trend'),self.preview_signal_cards,result):
+            foreground,border=colors[tone]
+            card.configure(fg_color='#1C242E',border_color=border)
+            getattr(self,'preview_'+prefix+'_value').configure(text=value,text_color=foreground)
+            getattr(self,'preview_'+prefix+'_detail').configure(text=detail)
 
     def _render_management_milestones(self, arm, dynamic):
         for value, detail, milestone in ((self.preview_normal_value,self.preview_normal_detail,arm),
@@ -200,10 +192,8 @@ class MayinController(OriginalPanels):
         from .preview_state import preview_state, TONES
         badges=preview_state(self.view,self.settings.max_quote_age,position,rules,
             changing_book=bool(self.mode_requested or self.switch_pending),demo=getattr(self,'preview_only',False))
-        for widget,(text,tone) in zip((self.preview_status_badge,self.preview_management_badge,self.preview_data_badge),badges):
-            background,border,foreground=TONES[tone]
-            widget.configure(text=text,text_color=foreground)
-            widget.master.configure(fg_color=background,border_color=border)
+        text,tone=badges[1]
+        self.preview_status_badge.configure(text=text,text_color=TONES[tone][2])
 
     def _render_selected_management(self):
         selected=self.positions_tree.selection()
@@ -211,14 +201,15 @@ class MayinController(OriginalPanels):
         position_id=row.get('position_id') if row else selected[0] if selected else None
         raw=next((p for p in self.view.get('positions',[]) if p['id']==position_id),None)
         if not raw:
+            if self.preview_management.winfo_manager():self.preview_management.grid_remove()
             return
+        if not self.preview_management.winfo_manager():self.preview_management.grid()
         position=load_record(Position,raw)
         rules=load_record(ExitSettings,position.exit_overrides or self.settings.exit)
         sl=position.entry-position.sign*rules.points(rules.sl_distance,position.entry)
         tp=position.entry+position.sign*rules.points(rules.tp_distance,position.entry)
         self.preview_order_title.configure(text=f'{position.side} · {position.quantity} HĐ · {position.symbol}')
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
-        self.preview_status_reason.configure(text=source)
         self._refresh_preview_state(position,rules)
         self._render_management_config(rules)
         self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
@@ -226,17 +217,11 @@ class MayinController(OriginalPanels):
         self.preview_tp_value.configure(text=price(tp) if rules.tp_enabled else 'Chưa bật')
         self.preview_sl_value.configure(text_color=COL_RED if rules.sl_enabled else COL_MUTED)
         self.preview_tp_value.configure(text_color=COL_GREEN if rules.tp_enabled else COL_MUTED)
-        self.preview_sl_detail.configure(text='')
-        self.preview_tp_detail.configure(text='')
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)
         pending=[o for o in self.view.get('orders',[]) if o.get('position_id')==position.id and o['action']=='CLOSE' and o['status'] not in FINAL]
         self._render_management_milestones(*position_milestones(position,rules,quote.get('last'),atr,ready=ready,pending=pending))
-        mfe=max(0,position.sign*((position.best or position.entry)-position.entry))
-        self.preview_atr_detail.configure(text=f'Đỉnh lãi {mfe:+g} điểm' if position.history_verified else 'Chờ đỉnh / đáy')
-        if position.symbol!=self.view.get('contract'):
-            self.preview_atr.configure(text='CHỜ NẾN MÃ CŨ')
 
     def render(self):
         view,account=self.view,self.view.get('account',{})
@@ -256,18 +241,16 @@ class MayinController(OriginalPanels):
         connection=view.get('market_connection',{})
         self.lbl_brain.configure(text=f'{requested} · CHƯA KẾT NỐI' if requested else 'DNSE: '+('ĐÃ CÓ GIÁ' if ready else 'CHỜ GIÁ' if connection.get('configured') else 'CHƯA KẾT NỐI'),text_color=COL_GREEN if ready and not requested else COL_WARN)
         self.lbl_quote_symbol.configure(text=contract)
-        previous,value=getattr(self,'_last_quote',None),quote.get('last')
-        color=COL_GREEN if previous is not None and value and value>previous else COL_RED if previous is not None and value and value<previous else COL_TEXT
-        self.lbl_price.configure(text=price(value),text_color=color)
-        self._last_quote=value or previous
-        self.lbl_market.configure(text=f"GIÁ DNSE · {clock(quote.get('at'))}" if quote else 'CHƯA KẾT NỐI GIÁ DNSE')
-        self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',11))
-        self.market_context_label.configure(text=view.get('market_context',{}).get('text','CHỜ GIÁ / NẾN DNSE'))
+        value=quote.get('last')
+        self.lbl_price.configure(text=price(value),text_color=COL_TEXT)
+        self.lbl_market.grid_remove()
+        self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',13))
+        self.market_context_label.configure(text='CHỈ THAM KHẢO · MẪU' if getattr(self,'preview_only',False) else 'CHỈ THAM KHẢO')
         if not self.limit.get() and value:
             self.limit.set(f'{value:.1f}')
         armed=view.get('armed',False)
         self.bot.configure(text='BOT · ON' if armed else 'ĐANG BẬT…' if self.bot_requested else 'BOT · OFF',fg_color='#15803D' if armed else COL_GRAY)
-        self.capacity_label.configure(text=f"SỨC MỞ LONG {view.get('LONG',{}).get('maximum','—')} / SHORT {view.get('SHORT',{}).get('maximum','—')} HĐ" if ready else 'CHỜ GIÁ DNSE')
+        self.capacity_label.configure(text=f"SỨC MỞ LONG {view.get('LONG',{}).get('maximum','—')} / SHORT {view.get('SHORT',{}).get('maximum','—')} HĐ" if ready else '')
         calendar_reason=view.get('calendar',{}).get('reason')
         if calendar_reason:self.capacity_label.configure(text=calendar_reason,text_color=COL_WARN,wraplength=380)
         else:self.capacity_label.configure(text_color=COL_MUTED)
@@ -285,12 +268,13 @@ class MayinController(OriginalPanels):
             self.logs.see('end')
             self.logs.configure(state='disabled')
             self.logs._last_text=text
-        status=view.get('error') or connection.get('error') or view.get('telegram_error') or (f"Giá DNSE {clock(quote.get('at'))} · "+('PAPER / TIỀN ẢO' if mode=='PAPER' else 'REAL') if ready else 'Đang chờ dữ liệu DNSE.')
+        status=view.get('error') or connection.get('error') or view.get('telegram_error') or ''
         if requested:
             status=f'Cấu hình {requested} · Sổ đang chạy: {mode}. Đóng KẾT NỐI để hủy.'
         if self.ui_status and self.ui_status[1]>time.monotonic():
             status=self.ui_status[0]
         self.status.configure(text=status,text_color=COL_RED if view.get('error') else COL_MUTED)
+        self.status.grid() if status else self.status.grid_remove()
         for button in self.open_buttons:
             button.configure(state='normal' if ready and view.get('healthy') and view.get('consistent') and not self.order_busy and not requested and not calendar_reason else 'disabled')
         self._fit_account_stats()

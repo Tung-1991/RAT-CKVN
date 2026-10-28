@@ -17,6 +17,7 @@ class WorkspaceMixin:
         self.ui_events[:] = self.ui_events[-200:]
         self.ui_status = str(text), time.monotonic() + 8
         self.status.configure(text=str(text), text_color=RED if error else MUTED)
+        self.status.grid()
 
     def confirm(self, text, callback):
         self.clear_confirmation()
@@ -51,6 +52,7 @@ class WorkspaceMixin:
         self.info_panel.grid_remove()
         self.right.grid_rowconfigure(1, weight=1, minsize=0)
         self.right.grid_rowconfigure(2, weight=0, minsize=0)
+        self.right.grid_rowconfigure(3, weight=0)
         for child in self.detail_page.winfo_children():
             child.destroy()
         self.running_page.grid_remove()

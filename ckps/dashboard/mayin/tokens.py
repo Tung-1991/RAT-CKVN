@@ -43,10 +43,10 @@ COL_ACCENT_BLUE = "#60A5FA"
 
 COL_PREVIEW_TEXT = "#D6DAE1"
 
-COL_TITLE = "#BABEC5"
+COL_TITLE = "#D6DAE1"
 
 FONT_BOLD = ("Segoe UI", 14)
 
-FONT_PREVIEW_TITLE = ("Segoe UI", 14, "bold", "italic")
+FONT_PREVIEW_TITLE = ("Segoe UI", 14, "bold")
 
-FONT_PREVIEW_VALUE = ("Cascadia Mono", 14)
+FONT_PREVIEW_VALUE = ("Cascadia Mono", 16)

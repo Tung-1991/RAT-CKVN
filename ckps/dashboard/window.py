@@ -112,6 +112,10 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
     def close(self):
         self.running = False
         self.closing = True
+        timer=getattr(self,'_preview_layout_after',None)
+        if timer:
+            self.after_cancel(timer)
+            self._preview_layout_after=None
         for popup in self.popups.values():
             if popup.winfo_exists():
                 popup.destroy()

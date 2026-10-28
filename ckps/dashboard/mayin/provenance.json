@@ -77,6 +77,6 @@
     "source": "dashboard/windows.py",
     "line": 621,
     "sha256": "34183aeea9157a9c97a4d8d565eb5d3d1dd005fe30551906118f6957cdc38a4e",
-    "adaptation": "Extracted to hover_hint.py; local hint_box imports only; optional click toggle for help panels."
+    "adaptation": "Extracted to hover_hint.py; local hint_box imports only; optional click toggle and click-only preview details."
   }
 }

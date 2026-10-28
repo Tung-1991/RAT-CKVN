@@ -29,7 +29,7 @@ class DashboardTablesMixin:
             ("entry", "GIÁ VÀO", 90), ("last", "GIÁ", 85), ("pnl", "PNL GIÁ", 115),
             ("sl", "SL", 75), ("tp", "TP", 75), ("protect", "PROTECT", 90), ("managed", "QL", 45),
             ("mae", "MAE ĐIỂM", 90), ("mfe", "MFE ĐIỂM", 90)), hierarchy=True)
-        tree.configure(displaycolumns=("side", "quantity", "entry", "pnl", "protect"))
+        tree.configure(displaycolumns=("side", "quantity", "entry", "protect"))
         tree.heading("entry",text="VỐN / GIÁ LO")
         tree.heading("protect",text="SL / TP · BẢO VỆ")
         for key,width,weight in (("side",64,0),("quantity",44,0),("entry",88,1),("pnl",110,1),("protect",174,2)):

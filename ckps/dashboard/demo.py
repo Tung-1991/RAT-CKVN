@@ -57,7 +57,8 @@ class DemoApp(App):
         # Samples stay explicitly marked and fresh while their frozen scenario
         # is on screen; never show a DNSE waiting badge beside invented prices.
         for quote in self.view.get('quotes',{}).values():quote['at']=time.time()
-        self.view['market_context']={'text':'DỮ LIỆU MẪU'}
+        self.view['market_context']={'state':'ABOVE','ma':1985,'observed_at':time.time(),
+            'entry':{'state':'READY','price':2007,'observed_at':time.time()}}
         super().render()
         for button in self.open_buttons:button.configure(state='disabled')
         for key,button in self.action_buttons.items():
@@ -65,7 +66,7 @@ class DemoApp(App):
         self.lbl_brain.configure(text='MẪU OFFLINE',text_color='#F59E0B')
         self.lbl_market.configure(text='GIÁ MẪU · KHÔNG KẾT NỐI DNSE')
         self.lbl_account.configure(text='MẪU · Không dùng sổ giao dịch')
-        self.status.configure(text='MẪU OFFLINE · Đã đóng 1/2 HĐ · Đang giữ 1 HĐ.',text_color='#BFDBFE')
+        self.status.grid_remove()
 
     def _refresh_ticket_preview(self):
         # A sample is a frozen observation, not a live quote that expires while

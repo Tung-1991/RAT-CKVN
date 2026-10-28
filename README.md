@@ -4,7 +4,7 @@
 - `backend.py`: thông báo biến động, nhắc đáo hạn và vào lệnh qua Telegram.
 - `START_SYSTEM.bat`: mở app, backend, preview mẫu hoặc kiểm thử offline.
 
-MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. RULE chỉ cần bật các ngưỡng bảo vệ muốn dùng; BOT OFF khi khởi động. Preview hiển thị bối cảnh thị trường và mốc bảo vệ. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
+MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. RULE giữ đầy đủ PROTECT; BOT OFF khi khởi động. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN; giấu thông số chỉ báo, chỉ hiện bảo vệ khi chọn vị thế. Bảng chính ẩn PNL. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
 
 PAPER dùng giá DNSE và tiền ảo; REAL cần tài khoản phái sinh và OTP. SL hiện do app thực thi, cần app và BOT đang hoạt động; chưa nghiệm thu REAL. Chi tiết: [nghiệp vụ CKPS](support/docs/CKPS.md).
 

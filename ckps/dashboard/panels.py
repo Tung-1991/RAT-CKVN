@@ -15,8 +15,8 @@ class DashboardPanelsMixin(MayinController):
     def _right_panel(self):
         header = ctk.CTkFrame(self.right, fg_color='transparent')
         header.grid(row=0, column=0, sticky='ew', pady=(0, 5))
-        ctk.CTkLabel(header, text='LỆNH ĐANG CHẠY', font=('Segoe UI', 17, 'bold'), text_color=TITLE).pack(side='left')
-        self.running_count=ctk.CTkLabel(header,text='0 vị thế · 0 lệnh chờ',font=('Segoe UI',13),text_color=MUTED)
+        ctk.CTkLabel(header, text='LỆNH ĐANG CHẠY', font=('Segoe UI', 16, 'bold'), text_color=TITLE).pack(side='left')
+        self.running_count=ctk.CTkLabel(header,text='0 vị thế · 0 lệnh chờ',font=('Segoe UI',14),text_color=MUTED)
         self.running_count.pack(side='left',padx=14)
         self.history_button = ctk.CTkButton(header, text='◷ LỊCH SỬ', width=100, height=30, fg_color=SLATE, hover_color=SLATE_HOVER, command=self.history)
         self.history_button.pack(side='right')
@@ -35,12 +35,12 @@ class DashboardPanelsMixin(MayinController):
         self.running_rows = {}
         self.action_bar = ctk.CTkFrame(self.running_page, fg_color=COL_PANEL_HEADER,border_width=1,border_color=COL_GRID,corner_radius=6)
         self.action_bar.grid(row=1, column=0, sticky='ew', padx=5, pady=(0, 4))
-        self.selection_label = ctk.CTkLabel(self.action_bar, text='', anchor='w', font=('Segoe UI', 13))
+        self.selection_label = ctk.CTkLabel(self.action_bar, text='', anchor='w', font=('Segoe UI', 14))
         self.selection_label.pack(side='left', padx=8)
         self.action_buttons = {}
         for key, label, command, color in (('close', 'ĐÓNG / GIẢM', self.close_position, '#B91C1C'), ('manage', 'BẢO VỆ LỆNH', self.position_exit, BLUE), ('adopt', 'NHẬN QUẢN LÝ', self.manage_position, SLATE), ('cancel', 'HỦY LỆNH', self.cancel_order, SLATE), ('edit', 'SỬA LO', self.edit_order, SLATE), ('reconcile', 'ĐỐI SOÁT', self.bind_unknown, SLATE)):
             button = ctk.CTkButton(self.action_bar, text=label, height=30, width=130 if key=='manage' else 108,
-                font=('Segoe UI',13,'bold'),fg_color=color, command=command)
+                font=('Segoe UI',14,'bold'),fg_color=color, command=command)
             self.action_buttons[key] = button
         self.action_bar.grid_remove()
         self.detail_page = ctk.CTkFrame(self.table_workspace, fg_color=SURFACE_2)

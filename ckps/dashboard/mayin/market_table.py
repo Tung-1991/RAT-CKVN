@@ -244,10 +244,10 @@ class MarketTable(ctk.CTkFrame):
         self.horizontal.grid(row=2, column=0, sticky="ew") if content_width > width + 1 else self.horizontal.grid_remove()
         self.header.delete("all")
         self.body.delete("all")
-        heading_font = tkfont.Font(root=self, family="Segoe UI", size=-round(13 * scale), weight="bold")
-        value_font = tkfont.Font(root=self, family="Segoe UI", size=-round(13 * scale))
-        number_font = tkfont.Font(root=self, family="Cascadia Mono", size=-round(13 * scale))
-        detail_font = tkfont.Font(root=self, family="Segoe UI", size=-round(11 * scale))
+        heading_font = tkfont.Font(root=self, family="Segoe UI", size=-round(14 * scale), weight="bold")
+        value_font = tkfont.Font(root=self, family="Segoe UI", size=-round(16 * scale))
+        number_font = tkfont.Font(root=self, family="Cascadia Mono", size=-round(16 * scale))
+        detail_font = tkfont.Font(root=self, family="Segoe UI", size=-round(14 * scale))
         self._fonts = heading_font, value_font, number_font, detail_font
         for key, x1, x2 in self._bounds:
             col = self._columns[key]
