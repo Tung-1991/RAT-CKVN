@@ -71,6 +71,10 @@ class DemoApp(App):
         # A sample is a frozen observation, not a live quote that expires while
         # the user reads RULE. This applies only to the explicit demo app.
         for quote in self.view.get('quotes',{}).values():quote['at']=time.time()
+        context=self.view.get('market_context',{})
+        if context:
+            context['observed_at']=time.time()
+            if context.get('entry'):context['entry']['observed_at']=time.time()
         return super()._refresh_ticket_preview()
 
     def _render_selected_management(self):

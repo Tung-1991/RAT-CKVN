@@ -22,9 +22,13 @@ SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE
 
 ## Giao diện
 
-Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Bảng chính ẩn PNL; lịch sử giữ số liệu PNL và phí. Bảng có các cột hợp đồng, chiều/HĐ, giá vốn/LO, SL, TP và trạng thái; mỗi vị thế một dòng. Cột trạng thái xét BOT chung, quyền vị thế, dữ liệu và lệnh chờ, không ghi ON chỉ vì vị thế đã được nhận quản lý. Không lặp các dòng chờ giá/kết nối ở nhiều khu vực. Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE, VỐN, TELEGRAM / LỊCH); hai cửa sổ cùng kích thước theo DPI, tab không tự đổi cỡ. Không mở cửa sổ cài đặt Telegram riêng.
+Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Bảng chính ẩn PNL; lịch sử giữ số liệu PNL và phí. Bảng có các cột hợp đồng, chiều/HĐ, giá vốn/LO, SL, TP và trạng thái; mỗi vị thế một dòng. Cột trạng thái xét BOT chung, quyền vị thế, dữ liệu và lệnh chờ, không ghi ON chỉ vì vị thế đã được nhận quản lý. Không lặp các dòng chờ giá/kết nối ở nhiều khu vực. Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH); hai cửa sổ cùng kích thước theo DPI, tab không tự đổi cỡ. Không mở cửa sổ cài đặt Telegram riêng.
 
 Preview tập trung hai ô kết quả: ĐIỂM VÀO và THỊ TRƯỜNG. Điểm vào lấy kết quả đã đủ mọi điều kiện từ EMA/RSI và bộ lọc backend; badge READY trung gian không phải điểm vào. Hiện giá Long tại thời điểm phân tích, giấu thông số EMA/RSI và đếm giao cắt. Thị trường UP/DOWN/ĐI NGANG so giá hợp đồng với MA200 từ 200 nến ngày đã đóng; không suy ngược thành tín hiệu Short. Cả hai chỉ để xem, không điền vé, không mở/đóng lệnh hoặc chặn E/M.
+
+DNSE / VỐN dùng chung trang, luôn hiện tài khoản và OTP; PAPER không cần OTP nên khóa thao tác xác thực. Nút LƯU áp dụng hạn mức/phí, KẾT NỐI DNSE áp dụng kết nối và đối soát sổ. Ghi nhớ kết nối là tùy chọn: API key/secret và phiên xác thực còn hạn được Windows DPAPI mã hóa theo người dùng, ràng buộc đúng API và tài khoản. Không lưu mã OTP dùng một lần; bỏ ghi nhớ rồi LƯU sẽ xóa dữ liệu đã ghi nhớ. Không đưa token giao dịch vào snapshot UI hoặc pipe backend. Preview hiện trạng thái OTP và hạn phiên; app luôn mở PAPER, BOT OFF, REAL do người dùng chọn.
+
+Giá DNSE gần nhất được lưu riêng ngoài Git, giữ nguyên mã hợp đồng và thời điểm giá. Mở lại khi chưa có giá mới vẫn hiển thị GIÁ LƯU/CŨ và thời gian; cache này chỉ dùng trình bày, không nhập vào quote giao dịch, không khớp PAPER, không cấp sức mở hoặc tạo tín hiệu mới. Preview báo rõ thiếu giá, thiếu nến ngày hoặc backend chưa chạy; kết quả Long có thời gian phân tích.
 
 Backend chuyển kết quả rút gọn qua tệp JSON local ghi nguyên tử. Chỉ dùng khi đúng mã và thời gian giá/phân tích còn mới; backend chưa chạy, thiếu nến hoặc giá cũ hiện CHỜ. Tắt Telegram không tắt phân tích. Không chuyển trạng thái tín hiệu cũ thành mới chỉ vì có quote mới.
 

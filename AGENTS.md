@@ -22,7 +22,7 @@
   giấu EMA/RSI/các đếm giao cắt. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
-- Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE, VỐN, TELEGRAM / LỊCH),
+- Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
   cùng kích thước/DPI; ít tab, không mở cửa sổ cài đặt backend riêng. Lịch sử ở góc bảng.
   RULE E/M chọn CHUNG / VỊ THẾ; cấu hình riêng, kế thừa và nhận/bỏ quản lý đều ở đó.
   Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và vào lệnh.

@@ -274,6 +274,8 @@ def test_dashboard_atr_uses_execution_completed_candles(system):
     from ckps.services.runtime import Runtime
     engine, broker, store=system
     runtime=Runtime.__new__(Runtime)
+    from ckps.services.quote_cache import QuoteCache
+    runtime.quote_cache=QuoteCache()
     runtime.engine,runtime.store,runtime.settings=engine,store,engine.settings
     runtime.events=Queue()
     runtime.telegram_error=''

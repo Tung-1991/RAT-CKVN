@@ -149,12 +149,16 @@ class MayinController(OriginalPanels):
         from .signal_preview import signal_preview
         colors={'green':('#86EFAC','#397B57'),'red':('#FCA5A5','#8B4851'),
                 'neutral':(COL_TEXT,'#435367')}
-        result=signal_preview(self.view,self.settings.max_quote_age)
+        session=getattr(self,'signal_session',None)
+        result=signal_preview({**self.view,'analysis_running':bool(session and session.running)},self.settings.max_quote_age)
         for prefix,card,(value,detail,tone) in zip(('entry','trend'),self.preview_signal_cards,result):
             foreground,border=colors[tone]
             card.configure(fg_color='#1C242E',border_color=border)
             getattr(self,'preview_'+prefix+'_value').configure(text=value,text_color=foreground)
             getattr(self,'preview_'+prefix+'_detail').configure(text=detail)
+        from .connection_status import otp_status
+        text,tone=otp_status(self.view,self.settings.mode)
+        self.preview_connection_status.configure(text=text,text_color=COL_GREEN if tone=='green' else COL_WARN if tone=='amber' else COL_MUTED)
 
     def _render_management_milestones(self, arm, dynamic):
         for value, detail, milestone in ((self.preview_normal_value,self.preview_normal_detail,arm),
@@ -229,9 +233,16 @@ class MayinController(OriginalPanels):
         connection=view.get('market_connection',{})
         self.lbl_brain.configure(text=f'{requested} · CHƯA KẾT NỐI' if requested else 'DNSE: '+('ĐÃ CÓ GIÁ' if ready else 'CHỜ GIÁ' if connection.get('configured') else 'CHƯA KẾT NỐI'),text_color=COL_GREEN if ready and not requested else COL_WARN)
         self.lbl_quote_symbol.configure(text=contract)
+        cache=view.get('market_cache',{})
+        display_quote=quote or cache.get('quote',{})
         value=quote.get('last')
-        self.lbl_price.configure(text=price(value),text_color=COL_TEXT)
-        self.lbl_market.grid_remove()
+        self.lbl_price.configure(text=price(display_quote.get('last')),text_color=COL_TEXT if ready else COL_WARN)
+        if not quote and display_quote:self.lbl_quote_symbol.configure(text=cache.get('contract',contract))
+        if display_quote:
+            self.lbl_market.configure(text=('DNSE · ' if ready else 'GIÁ CŨ · ' if quote else 'GIÁ LƯU · ')+clock(display_quote.get('at')),
+                text_color=COL_MUTED if ready else COL_WARN)
+            self.lbl_market.grid()
+        else:self.lbl_market.grid_remove()
         self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',13))
         self.market_context_label.configure(text='CHỈ THAM KHẢO · MẪU' if getattr(self,'preview_only',False) else 'CHỈ THAM KHẢO')
         if not self.limit.get() and value:

@@ -235,8 +235,10 @@ class OriginalPanels:
             label(card,'preview_'+prefix+'_value','CHỜ',size=18,bold=True,row=1,column=0,padx=13,pady=3)
             label(card,'preview_'+prefix+'_detail','Chờ dữ liệu',size=14,row=2,column=0,padx=13,pady=(0,8))
             self.preview_signal_cards.append(card)
+        self.preview_connection=label(data,'preview_connection_status',size=14,color=COL_MUTED,
+            row=1,column=0,padx=8,pady=(0,6))
         management=ctk.CTkFrame(data,width=1,fg_color='transparent')
-        management.grid(row=1,column=0,sticky='new')
+        management.grid(row=2,column=0,sticky='new')
         management.grid_columnconfigure(0,weight=1)
         self.preview_management=management
         header=ctk.CTkFrame(management,fg_color='transparent')

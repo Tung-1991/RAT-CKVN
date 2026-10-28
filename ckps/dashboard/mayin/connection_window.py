@@ -8,6 +8,7 @@ from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup
 from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.models import quantity
 from ckps.rules.market_alerts import MarketAlertSettings
+from .connection_status import otp_status
 from ..settings_state import signal_settings, save_signal_settings, start_signal_backend
 
 
@@ -23,7 +24,7 @@ class ConnectionFields(OriginalRuleForms):
         return card
 
     def field(self, card, key, label, value, choices=None, secret=False, width=180):
-        hints={'connection.key':'API key DNSE dùng cho phiên kết nối; không lưu vào cấu hình.',
+        hints={'connection.key':'API đọc giá cho PAPER; REAL dùng thêm tài khoản và OTP. Ghi nhớ tùy chọn bằng mã hóa Windows.',
                'connection.secret':'API secret DNSE dùng cho phiên kết nối; không ghi vào log.',
                'connection.account':'Số tiểu khoản phái sinh DNSE dùng cho REAL.',
                'connection.loan':'Gói ký quỹ DNSE. Nếu chỉ có một gói, app tự chọn.',
@@ -82,10 +83,11 @@ class ConnectionWindow(_StableToplevel):
             segmented_button_selected_color=BLUE,segmented_button_unselected_color='#3A3F47',command=self._page_changed)
         self.tabs.grid(row=0,column=0,sticky='nsew',padx=8,pady=(4,0))
         self.tabs._segmented_button.configure(font=('Segoe UI',14,'bold'),height=30)
-        self.pages={name:self.tabs.add(name) for name in ('DNSE','VỐN','TELEGRAM / LỊCH')}
+        self.pages={name:self.tabs.add(name) for name in ('DNSE / VỐN','TELEGRAM / LỊCH')}
         for page in self.pages.values():page.grid_columnconfigure(0,weight=1)
-        self._connection(self.pages['DNSE'])
-        self._capital(self.pages['VỐN'])
+        self.connection_body=self.form._content(self.pages['DNSE / VỐN'],columns=2)
+        self._connection(self.connection_body)
+        self._capital(self.connection_body)
         self._telegram(self.pages['TELEGRAM / LỊCH'])
         self.footer=ctk.CTkFrame(self,fg_color='transparent')
         self.footer.grid(row=1,column=0,sticky='ew',padx=16,pady=(4,10))
@@ -95,6 +97,10 @@ class ConnectionWindow(_StableToplevel):
         self.note.bind('<Configure>',lambda _:self.note.configure(wraplength=max(120,int(self.note.winfo_width()/self.note._get_widget_scaling())-4)),add='+')
         self.primary=ctk.CTkButton(self.footer,text='',height=34,width=165,font=('Segoe UI',13,'bold'),fg_color=GREEN,command=self.save)
         self.primary.grid(row=0,column=1)
+        self.save_button=ctk.CTkButton(self.footer,text='LƯU',width=74,height=34,font=('Segoe UI',13,'bold'),
+            fg_color=BLUE,command=self.save_connection)
+        self.save_button.grid(row=0,column=1,padx=(0,8))
+        self.primary.grid_configure(column=2)
         self.protocol('WM_DELETE_WINDOW',self.destroy)
         self.bind('<Escape>',lambda _:self.destroy())
         self._update_after=None
@@ -108,13 +114,17 @@ class ConnectionWindow(_StableToplevel):
         self.target_label=ctk.CTkLabel(api,text='',font=('Segoe UI',13,'bold'),text_color=MUTED,anchor='w')
         self.target_label.pack(fill='x',padx=9,pady=(0,4))
         for key,label in (('key','API key'),('secret','API secret')):
-            self.form.field(api,'connection.'+key,label,self.app.credentials.get(key,''),secret=True,width=350)
+            value=getattr(self.app,'connection_profile',self.app.credentials).get(key,'')
+            self.form.field(api,'connection.'+key,label,value,secret=True,width=350)
+        self.remember=tk.BooleanVar(value=getattr(self.app,'remember_connection',False))
+        ctk.CTkCheckBox(api,text='Ghi nhớ trên máy · Windows mã hóa',variable=self.remember,
+            font=('Segoe UI',12),checkbox_width=16,checkbox_height=16).pack(fill='x',padx=10,pady=(4,8))
         self.real_account_card=self.form.card(page,'TÀI KHOẢN PHÁI SINH',1)
         for key,label,value in (('account','Tài khoản CKPS',self.app.settings.account_no),('loan','Gói ký quỹ',self.app.settings.loan_package_id)):
             variable=self.form.field(self.real_account_card,'connection.'+key,label,value,width=180)
             if key=='loan':variable._viking_entry.configure(placeholder_text='Tự chọn nếu DNSE có một gói')
         self.otp_card=self.form.card(page,'XÁC THỰC GIAO DỊCH REAL')
-        self.otp_card.grid_configure(row=1,columnspan=2)
+        self.otp_card.grid_configure(row=1,column=0)
         otp_row=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         otp_row.pack(fill='x',padx=9,pady=4)
         otp_row.grid_columnconfigure(1,weight=1)
@@ -122,29 +132,32 @@ class ConnectionWindow(_StableToplevel):
         self.variables['connection.otp']=tk.StringVar()
         ctk.CTkSegmentedButton(otp_row,values=['EMAIL','SMART'],variable=self.variables['connection.otp_type'],
             font=('Segoe UI',12,'bold'),height=30,width=150).grid(row=0,column=0,padx=(0,10))
-        ctk.CTkEntry(otp_row,textvariable=self.variables['connection.otp'],show='•',height=30,
-            font=FONT_VALUE,placeholder_text='Mã OTP').grid(row=0,column=1,sticky='ew')
-        ctk.CTkLabel(self.otp_card,text='EMAIL: mã qua email · SMART: mã từ ứng dụng DNSE',
+        self.otp_entry=ctk.CTkEntry(otp_row,textvariable=self.variables['connection.otp'],show='•',height=30,
+            font=FONT_VALUE,placeholder_text='Mã OTP')
+        self.otp_entry.grid(row=0,column=1,sticky='ew')
+        self.otp_status=ctk.CTkLabel(self.otp_card,text='',font=('Segoe UI',12),text_color=WARN,
+            anchor='w',justify='left',wraplength=315)
+        self.otp_status.pack(fill='x',padx=10,pady=3)
+        ctk.CTkLabel(self.otp_card,text='Ghi nhớ phiên xác thực; không lưu mã OTP.',
             font=('Segoe UI',11),text_color=MUTED,anchor='w').pack(fill='x',padx=10)
         buttons=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         buttons.pack(fill='x',padx=9,pady=4)
-        self.otp_buttons=[ctk.CTkButton(buttons,text='GỬI OTP',width=120,height=30,command=lambda:self.app.send('send_otp')),
-            ctk.CTkButton(buttons,text='XÁC THỰC',width=120,height=30,command=lambda:self.app.send('verify_otp',
-                self.variables['connection.otp'].get(),{'EMAIL':'email_otp','SMART':'smart_otp'}[self.variables['connection.otp_type'].get()]))]
+        self.otp_buttons=[ctk.CTkButton(buttons,text='GỬI EMAIL',width=120,height=30,command=self.send_otp),
+            ctk.CTkButton(buttons,text='XÁC THỰC',width=120,height=30,command=self.verify_otp)]
         for button in self.otp_buttons:button.pack(side='left',padx=(0,8))
         self.packages_label=ctk.CTkLabel(self.otp_card,text='',font=('Segoe UI',12),text_color=MUTED,anchor='w')
 
     def _capital(self,page):
         page.grid_columnconfigure((0,1),weight=1,uniform='capital')
-        limits=self.form.card(page,'HẠN MỨC')
-        risk=self.form.card(page,'RỦI RO / PHÍ',1)
+        limits=self.form.card(page,'VỐN / RỦI RO',1)
+        limits.grid_configure(row=1,column=1)
         self.capital_keys=('capital_limit','max_contracts','risk_limit','risk_nav_pct','estimated_fee_per_contract')
         for key,label in (('capital_limit','Trần ký quỹ (đ)'),('max_contracts','Tổng HĐ tối đa'),
                 ('risk_limit','Lỗ tới SL (đ)'),('risk_nav_pct','Lỗ / NAV (%)'),('estimated_fee_per_contract','Phí / HĐ (đ)')):
-            self.form.field(limits if key in {'capital_limit','max_contracts'} else risk,'capital.'+key,label,getattr(self.app.settings,key),width=100)
-        self._capital_cards=(limits,risk)
+            self.form.field(limits,'capital.'+key,label,getattr(self.app.settings,key),width=100)
+        self._capital_cards=(limits,)
         self.paper_card=self.form.card(page,'TIỀN ẢO PAPER')
-        self.paper_card.grid_configure(row=1,columnspan=2)
+        self.paper_card.grid_configure(row=2,columnspan=2)
         self.paper_funds=ctk.CTkFrame(self.paper_card,fg_color='transparent')
         self.paper_funds.pack(fill='x',padx=9,pady=(4,6))
         self.paper_funds.grid_columnconfigure(0,weight=1)
@@ -222,13 +235,74 @@ class ConnectionWindow(_StableToplevel):
             self.note.configure(text='Đã chạy backend riêng · Không có quyền giao dịch.',text_color=GREEN)
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
-    def save_limits(self):
+    def capital_values(self):
+        return {key:quantity(self.variables['capital.'+key].get()) if key=='max_contracts'
+            else float(self.variables['capital.'+key].get().replace(',','').strip()) for key in self.capital_keys}
+
+    def remember_values(self, credentials):
+        if getattr(self.app,'preview_only',False):
+            return
+        from ckps.connections.secure_session import remember_connection, forget_connection
+        if self.remember.get():remember_connection(credentials)
+        else:forget_connection()
+        self.app.remember_connection=self.remember.get()
+
+    def save_connection(self):
         try:
-            values={key:quantity(self.variables['capital.'+key].get()) if key=='max_contracts'
-                else float(self.variables['capital.'+key].get().replace(',','').strip()) for key in self.capital_keys}
-            self.app.save_config(replace(self.app.settings,**values).validate())
-            self.note.configure(text='Đã áp dụng hạn mức/phí vào mẫu.' if getattr(self.app,'preview_only',False) else 'Đã lưu hạn mức/phí.',text_color=GREEN)
+            if self.app.mode_requested or self.app.switch_pending:
+                raise ValueError('Hoàn tất kết nối sổ đang chọn trước khi lưu.')
+            settings=replace(self.app.settings,**self.capital_values(),
+                account_no=self.variables['connection.account'].get().strip(),
+                loan_package_id=self.variables['connection.loan'].get().strip()).validate()
+            if self.app.runtime and (settings.account_no!=self.app.settings.account_no or settings.loan_package_id!=self.app.settings.loan_package_id):
+                raise ValueError('Tài khoản/gói đã đổi: bấm KẾT NỐI DNSE để đối soát sổ mới.')
+            credentials={key:self.variables['connection.'+key].get().strip() for key in ('key','secret')}
+            self.remember_values(credentials)
+            self.app.save_config(settings)
+            self.app.connection_profile=credentials
+            if self.remember.get():self.app.send('remember_session')
+            self.note.configure(text='Đã áp dụng vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
+                else 'Đã lưu cấu hình và ghi nhớ kết nối bằng Windows.' if self.remember.get()
+                else 'Đã lưu cấu hình · Kết nối chỉ dùng trong phiên.',text_color=GREEN)
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
+
+    def send_otp(self):
+        if not self.otp_ready():return
+        if self.variables['connection.otp_type'].get()!='EMAIL':
+            self.note.configure(text='SMART: lấy mã trong ứng dụng DNSE rồi bấm XÁC THỰC.',text_color=MUTED)
+            return
+        self.app.send('send_otp')
+        self.note.configure(text='Đang yêu cầu DNSE gửi email OTP…',text_color=MUTED)
+
+    def otp_ready(self):
+        if getattr(self.app,'preview_only',False) or self.variables['connection.mode'].get()!='REAL' or self.app.settings.mode!='REAL' or not self.app.runtime or self.app.mode_requested or self.app.switch_pending:
+            self.note.configure(text='Kết nối sổ REAL trước khi xác thực OTP.',text_color=RED)
+            return False
+        if not self.otp_matches_active():
+            self.note.configure(text='Thông số kết nối đã đổi; KẾT NỐI DNSE trước khi xác thực OTP.',text_color=RED)
+            return False
+        return True
+
+    def otp_matches_active(self):
+        if any(self.variables['connection.'+key].get().strip()!=getattr(self.app.settings,setting)
+            for key,setting in (('account','account_no'),('loan','loan_package_id'))):return False
+        return all((self.variables['connection.'+key].get().strip() or os.environ.get('CKPS_DNSE_API_'+key.upper(),''))
+            == (self.app.credentials.get(key,'') or os.environ.get('CKPS_DNSE_API_'+key.upper(),'')) for key in ('key','secret'))
+
+    def verify_otp(self):
+        if not self.otp_ready():return
+        code=self.variables['connection.otp'].get().strip()
+        if not code:
+            self.note.configure(text='Nhập mã OTP từ email hoặc ứng dụng DNSE.',text_color=RED)
+            return
+        self.app.send('verify_otp',code,{'EMAIL':'email_otp','SMART':'smart_otp'}[self.variables['connection.otp_type'].get()])
+        self.variables['connection.otp'].set('')
+        self.note.configure(text='Đang xác thực OTP…',text_color=MUTED)
+
+    def otp_result(self, name):
+        self.note.configure(text='Đã yêu cầu gửi OTP qua email.' if name=='send_otp'
+            else 'OTP đã xác thực · BOT vẫn OFF.' if not self.app.view.get('armed')
+            else 'OTP đã xác thực · BOT đang ON.',text_color=GREEN)
 
     def apply_capital(self):
         try:
@@ -253,24 +327,22 @@ class ConnectionWindow(_StableToplevel):
     def select_mode(self,mode):
         self.variables['connection.mode'].set(mode)
         self.target_label.configure(text='PAPER · Giá DNSE, tiền ảo' if mode=='PAPER' else 'REAL · Tài khoản và lệnh DNSE')
-        self.real_account_card.grid() if mode=='REAL' else self.real_account_card.grid_remove()
-        self.api_card.grid_configure(columnspan=1 if mode=='REAL' else 2)
-        self.otp_card.grid() if mode=='REAL' else self.otp_card.grid_remove()
         self.paper_card.grid() if mode=='PAPER' else self.paper_card.grid_remove()
         self.select_page('DNSE')
 
     def select_page(self,page):
         if page in {'Telegram','LỊCH'}:page='TELEGRAM / LỊCH'
-        self.tabs.set(page if page in self.pages else 'DNSE')
+        if page in {'DNSE','VỐN'}:page='DNSE / VỐN'
+        self.tabs.set(page if page in self.pages else 'DNSE / VỐN')
         self._page_changed()
 
     def _page_changed(self):
         if not hasattr(self,'primary'):return
         page,mode=self.tabs.get(),self.variables['connection.mode'].get()
-        self.primary.configure(text={'DNSE':'KẾT NỐI DNSE','VỐN':'LƯU HẠN MỨC','TELEGRAM / LỊCH':'LƯU THAY ĐỔI'}[page])
+        self.primary.configure(text='KẾT NỐI DNSE' if page=='DNSE / VỐN' else 'LƯU THAY ĐỔI')
+        self.save_button.grid() if page=='DNSE / VỐN' else self.save_button.grid_remove()
         text='Mẫu: rà cấu hình DNSE/API; không kết nối thật.' if getattr(self.app,'preview_only',False) else ('PAPER chỉ đọc dữ liệu DNSE.' if mode=='PAPER' else 'Kết nối trước, xác thực OTP sau.')
-        if page=='VỐN':text='0 = không đặt trần riêng; không thay đổi E/M.'
-        elif page=='TELEGRAM / LỊCH':text='Đáo hạn chỉ nhắc · EMA/RSI chỉnh tại RULE.'
+        if page=='TELEGRAM / LỊCH':text='Đáo hạn chỉ nhắc · EMA/RSI chỉnh tại RULE.'
         self.note.configure(text=text,text_color=MUTED)
     def connect(self):
         try:
@@ -282,9 +354,12 @@ class ConnectionWindow(_StableToplevel):
                 raise ValueError('Nhập API key và API secret DNSE.')
             if values['mode']=='REAL' and not values['account']:raise ValueError('Nhập tài khoản CKPS cho REAL.')
             settings=replace(self.app.settings,mode=values['mode'],
+                **self.capital_values(),
                 account_no=values['account'] if values['mode']=='REAL' else self.app.settings.account_no,
                 loan_package_id=values['loan'] if values['mode']=='REAL' else self.app.settings.loan_package_id).validate()
             credentials={key:values[key] for key in ('key','secret')}
+            credentials={key:value or os.environ.get('CKPS_DNSE_API_'+key.upper(),'') for key,value in credentials.items()}
+            self.remember_values(credentials)
             self.app.clear_confirmation()
             self._connecting=True
             self.app.mode_requested=settings.mode
@@ -299,8 +374,7 @@ class ConnectionWindow(_StableToplevel):
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
     def save(self):
-        if self.tabs.get()=='VỐN':self.save_limits()
-        elif self.tabs.get()=='TELEGRAM / LỊCH':
+        if self.tabs.get()=='TELEGRAM / LỊCH':
             try:
                 self.save_notifications()
             except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
@@ -314,8 +388,18 @@ class ConnectionWindow(_StableToplevel):
         packages=self.app.view.get('loan_packages',[])
         self.packages_label.configure(text=' · '.join(f"{p['id']} {p['name']}" for p in packages[:2]))
         self.packages_label.pack(fill='x',padx=9,pady=(0,4)) if packages else self.packages_label.pack_forget()
-        for button in self.otp_buttons:button.configure(state='normal' if self.app.settings.mode=='REAL' and self.app.runtime else 'disabled')
+        otp_enabled=(not getattr(self.app,'preview_only',False) and self.variables['connection.mode'].get()=='REAL'
+            and self.app.settings.mode=='REAL' and self.app.runtime and not self.app.mode_requested and not self.app.switch_pending
+            and self.otp_matches_active())
+        for button in self.otp_buttons:button.configure(state='normal' if otp_enabled else 'disabled')
+        self.otp_buttons[0].configure(state='normal' if otp_enabled and self.variables['connection.otp_type'].get()=='EMAIL' else 'disabled')
+        self.otp_entry.configure(state='normal' if otp_enabled else 'disabled')
+        text,tone=otp_status(self.app.view,self.variables['connection.mode'].get())
+        if self.variables['connection.mode'].get()=='REAL' and self.app.settings.mode!='REAL':text='OTP · Kết nối sổ REAL trước khi xác thực'
+        elif self.app.settings.mode=='REAL' and not self.otp_matches_active():text='OTP · Thông số đã đổi; cần kết nối lại'
+        self.otp_status.configure(text=text,text_color=GREEN if tone=='green' else WARN if tone=='amber' else MUTED)
         self.primary.configure(state='disabled' if self.app.switch_pending else 'normal')
+        self.save_button.configure(state='disabled' if self.app.switch_pending or self.app.mode_requested else 'normal')
         self.paper_capital_button.configure(state='normal' if self.app.settings.mode=='PAPER' and not self.app.mode_requested and not self.app.switch_pending else 'disabled')
         if getattr(self,'_connecting',False) and not self.app.switch_pending:
             if self.app.view.get('market_ready'):

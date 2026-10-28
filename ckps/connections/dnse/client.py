@@ -68,6 +68,11 @@ class DNSEBroker:
             if trading and method != "GET":
                 raise UnknownOutcome(f"DNSE HTTP {response.status_code}; cần đối soát.")
         if not response.ok:
+            if trading and response.status_code in {401, 403}:
+                self.token, self.token_until = '', 0.
+                from ckps.connections.secure_session import save_trading_session
+                try:save_trading_session(self.account_no, {'key': self.key, 'secret': self.secret}, '', 0.)
+                except (OSError, ValueError):pass
             raise BrokerError(f"DNSE HTTP {response.status_code} · {method} {path}")
         try:
             return response.json()

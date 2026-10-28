@@ -23,6 +23,8 @@ class Runtime:
 
     def __init__(self, settings, credentials=None, *, offline=False):
         self.settings = settings
+        from ckps.services.quote_cache import QuoteCache
+        self.quote_cache = QuoteCache()
         folder = book_path(settings)
         self.lease = AccountLease(folder / "session.lock")
         self.store = Store(folder / "ledger.sqlite3")
@@ -35,6 +37,8 @@ class Runtime:
                 broker=PaperBroker(self.store,settings,market=market,offline=offline)
             else:
                 broker=DNSEBroker(key,secret,settings.account_no,settings.loan_package_id)
+                from ckps.connections.secure_session import trading_session
+                broker.token, broker.token_until = trading_session(settings.account_no, {'key': key, 'secret': secret})
                 if not offline:
                     from ckps.connections.dnse.candles import CandleWorker
                     broker.history_worker = CandleWorker(ReadOnlyHistory(key, secret))
@@ -88,8 +92,20 @@ class Runtime:
                         self.engine.paper_capital(*args)
                         write_settings(self.settings)
                         self.events.put(('paper_capital_result',{'capital':self.settings.paper_balance}))
+                    elif name == 'remember_session':
+                        broker = self.engine.broker
+                        if self.settings.mode == 'REAL':
+                            from ckps.connections.secure_session import save_trading_session
+                            save_trading_session(self.settings.account_no, {'key': broker.key, 'secret': broker.secret}, broker.token, broker.token_until)
                     elif name in {"set_price", "set_bars", "send_otp", "verify_otp"}:
                         getattr(self.engine.broker, name)(*args, **kwargs)
+                        if name == 'verify_otp' and self.settings.mode == 'REAL':
+                            broker = self.engine.broker
+                            from ckps.connections.secure_session import save_trading_session
+                            try:
+                                save_trading_session(self.settings.account_no, {'key': broker.key, 'secret': broker.secret}, broker.token, broker.token_until)
+                            except (OSError, ValueError):
+                                self.events.put(('session_warning', 'OTP đã xác thực trong phiên; Windows chưa lưu được phiên xác thực.'))
                     elif name == "refresh":
                         pass
                     else:
@@ -103,6 +119,7 @@ class Runtime:
                     self.store.event("ERROR", str(exc))
                     self.events.put(("error", str(exc)))
                     if name=='paper_capital':self.events.put(('paper_capital_result',{'error':str(exc)}))
+                    if name in {'send_otp', 'verify_otp'}:self.events.put(('auth_error', str(exc)))
                 next_poll = 0.0
             feed = getattr(self.engine.broker, "feed", None)
             if feed and feed.authenticated and feed.changed.is_set():
@@ -136,6 +153,7 @@ class Runtime:
 
     def _publish(self):
         snapshot = self.engine.latest
+        self.quote_cache.observe(snapshot)
         quotes = {symbol: asdict(quote) for symbol, quote in snapshot.quotes.items()} if snapshot else {}
         views = {"armed": self.engine.enabled.is_set(), "healthy": self.engine.healthy,
                  "consistent": self.engine.consistent, "error": self.engine.error,
@@ -146,6 +164,11 @@ class Runtime:
                  "orders": [asdict(o) for o in self.store.orders()][-300:],
                  "history": [asdict(p) for p in self.store.positions(closed=True)][-300:],
                  "events": self.store.events()}
+        views['market_cache'] = self.quote_cache.value
+        broker = self.engine.broker
+        until = getattr(broker, 'token_until', 0.)
+        views['trading_auth'] = {'required': self.settings.mode == 'REAL', 'until': until,
+            'valid': bool(getattr(broker, 'token', '') and until > time.time())}
         if snapshot:
             from ckps.services.market_context import context
             views['market_context'] = context(snapshot, max_age=self.settings.max_quote_age)

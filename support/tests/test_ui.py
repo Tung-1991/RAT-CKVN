@@ -70,12 +70,18 @@ def _layout_scenario(scale):
         app._mode_selected('REAL');settle(600)
         connection=app.popups['connection']
         assert app.settings.mode=='PAPER' and app.mode_choice.get()=='REAL'
-        assert app.mode_requested=='REAL' and connection.tabs.get()=='DNSE'
+        assert app.mode_requested=='REAL' and connection.tabs.get()=='DNSE / VỐN'
         assert connection.otp_card.winfo_ismapped()
-        for widget in widgets(connection.pages['DNSE']):
+        for widget in widgets(connection.pages['DNSE / VỐN']):
             if isinstance(widget,ctk.CTkEntry) and widget.winfo_ismapped():
+                body=connection.connection_body
+                canvas=body._parent_canvas
+                canvas.yview_moveto(max(0,widget.winfo_rooty()-body.winfo_rooty()-4)/body.winfo_height())
+                app.update()
                 assert widget.winfo_rootx()+widget.winfo_width()<=connection.winfo_rootx()+connection.winfo_width()
                 assert widget.winfo_rooty()+widget.winfo_height()<=connection.footer.winfo_rooty()
+                assert widget.winfo_rooty()>=canvas.winfo_rooty()-2
+        connection.connection_body._parent_canvas.yview_moveto(0)
         sent=[]
         app.send=lambda *args,**kwargs:sent.append((args,kwargs))
         app.open_order('LONG');app.toggle_bot()
@@ -105,9 +111,9 @@ def _layout_scenario(scale):
         assert dialog._exits()==app.settings.exit
         connection=app.connection();settle(600)
         assert dialog is not connection
-        assert set(connection.pages)=={'DNSE','VỐN','TELEGRAM / LỊCH'}
+        assert set(connection.pages)=={'DNSE / VỐN','TELEGRAM / LỊCH'}
         assert {'telegram.token','telegram.chat'} <= set(connection.variables)
-        assert not connection.otp_card.winfo_ismapped()
+        assert connection.otp_card.winfo_ismapped()
         assert not hasattr(connection,'csv_button') and 'paper.price' not in connection.variables
         assert 'owner_chat' not in connection.variables and 'owner_token' not in connection.variables
         connection.select_page('VỐN');settle(600)
@@ -137,8 +143,14 @@ def _layout_scenario(scale):
             for widget in widgets(connection.pages[name]):
                 if name == 'TELEGRAM / LỊCH':continue
                 if widget is not connection.primary and isinstance(widget,(ctk.CTkEntry,ctk.CTkSwitch,ctk.CTkButton)) and widget.winfo_ismapped():
+                    body=connection.connection_body
+                    canvas=body._parent_canvas
+                    # CTk reports off-viewport scroll children as mapped.
+                    canvas.yview_moveto(max(0,widget.winfo_rooty()-body.winfo_rooty()-4)/body.winfo_height())
+                    app.update()
                     bottom=connection.pages[name].winfo_rooty()+connection.pages[name].winfo_height()-4
                     assert widget.winfo_rooty()+widget.winfo_height()<=min(bottom,connection.footer.winfo_rooty()), (name,widget,widget.winfo_rooty(),widget.winfo_height(),bottom,connection.footer.winfo_rooty(),connection.winfo_height(),connection._get_window_scaling())
+            connection.connection_body._parent_canvas.yview_moveto(0)
         connection.destroy();dialog.destroy();sent.clear()
         from dataclasses import asdict
         from ckps.models import Quote
@@ -797,10 +809,10 @@ def _split_app_scenario(kind,scale):
             connection.select_page('VỐN');settle()
             assert connection.variables['capital.max_contracts']._viking_entry.winfo_ismapped()
             connection.variables['capital.max_contracts'].set('3')
-            connection.save();assert app.settings.max_contracts==3
+            connection.save_connection();assert app.settings.max_contracts==3
             assert app.settings.exit['sl_distance']==12
             connection.variables['capital.risk_limit'].set('-1')
-            connection.save();assert app.settings.risk_limit==0
+            connection.save_connection();assert app.settings.risk_limit==0
             connection.variables['capital.risk_limit'].set('0')
             connection.select_page('TELEGRAM / LỊCH');settle()
             connection.primary.invoke()

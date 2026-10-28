@@ -37,6 +37,14 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.switch_pending = None
         self.mode_requested = None
         self.credentials = {}
+        self.remember_connection = False
+        if not getattr(self, 'preview_only', False):
+            from ckps.connections.secure_session import load_connection
+            self.credentials = load_connection()
+            self.remember_connection = bool(self.credentials)
+            from ckps.services.quote_cache import QuoteCache
+            self.view['market_cache'] = QuoteCache().value
+        self.connection_profile = dict(self.credentials)
         self.popups = {}
         self.order_busy = False
         self.bot_requested = False
@@ -45,7 +53,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close)
         if start_runtime:
-            self.runtime = Runtime(self.settings)
+            self.runtime = Runtime(self.settings, self.credentials)
         self.after(100, self._drain)
 
     def _drain(self):
@@ -70,6 +78,14 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
                         self.report(payload, error=True)
                 elif kind == "success":
                     self.order_busy = False
+                    popup = self.popups.get('connection')
+                    if payload in {'send_otp', 'verify_otp'} and popup and popup.winfo_exists():
+                        popup.otp_result(payload)
+                elif kind == 'session_warning':
+                    self.report(payload, error=True)
+                elif kind == 'auth_error':
+                    popup = self.popups.get('connection')
+                    if popup and popup.winfo_exists():popup.note.configure(text=payload, text_color=RED)
                 elif kind == 'paper_capital_result':
                     if 'capital' in payload:self.settings.paper_balance=payload['capital']
                     popup=self.popups.get('connection')
@@ -94,6 +110,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
             self.runtime = Runtime(settings, credentials)
             self.bot_requested = False
             self.credentials, self.settings = credentials, settings
+            self.connection_profile = dict(credentials)
             write_settings(settings)
             self.view = {}
             self.mode_requested = None

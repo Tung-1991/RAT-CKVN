@@ -236,12 +236,17 @@ def _consolidated_scenario(scale):
         settle()
         size = (rule.winfo_width(), rule.winfo_height())
         assert size == (connection.winfo_width(), connection.winfo_height())
-        assert set(connection.pages) == {'DNSE', 'VỐN', 'TELEGRAM / LỊCH'}
+        assert set(connection.pages) == {'DNSE / VỐN', 'TELEGRAM / LỊCH'}
         for page in connection.pages:
             connection.select_page(page)
             settle()
             assert size == (connection.winfo_width(), connection.winfo_height())
         reachable(connection.notification_body, connection.footer)
+        connection.select_page('DNSE');settle()
+        reachable(connection.connection_body, connection.footer)
+        assert connection.otp_card.winfo_ismapped()
+        assert connection.otp_entry.cget('state') == 'disabled'
+        connection.select_page('TELEGRAM / LỊCH');settle()
         connection.variables['telegram.token'].set('offline-token')
         connection.variables['telegram.chat'].set('offline-chat')
         connection.options['entry'].set(True)
