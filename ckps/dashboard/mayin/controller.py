@@ -159,7 +159,8 @@ class MayinController(OriginalPanels):
     def _render_management_milestones(self, arm, dynamic):
         for value, detail, milestone in ((self.preview_normal_value,self.preview_normal_detail,arm),
                                          (self.preview_exit_value,self.preview_exit_detail,dynamic)):
-            value.configure(text='Chưa bật' if milestone.value=='OFF' else milestone.value)
+            text=milestone.value.removeprefix('AUTO · ').replace('ALERT · ','BÁO · ',1)
+            value.configure(text='Chưa bật' if milestone.value=='OFF' else text)
             detail.configure(text=milestone.detail)
             value.configure(text_color=COL_MUTED if milestone.value=='OFF' else COL_TEXT)
 
@@ -188,13 +189,6 @@ class MayinController(OriginalPanels):
             self._preview_help[prefix]='\n'.join((title,explanation,parameters,action+' · '+repeat,
                 'AUTO tự đóng khi đủ quyền; ALERT chỉ ghi LOG.'))
 
-    def _refresh_preview_state(self, position=None, rules=None):
-        from .preview_state import preview_state, TONES
-        badges=preview_state(self.view,self.settings.max_quote_age,position,rules,
-            changing_book=bool(self.mode_requested or self.switch_pending),demo=getattr(self,'preview_only',False))
-        text,tone=badges[1]
-        self.preview_status_badge.configure(text=text,text_color=TONES[tone][2])
-
     def _render_selected_management(self):
         selected=self.positions_tree.selection()
         row=next((o for o in self.view.get('orders',[]) if selected and o['id']==selected[0]),None)
@@ -206,17 +200,11 @@ class MayinController(OriginalPanels):
         if not self.preview_management.winfo_manager():self.preview_management.grid()
         position=load_record(Position,raw)
         rules=load_record(ExitSettings,position.exit_overrides or self.settings.exit)
-        sl=position.entry-position.sign*rules.points(rules.sl_distance,position.entry)
-        tp=position.entry+position.sign*rules.points(rules.tp_distance,position.entry)
-        self.preview_order_title.configure(text=f'{position.side} · {position.quantity} HĐ · {position.symbol}')
+        self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ')
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
-        self._refresh_preview_state(position,rules)
+        self.preview_rule_source.configure(text='RULE RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG')
         self._render_management_config(rules)
         self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
-        self.preview_sl_value.configure(text=price(sl) if rules.sl_enabled else 'Chưa bật')
-        self.preview_tp_value.configure(text=price(tp) if rules.tp_enabled else 'Chưa bật')
-        self.preview_sl_value.configure(text_color=COL_RED if rules.sl_enabled else COL_MUTED)
-        self.preview_tp_value.configure(text_color=COL_GREEN if rules.tp_enabled else COL_MUTED)
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

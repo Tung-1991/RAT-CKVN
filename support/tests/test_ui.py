@@ -56,7 +56,8 @@ def _layout_scenario(scale):
         assert not hasattr(app,'preview_atr')
         assert not app.view.get('quotes')  # Configuration Preview does not invent prices.
         assert not app.positions_tree.horizontal.winfo_ismapped()
-        assert app.table_workspace.winfo_height()/app.table_workspace._get_widget_scaling()<=280
+        assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.4
+        assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
         assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
         assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
         assert not hasattr(app,'preview_state_panel')
@@ -158,7 +159,7 @@ def _layout_scenario(scale):
         app.render();app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview();settle()
         assert 'LẶP 2,003.4' in app.preview_exit_value.cget('text')
-        assert app.preview_status_badge.cget('text')=='QL · CHƯA NHẬN'
+        assert app.positions_tree.cell(position.id,'managed')['text']=='CHƯA NHẬN'
         assert app.positions_tree.cell(position.id,'side')['color']=='#22C55E'
         assert app.positions_tree.cell(position.id,'pnl')['color']=='#22C55E'
         assert not app.positions_tree.horizontal.winfo_ismapped()
@@ -175,6 +176,8 @@ def _layout_scenario(scale):
         app.geometry('1080x700');settle(500)
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.preview_management.winfo_ismapped() and app.preview_exit_value.winfo_ismapped()
+        assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.35
+        assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
         for widget,font in app._preview_fit_labels:
             if not widget.winfo_ismapped():continue
             assert widget.winfo_rooty()+widget.winfo_height()<=app.info_panel.winfo_rooty()+app.info_panel.winfo_height(), (widget.cget('text'),widget.winfo_rooty(),widget.winfo_height(),app.info_panel.winfo_rooty()+app.info_panel.winfo_height(),app.info_panel.cget('height'),app.preview_data.winfo_reqheight())
@@ -223,12 +226,12 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         assert not hasattr(app,'preview_atr')
         app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview()
-        assert app.preview_order_title.cget('text').startswith('LONG · 2 HĐ')
+        assert position.symbol in app._preview_position_context and '2/2 HĐ' in app._preview_position_context
         assert app.positions_tree.parent(pending.id) == position.id
         assert app.positions_tree.item(pending.id,"values")[0] == "CHỜ KHỚP"
         app.positions_tree.selection_set(pending.id)
         app._refresh_ticket_preview()
-        assert app.preview_order_title.cget('text').startswith('LONG · 2 HĐ')
+        assert position.symbol in app._preview_position_context and '2/2 HĐ' in app._preview_position_context
         app._sync_selection()
         assert app.action_buttons["edit"].winfo_manager() == "pack"
         assert not app.action_buttons["close"].winfo_manager()
@@ -486,15 +489,33 @@ def _table_review_scenario(interactive=False):
         assert table.cell(long.id,'pnl')['color']=='#22C55E'
         assert table.cell(short.id,'pnl')['color']=='#EF4444'
         assert table.cell(short.id,'side')['color']=='#EF4444'
-        assert 'SL 1,990.0 / TP 2,040.0'==table.cell(long.id,'protect')['text']
-        table.body.event_generate('<Button-1>',x=30,y=round(90*table._get_widget_scaling()))
+        assert table.cell(long.id,'sl')['text']=='1,990.0'
+        assert table.cell(long.id,'tp')['text']=='2,040.0'
+        assert table.cell(long.id,'managed')['text']=='TẠM DỪNG'
+        assert table._display==('#0','side','entry','sl','tp','managed')
+        assert table._row_height==round(44*table._get_widget_scaling())
+        assert table.cell(long.id,'#0')['detail']==''
+        # A position enrolled for management is paused while the shared BOT is
+        # off; never print ON merely because its per-position permission is set.
+        app.view['armed']=True
+        app.render();settle()
+        assert table.cell(long.id,'managed')['text']=='CHỜ KHỚP'
+        app.view['orders']=[]
+        app.render();settle()
+        assert table.cell(long.id,'managed')['text']=='QUẢN LÝ ON'
+        app.view['consistent']=False
+        app.render();settle()
+        assert table.cell(long.id,'managed')['text']=='CHỜ DỮ LIỆU'
+        app.view.update(armed=False,consistent=True,orders=[asdict(pending)])
+        app.render();settle()
+        table.body.event_generate('<Button-1>',x=30,y=round(66*table._get_widget_scaling()))
         settle()
         assert table.selection()==(pending.id,)
         assert app.action_buttons['cancel'].winfo_manager()=='pack'
         table.body.event_generate('<Down>');settle()
         assert table.selection()==(short.id,)
         app.render();settle()
-        assert table.selection()==(short.id,) and app.preview_order_title.cget('text').startswith('SHORT')
+        assert table.selection()==(short.id,) and short.symbol in app._preview_position_context
         history=app.history();settle()
         for page,tree in [('GIAO DỊCH',app.history_tree),('LỆNH',app.order_history_tree)]:
             history.tabs.set(page);settle()
@@ -567,21 +588,22 @@ def _split_app_scenario(kind,scale):
                 for button in app.open_buttons:assert button.cget('state')=='disabled'
                 assert app.bot.cget('state')=='normal'
                 for button in (app.rule_button,app.connection_button):assert button.cget('state')=='normal'
-                assert app.preview_sl_value.cget('text')=='1,990.0'
-                assert app.preview_tp_value.cget('text')=='2,040.0'
+                assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,990.0'
+                assert app.positions_tree.cell('DEMO-LONG','tp')['text']=='2,040.0'
                 assert ('NHƯỜNG ARM' in app.preview_exit_value.cget('text'))==(stage=='TSL / ARM')
             app.show_sample('LẶP');settle()
             app.bot.invoke();settle()
-            assert app.view['armed'] and app.preview_status_badge.cget('text')=='QUẢN LÝ ON'
+            assert app.view['armed'] and app.positions_tree.cell('DEMO-LONG','managed')['text']=='QUẢN LÝ ON'
             assert app.preview_entry_value.cget('text')=='LONG · 2,007.0'
             assert app.preview_trend_value.cget('text')=='UP'
             assert app.market_context_label.cget('text')=='CHỈ THAM KHẢO · MẪU'
             app.bot.invoke();settle()
             assert not app.view['armed'] and app.runtime is None
-            assert app.preview_status_badge.cget('text')=='QL · TẠM DỪNG'
+            assert app.positions_tree.cell('DEMO-LONG','managed')['text']=='TẠM DỪNG'
             app.positions_tree.selection_set(());settle()
             assert app.positions_tree.selection()==('DEMO-LONG',)
-            assert app.preview_order_title.cget('text').startswith('LONG · 1 HĐ')
+            assert 'Còn 1/2 HĐ' in app._preview_position_context
+            assert not hasattr(app,'preview_status_badge') and not hasattr(app,'preview_sl_value')
             assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
             assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
             app.preview_em_exit._label.event_generate('<Button-1>');settle()
@@ -633,7 +655,7 @@ def _split_app_scenario(kind,scale):
             rule.initial_sl.delete(0,'end');rule.initial_sl.insert(0,'12')
             rule.save();settle()
             assert app.settings.exit['sl_distance']==12
-            assert app.preview_sl_value.cget('text')=='1,988.0'
+            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,988.0'
             assert 'mẫu' in rule.status.cget('text')
             rule.destroy();settle()
             app.connection_button.invoke();settle()

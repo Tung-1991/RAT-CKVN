@@ -17,7 +17,7 @@ class MarketTable(ctk.CTkFrame):
     row identity or the data returned to the order/position actions.
     """
 
-    def __init__(self, master, columns, *, hierarchy=False, empty_text="Chưa có dữ liệu"):
+    def __init__(self, master, columns, *, hierarchy=False, empty_text="Chưa có dữ liệu", compact=False):
         super().__init__(master, fg_color=COL_SURFACE, corner_radius=6, width=1, height=1)
         self._columns = {key: dict(text=label, width=width, minwidth=width * .78,
                                   anchor="w", weight=1) for key, label, width in columns}
@@ -30,7 +30,8 @@ class MarketTable(ctk.CTkFrame):
         self._empty_text = empty_text
         self._bounds = []
         self._visible_rows = []
-        self._row_height = 56
+        self._compact=compact
+        self._row_height = 44 if compact else 56
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         self.header = tk.Canvas(self, width=1, height=38, bg=COL_PANEL_HEADER, bd=0, highlightthickness=0)
@@ -219,7 +220,7 @@ class MarketTable(ctk.CTkFrame):
         if not self.winfo_exists():
             return
         scale = self._get_widget_scaling()
-        self._row_height = round(56 * scale)
+        self._row_height = round((44 if self._compact else 56) * scale)
         width, height = self.body.winfo_width(), self.body.winfo_height()
         if width < 2:
             return
@@ -244,15 +245,15 @@ class MarketTable(ctk.CTkFrame):
         self.horizontal.grid(row=2, column=0, sticky="ew") if content_width > width + 1 else self.horizontal.grid_remove()
         self.header.delete("all")
         self.body.delete("all")
-        heading_font = tkfont.Font(root=self, family="Segoe UI", size=-round(14 * scale), weight="bold")
-        value_font = tkfont.Font(root=self, family="Segoe UI", size=-round(16 * scale))
-        number_font = tkfont.Font(root=self, family="Cascadia Mono", size=-round(16 * scale))
+        heading_font = tkfont.Font(root=self, family="Segoe UI", size=-round(13 * scale), weight="bold")
+        value_font = tkfont.Font(root=self, family="Segoe UI", size=-round(14 * scale))
+        number_font = tkfont.Font(root=self, family="Cascadia Mono", size=-round(14 * scale))
         detail_font = tkfont.Font(root=self, family="Segoe UI", size=-round(14 * scale))
         self._fonts = heading_font, value_font, number_font, detail_font
         for key, x1, x2 in self._bounds:
             col = self._columns[key]
             anchor = col["anchor"]
-            pad=round((6 if anchor=='center' else 12)*scale)
+            pad=round((6 if anchor=='center' else 8 if self._compact else 12)*scale)
             x = x2 - pad if anchor == "e" else (x1+x2)/2 if anchor == "center" else x1+pad
             self.header.create_text(x, header_height/2, text=self._ellipsize(col["text"], heading_font, x2-x1-2*pad),
                 anchor=anchor, fill=COL_TITLE, font=heading_font)
@@ -276,16 +277,17 @@ class MarketTable(ctk.CTkFrame):
             for key, x1, x2 in self._bounds:
                 cell = row["cells"].get(key, {})
                 raw = row["text"] if key == "#0" else row["values"][keys.index(key)] if keys.index(key) < len(row["values"]) else ""
-                value, detail = str(cell.get("text", raw)), str(cell.get("detail", ""))
+                value = str(cell.get("text", raw))
+                detail = '' if self._compact else str(cell.get("detail", ""))
                 anchor = self._columns[key]["anchor"]
-                pad=round((6 if anchor=='center' else 12)*scale)
+                pad=round((6 if anchor=='center' else 8 if self._compact else 12)*scale)
                 indent = 12 * scale if key == "#0" and row["parent"] else 0
                 x = x2-pad if anchor == "e" else (x1+x2)/2 if anchor == "center" else x1+pad+indent
                 available = x2-x1-2*pad-indent
                 font = number_font if cell.get("numeric") else value_font
                 if key == "#0" and row["parent"]:
                     value = "↳ " + value
-                self.body.create_text(x, y1+(21 if detail else 30)*scale,
+                self.body.create_text(x, y1+(22 if self._compact else 21 if detail else 30)*scale,
                     text=self._ellipsize(value, font, available), anchor=anchor,
                     fill=cell.get("color", COL_TEXT), font=font)
                 if detail:

@@ -19,7 +19,7 @@
 - Fill, vị thế, queue cùng transaction. Timeout là UNKNOWN, không tự POST lại.
 - Giữ bố cục MayinTien: trái tài khoản/điều khiển/vé lệnh; phải bảng lệnh ở trên,
   PREVIEW / LOG ở dưới. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN;
-  giấu EMA/RSI/các đếm giao cắt. Chỉ thêm bảo vệ khi chọn vị thế; không thêm form tín hiệu.
+  giấu EMA/RSI/các đếm giao cắt. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
 - MAIN chỉ có RULE chỉ E/M / KẾT NỐI (DNSE, VỐN, Telegram, LỊCH); lịch sử giao dịch/lệnh ở góc bảng.
@@ -34,8 +34,10 @@
   không giấu trong nâng cao. Giữ hint giải thích và cùng kích thước hai cửa sổ.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ hiện CHỜ; không suy ngược điểm Short. Ẩn PNL
-  và trạng thái lặp trên màn hình chính. Nhãn 14, nội dung 16, kết quả 22;
-  Preview xuống dòng thay vì tự co chữ. Nút vị thế BẢO VỆ LỆNH.
+  và trạng thái lặp trên màn hình chính. Nội dung 14, kết quả 18, giá/vốn 24;
+  Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
+  Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
+  Trạng thái bảng xét cả BOT chung và dữ liệu; nút vị thế BẢO VỆ LỆNH.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

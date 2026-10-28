@@ -5,6 +5,7 @@ from .formatting import money, price, clock
 from .theme import MUTED, GREEN, RED, WARN
 from .mayin.tokens import COL_TEXT as TEXT
 from .mayin.market_table import MarketTable
+from .mayin.preview_state import preview_state, TONES
 
 STATUS_LABELS = {"CREATED": "ĐÃ XẾP", "SUBMITTING": "ĐANG GỬI", "WORKING": "CHỜ KHỚP",
     "PARTIAL": "KHỚP MỘT PHẦN", "UNKNOWN": "CHƯA RÕ", "CANCEL_PENDING": "CHỜ HỦY",
@@ -16,7 +17,8 @@ REASON_LABELS = {"MANUAL":"ĐẶT TAY", "SL":"CẮT LỖ", "TP":"CHỐT LỜI", 
 class DashboardTablesMixin:
     def _tree(self, parent, columns, *, hierarchy=False):
         tree = MarketTable(parent, columns, hierarchy=hierarchy,
-            empty_text="Chưa có vị thế hoặc lệnh chờ" if hierarchy else "Chưa có lịch sử trong sổ này")
+            empty_text="Chưa có vị thế hoặc lệnh chờ" if hierarchy else "Chưa có lịch sử trong sổ này",
+            compact=hierarchy)
         tree.pack(fill="both", expand=True, padx=1, pady=1)
         for key, label, width in columns:
             tree.column(key, anchor="e" if key in {"entry", "last", "pnl", "mae", "mfe", "sl", "tp", "price", "fees"}
@@ -29,10 +31,11 @@ class DashboardTablesMixin:
             ("entry", "GIÁ VÀO", 90), ("last", "GIÁ", 85), ("pnl", "PNL GIÁ", 115),
             ("sl", "SL", 75), ("tp", "TP", 75), ("protect", "PROTECT", 90), ("managed", "QL", 45),
             ("mae", "MAE ĐIỂM", 90), ("mfe", "MFE ĐIỂM", 90)), hierarchy=True)
-        tree.configure(displaycolumns=("side", "quantity", "entry", "protect"))
-        tree.heading("entry",text="VỐN / GIÁ LO")
-        tree.heading("protect",text="SL / TP · BẢO VỆ")
-        for key,width,weight in (("side",64,0),("quantity",44,0),("entry",88,1),("pnl",110,1),("protect",174,2)):
+        tree.configure(displaycolumns=("side", "entry", "sl", "tp", "managed"))
+        tree.heading('side',text='CHIỀU / HĐ')
+        tree.heading("entry",text="GIÁ VỐN / LO")
+        tree.heading('managed',text='TRẠNG THÁI')
+        for key,width,weight in (("#0",104,1),("side",94,0),("entry",100,1),("sl",82,1),("tp",82,1),("managed",136,1)):
             tree.column(key,minwidth=width,weight=weight)
         tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_selection())
         tree.bind("<Double-1>", lambda _event: self._open_running_row())
@@ -75,10 +78,15 @@ class DashboardTablesMixin:
             rule=load_record(ExitSettings,p.exit_overrides or self.settings.exit)
             sl=price(p.entry-p.sign*rule.points(rule.sl_distance,p.entry)) if rule.sl_enabled else "OFF"
             tp=price(p.entry+p.sign*rule.points(rule.tp_distance,p.entry)) if rule.tp_enabled else "OFF"
-            tree.cell(p.id,"#0",detail=state+" · QL "+("ON" if p.managed else "OFF"))
-            tree.cell(p.id,"side",color=GREEN if p.side=="LONG" else RED)
+            management,tone=preview_state(self.view,self.settings.max_quote_age,p,rule,
+                changing_book=bool(self.mode_requested or self.switch_pending))[1]
+            tree.cell(p.id,"#0",detail='')
+            tree.cell(p.id,"side",text=f'{p.side} · {p.quantity}',color=GREEN if p.side=="LONG" else RED)
             tree.cell(p.id,"quantity",numeric=True)
-            tree.cell(p.id,"entry",numeric=True,detail="Giá vốn bình quân")
+            tree.cell(p.id,"entry",numeric=True,detail='')
+            tree.cell(p.id,'sl',text=sl if rule.sl_enabled else '—',numeric=True,color=RED if rule.sl_enabled else MUTED)
+            tree.cell(p.id,'tp',text=tp if rule.tp_enabled else '—',numeric=True,color=GREEN if rule.tp_enabled else MUTED)
+            tree.cell(p.id,'managed',text=management.removeprefix('QL · '),color=TONES[tone][2])
             tree.cell(p.id,"pnl",numeric=True,color=GREEN if pnl and pnl>0 else RED if pnl and pnl<0 else TEXT,
                       detail="Giá "+price(last))
             tree.cell(p.id,"protect",text="SL "+sl+" / TP "+tp,
@@ -95,11 +103,14 @@ class DashboardTablesMixin:
             state=STATUS_LABELS.get(o["status"],o["status"])
             alert_color=RED if o["status"]=="UNKNOWN" else WARN
             tree.cell(o["id"],"#0",text=label+" · "+(o["kind"] if parent else o["symbol"]),detail=state,detail_color=alert_color)
-            tree.cell(o["id"],"side",color=GREEN if o["side"]=="LONG" else RED)
+            tree.cell(o["id"],"side",text=f"{o['side']} · {o['filled']}/{o['quantity']}",color=GREEN if o["side"]=="LONG" else RED)
             tree.cell(o["id"],"quantity",numeric=True)
             tree.cell(o["id"],"entry",text=price(o["price"]) if o["kind"]=="LO" else o["kind"],numeric=o["kind"]=="LO",detail="Giá LO" if o["kind"]=="LO" else "Lệnh thị trường")
             tree.cell(o["id"],"pnl",text="—",detail="Khớp @ "+price(o["avg_fill"]))
             tree.cell(o["id"],"protect",text=REASON_LABELS.get(o["reason"],o["reason"]),detail="ID "+o["broker_id"][-8:] if o["broker_id"] else "Chưa có ID broker",color=alert_color)
+            tree.cell(o['id'],'sl',text='—',color=MUTED)
+            tree.cell(o['id'],'tp',text='—',color=MUTED)
+            tree.cell(o['id'],'managed',text='KHỚP 1 PHẦN' if o['status']=='PARTIAL' else state,color=alert_color)
         for key in all_items - present:
             if tree.exists(key):
                 tree.delete(key)
@@ -127,9 +138,8 @@ class DashboardTablesMixin:
                 button.pack(side="right", padx=3, pady=3)
         if row:
             self.action_bar.grid()
-            self.selection_label.configure(text=(f"{position['side']} · {position['quantity']} HĐ" if position else order['symbol']))
             if position:
-                self.action_buttons["adopt"].configure(text="DỪNG QUẢN LÝ" if position["managed"] else "NHẬN QUẢN LÝ")
+                self.action_buttons["adopt"].configure(text="BỎ QUẢN LÝ" if position["managed"] else "NHẬN QUẢN LÝ")
         else:
             self.action_bar.grid_remove()
         self._refresh_ticket_preview()

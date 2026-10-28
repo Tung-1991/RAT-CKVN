@@ -29,6 +29,6 @@ def signal_preview(view, max_age=10, *, now=None):
         try:
             value=float(entry['price'])
             if isfinite(value) and value>0 and -2<=now-float(entry['observed_at'])<=max_age:
-                result=('LONG · '+price(value),'Có tín hiệu','green')
+                result=('LONG · '+price(value),'','green')
         except (ValueError,TypeError,KeyError):pass
     return result,trend
