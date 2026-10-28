@@ -124,6 +124,21 @@ def test_closed_mode_does_not_use_intraday_price_for_indicators(analysis):
     assert value["p1"]["state"] == "ABOVE"
 
 
+@pytest.mark.parametrize('hour,minute', [(10, 0), (15, 0)])
+def test_backend_ma200_matches_preview_previous_completed_daily_candles(analysis, hour, minute):
+    service, _ = analysis
+    when = NOW.replace(hour=hour, minute=minute)
+    data = payload(2300, now=when)
+    data['bars'].append({'time': when.replace(hour=0, minute=0).timestamp(),
+        'open': 2100, 'high': 2500, 'low': 2000, 'close': 2400, 'closed': hour >= 15})
+    result = service.observe(data, config(), now=when)
+    assert result['p1']['ma'] == 2000 and result['p1']['state'] == 'ABOVE'
+    # A new current-day candle cannot replace the missing 200th completed day.
+    data['bars'] = data['bars'][-200:]
+    result = service.observe(data, config(), now=when)
+    assert result['p1']['ma'] is None and result['p1']['samples'] == 199
+
+
 def test_minute_interval_uses_completed_bucket_and_keeps_live_memory(analysis):
     service, _ = analysis
     settings = config(realtime_indicator_interval="1M")

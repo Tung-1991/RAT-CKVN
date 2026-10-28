@@ -6,7 +6,6 @@ import customtkinter as ctk
 
 from ckps.models import FINAL, quantity
 from .compact import CompactForm, columns
-from .em_editor import ExitEditor
 from .formatting import price
 from .theme import BLUE, BORDER, GREEN, MUTED, RED, SLATE, SURFACE, SURFACE_2, TITLE
 
@@ -101,26 +100,7 @@ class WorkspaceMixin:
         return raw
 
     def position_exit(self):
-        raw = self.selected(self.positions_tree, "positions")
-        if not raw:
-            return
-        position_id = raw["id"]
-        def save():
-            self.current_position(position_id)
-            values = None if self.inherit_exit.get() else self.position_editor.read()
-            self.send("configure_position", position_id, values)
-            self.hide_editor()
-            self.report("Đã gửi cấu hình bảo vệ vị thế.")
-        self.show_editor(f"BẢO VỆ LỆNH · {raw['side']} {raw['symbol']} · {raw['quantity']} HĐ", "LƯU BẢO VỆ", save)
-        self.editor_body.grid_columnconfigure(0, weight=1)
-        self.editor_body.grid_rowconfigure(1, weight=1)
-        self.inherit_exit = tk.BooleanVar(value=raw.get("exit_overrides") is None)
-        ctk.CTkSwitch(self.editor_body, text="Dùng RULE chung", variable=self.inherit_exit).grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.position_editor = ExitEditor(self.editor_body, raw.get("exit_overrides") or self.settings.exit,
-            app=self, symbol=raw['symbol'], status=self.editor_note)
-        self.position_editor.grid(row=1, column=0, sticky="nsew")
-        self.inherit_exit.trace_add("write", lambda *_: self.position_editor.set_enabled(not self.inherit_exit.get()))
-        self.position_editor.set_enabled(not self.inherit_exit.get())
+        return self.settings_dialog('E/M', scope='VỊ THẾ')
 
     def close_position(self):
         raw = self.selected(self.positions_tree, "positions")

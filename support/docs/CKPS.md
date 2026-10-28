@@ -22,13 +22,15 @@ SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE
 
 ## Giao diện
 
-Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Bảng chính ẩn PNL; lịch sử giữ số liệu PNL và phí. Bảng có các cột hợp đồng, chiều/HĐ, giá vốn/LO, SL, TP và trạng thái; mỗi vị thế một dòng. Cột trạng thái xét BOT chung, quyền vị thế, dữ liệu và lệnh chờ, không ghi ON chỉ vì vị thế đã được nhận quản lý. Không lặp các dòng chờ giá/kết nối ở nhiều khu vực. RULE và KẾT NỐI cùng kích thước theo DPI, tab không tự đổi cỡ; RULE giữ đầy đủ PROTECT.
+Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Bảng chính ẩn PNL; lịch sử giữ số liệu PNL và phí. Bảng có các cột hợp đồng, chiều/HĐ, giá vốn/LO, SL, TP và trạng thái; mỗi vị thế một dòng. Cột trạng thái xét BOT chung, quyền vị thế, dữ liệu và lệnh chờ, không ghi ON chỉ vì vị thế đã được nhận quản lý. Không lặp các dòng chờ giá/kết nối ở nhiều khu vực. Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE, VỐN, TELEGRAM / LỊCH); hai cửa sổ cùng kích thước theo DPI, tab không tự đổi cỡ. Không mở cửa sổ cài đặt Telegram riêng.
 
 Preview tập trung hai ô kết quả: ĐIỂM VÀO và THỊ TRƯỜNG. Điểm vào lấy kết quả đã đủ mọi điều kiện từ EMA/RSI và bộ lọc backend; badge READY trung gian không phải điểm vào. Hiện giá Long tại thời điểm phân tích, giấu thông số EMA/RSI và đếm giao cắt. Thị trường UP/DOWN/ĐI NGANG so giá hợp đồng với MA200 từ 200 nến ngày đã đóng; không suy ngược thành tín hiệu Short. Cả hai chỉ để xem, không điền vé, không mở/đóng lệnh hoặc chặn E/M.
 
 Backend chuyển kết quả rút gọn qua tệp JSON local ghi nguyên tử. Chỉ dùng khi đúng mã và thời gian giá/phân tích còn mới; backend chưa chạy, thiếu nến hoặc giá cũ hiện CHỜ. Tắt Telegram không tắt phân tích. Không chuyển trạng thái tín hiệu cũ thành mới chỉ vì có quote mới.
 
-SL/TP và trạng thái chỉ hiện một lần tại bảng lệnh. Chọn vị thế mới hiện hai dòng TSL/ARM và DYNAMIC bên dưới hai ô tín hiệu. Bảng lệnh giãn toàn bộ chiều cao còn lại, Preview bám đáy cửa sổ; không dành vùng đen trống bên dưới. Chi tiết cấu hình/LẶP mở khi bấm tiêu đề, không tự bung khi rê chuột. Nút BẢO VỆ LỆNH chỉnh riêng vị thế ngay trong màn hình bằng cùng form MayinTien và hint của RULE; hiện đủ SL/TP, TSL/ARM, DYNAMIC trên một trang. Đổi đơn vị ở đây dùng giá mới của đúng mã vị thế, kể cả hợp đồng khác mã đang xem trên MAIN. RULE giữ cấu hình chung. Bản mẫu ghi rõ MẪU, không dùng runtime hoặc dữ liệu tài khoản thật.
+SL/TP và trạng thái chỉ hiện một lần tại bảng lệnh. Chọn vị thế mới hiện hai dòng TSL/ARM và DYNAMIC bên dưới hai ô tín hiệu. Bảng lệnh giãn toàn bộ chiều cao còn lại, Preview bám đáy cửa sổ; không dành vùng đen trống bên dưới. Chi tiết cấu hình/LẶP mở khi bấm tiêu đề, không tự bung khi rê chuột. RULE → E/M có phạm vi CHUNG / VỊ THẾ: chỉnh bảo vệ riêng, kế thừa RULE chung và nhận/bỏ quyền quản lý vị thế đã chọn. Nhận/bỏ quản lý có xác nhận ngay trong RULE; phải lưu E/M trước khi nhận, xác nhận lại nếu vị thế, E/M hoặc BOT thay đổi. Chọn kế thừa hiển thị các giá trị RULE chung. Đổi đơn vị riêng dùng giá mới đúng mã vị thế, kể cả hợp đồng khác mã đang xem. Không còn nút bảo vệ/nhận/bỏ quản lý tại bảng; đóng/giảm và xác nhận lệnh tay giữ tại bảng. Bản mẫu chỉ sửa trong RAM, không dùng runtime hoặc dữ liệu tài khoản thật.
+
+RULE → TÍN HIỆU giữ tham số EMA/RSI riêng cho điểm vào và E, cổng ALERT riêng, REALTIME/CLOSED và nhịp TICK/1M/2M/5M trên nến 1D; giao cắt VA/X PHIÊN, quét trước, xác nhận phút, giờ theo dõi, volume, whipsaw và ngưỡng biến động. Lưu tham số này không sửa E/M hay vốn. MA200 ở backend và Preview cùng dùng 200 nến ngày đã đóng trước hôm nay; ATR14 dùng phiên trước.
 
 Chữ thống nhất theo vai trò: nhãn 13–14, nội dung 14, kết quả 18, giá/vốn lớn 24. Preview xuống dòng khi thiếu chỗ, không tự thu nhỏ chữ. Bảng chính dùng chữ 14 và dòng cao 44; lịch sử giữ dòng phụ khi cần. Nền trung tính; Long/UP/TP xanh, SL/DOWN đỏ, TSL xanh dương và DYNAMIC cam; trạng thái tạm dừng vàng.
 
@@ -37,6 +39,8 @@ Chữ thống nhất theo vai trò: nhãn 13–14, nội dung 14, kết quả 18
 Đáo hạn tính thứ Năm thứ ba, lùi theo ngày nghỉ đã biết; nếu thiếu lịch hiển thị dự kiến. Trước ngày đáo hạn backend gửi nhắc, không chặn giao dịch ngày đó. Ngày nghỉ, đổi rổ và ATO/ATC vẫn theo cấu hình; chỉ chặn mở mới, không chặn đóng/E/M.
 
 Một kênh Telegram với ba lựa chọn: Biến động VN30, Nhắc đáo hạn, Vào lệnh. Nhóm vào lệnh gồm tín hiệu P1/P2/E chỉ tham khảo và thông báo gửi/khớp/hủy/lỗi lệnh mở từ app. App chuyển biên nhận rút gọn qua SQLite cục bộ; backend không đọc tài khoản, token giao dịch hay nhận lệnh giao dịch. Không gửi lại tin cũ khi backend khởi động, tắt nhánh chỉ dừng thông báo. Token chỉ trong phiên/biến môi trường.
+
+Token/chat, ba nhóm thông báo, lịch và nút CHẠY/DỪNG nằm trong KẾT NỐI → TELEGRAM / LỊCH. CHẠY tạo tiến trình backend không giao diện; pipe riêng chỉ truyền API đọc giá, token Telegram và tham số tín hiệu, không truyền số tài khoản, OTP hoặc E/M. Lưu áp dụng cấu hình vào backend đang chạy. Tắt Vào lệnh chặn cả P1/P2/E và biên nhận mở lệnh; không tắt phân tích hoặc gửi bù điều kiện cũ khi bật lại.
 
 ## Kiểm thử
 

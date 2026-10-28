@@ -22,10 +22,12 @@
   giấu EMA/RSI/các đếm giao cắt. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
-- MAIN chỉ có RULE chỉ E/M / KẾT NỐI (DNSE, VỐN, Telegram, LỊCH); lịch sử giao dịch/lệnh ở góc bảng.
-  Tín hiệu và Telegram nằm ở backend riêng với ba lựa chọn biến động, đáo hạn và vào lệnh.
+- Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE, VỐN, TELEGRAM / LỊCH),
+  cùng kích thước/DPI; ít tab, không mở cửa sổ cài đặt backend riêng. Lịch sử ở góc bảng.
+  RULE E/M chọn CHUNG / VỊ THẾ; cấu hình riêng, kế thừa và nhận/bỏ quản lý đều ở đó.
+  Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và vào lệnh.
   Không danh mục CKCS, không tab BOT, không tooltip/legend/preview trùng lặp.
-- Thao tác vị thế/lệnh dùng vùng thao tác trong màn hình; chỉ hiện nút phù hợp
+- Đóng/giảm, hủy/sửa/đối soát lệnh dùng vùng thao tác trong màn hình; chỉ hiện nút phù hợp
   dòng đang chọn. Xác nhận gửi lệnh vẫn cần nhưng nằm trong app, không popup.
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
@@ -37,7 +39,8 @@
   và trạng thái lặp trên màn hình chính. Nội dung 14, kết quả 18, giá/vốn 24;
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
-  Trạng thái bảng xét cả BOT chung và dữ liệu; nút vị thế BẢO VỆ LỆNH.
+  Trạng thái bảng xét cả BOT chung và dữ liệu; bỏ nút BẢO VỆ LỆNH/NHẬN/BỎ QUẢN LÝ khỏi bảng,
+  dùng RULE → E/M → VỊ THẾ. Backend chỉ nhận tham số tín hiệu qua pipe, không nhận tài khoản/OTP.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

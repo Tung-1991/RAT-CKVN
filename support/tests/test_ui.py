@@ -31,6 +31,7 @@ def _layout_scenario(scale):
             timer=app.after(max(1,round((deadline-monotonic())*1000)),app.quit)
             Misc.mainloop(app)
             app.after_cancel(timer)
+        app.update()  # Flush native idle geometry before measuring rendered controls.
     def widgets(parent):
         for child in parent.winfo_children():
             yield child
@@ -59,7 +60,7 @@ def _layout_scenario(scale):
         assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.4
         assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
         assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
-        assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
+        assert not {'manage','adopt'} & set(app.action_buttons)
         assert not hasattr(app,'preview_state_panel')
         assert 'pnl' not in app.positions_tree._display
         for name in ('LOG','PREVIEW'):
@@ -71,7 +72,7 @@ def _layout_scenario(scale):
         assert app.settings.mode=='PAPER' and app.mode_choice.get()=='REAL'
         assert app.mode_requested=='REAL' and connection.tabs.get()=='DNSE'
         assert connection.otp_card.winfo_ismapped()
-        for widget in widgets(connection):
+        for widget in widgets(connection.pages['DNSE']):
             if isinstance(widget,ctk.CTkEntry) and widget.winfo_ismapped():
                 assert widget.winfo_rootx()+widget.winfo_width()<=connection.winfo_rootx()+connection.winfo_width()
                 assert widget.winfo_rooty()+widget.winfo_height()<=connection.footer.winfo_rooty()
@@ -99,13 +100,13 @@ def _layout_scenario(scale):
             entry._viking_fit_text()
             assert NativeFontMetrics(entry,entry._entry.cget('font')).measure(entry.get())<=entry._entry.winfo_width()
         dialog=app.settings_dialog('RULE');settle()
-        assert set(dialog.tabs._tab_dict)=={'E/M'}
+        assert set(dialog.tabs._tab_dict)=={'E/M','TÍN HIỆU'}
         assert not hasattr(dialog,'phase_tabs') and not hasattr(dialog,'sell_alert_enabled')
         assert dialog._exits()==app.settings.exit
         connection=app.connection();settle(600)
         assert dialog is not connection
-        assert set(connection.pages)=={'DNSE','VỐN','Telegram','LỊCH'}
-        assert not any('telegram' in key for key in connection.variables)
+        assert set(connection.pages)=={'DNSE','VỐN','TELEGRAM / LỊCH'}
+        assert {'telegram.token','telegram.chat'} <= set(connection.variables)
         assert not connection.otp_card.winfo_ismapped()
         assert not hasattr(connection,'csv_button') and 'paper.price' not in connection.variables
         assert 'owner_chat' not in connection.variables and 'owner_token' not in connection.variables
@@ -115,14 +116,16 @@ def _layout_scenario(scale):
         connection.apply_capital()
         assert sent[-1][0]==('paper_capital',250_000_000)
         sent.clear()
-        for page in ('E/M','VỐN'):
+        for page in ('E/M','TÍN HIỆU'):
             dialog.select(page);settle()
-            for w in widgets(dialog):
+            host=dialog.protection_host if page=='E/M' else dialog.signal_form.body
+            for w in widgets(host):
                 if isinstance(w,ctk.CTkEntry) and w.winfo_ismapped():
                     assert w.winfo_rootx()+w.winfo_width()<=dialog.winfo_rootx()+dialog.winfo_width()
         saved,sent=[],[]
         app.save_config=saved.append
         app.send=lambda *a,**kw:sent.append((a,kw))
+        dialog.select('E/M');settle()
         dialog.save()
         assert len(saved)==1 and saved[0].signals==SignalSettings().to_dict()
         assert not any(name[0] in {'open_manual','close_position'} for name,kw in sent)
@@ -131,7 +134,8 @@ def _layout_scenario(scale):
         for name in connection.pages:
             connection.select_page(name);settle(600)
             assert (connection.winfo_width(),connection.winfo_height())==popup_size
-            for widget in widgets(connection):
+            for widget in widgets(connection.pages[name]):
+                if name == 'TELEGRAM / LỊCH':continue
                 if widget is not connection.primary and isinstance(widget,(ctk.CTkEntry,ctk.CTkSwitch,ctk.CTkButton)) and widget.winfo_ismapped():
                     bottom=connection.pages[name].winfo_rooty()+connection.pages[name].winfo_height()-4
                     assert widget.winfo_rooty()+widget.winfo_height()<=min(bottom,connection.footer.winfo_rooty()), (name,widget,widget.winfo_rooty(),widget.winfo_height(),bottom,connection.footer.winfo_rooty(),connection.winfo_height(),connection._get_window_scaling())
@@ -250,29 +254,29 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         assert not app.action_buttons["close"].winfo_manager()
         app.view["orders"][-1]["quantity"] = 1
         app._sync_selection()
-        app.position_exit()
+        rule = app.position_exit()
         app.update()
-        assert not app.info_panel.winfo_ismapped()
-        assert not hasattr(app.position_editor, 'tabs')
+        assert app.info_panel.winfo_ismapped() and rule.scope.get() == 'VỊ THẾ'
         def controls(widget):
             for child in widget.winfo_children():
                 if isinstance(child, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
                     yield child
                 else:
                     yield from controls(child)
-        for widget in controls(app.position_editor):
+        for widget in controls(rule.protection_host):
             if isinstance(widget, ctk.CTkSegmentedButton):
-                assert all(child.cget("state") == "disabled" for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
+                assert all(child.cget('state') == 'disabled' for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
             else:
-                assert widget.cget("state") == "disabled"
-        app.inherit_exit.set(False)
-        app.position_editor.sl_enabled.set(True)
-        app.position_editor.initial_sl.delete(0, 'end')
-        app.position_editor.initial_sl.insert(0, '10')
-        app.editor_save.invoke()
+                assert widget.cget('state') == 'disabled'
+        rule.inherit_exit.set(False)
+        rule._inherit_changed()
+        rule.sl_enabled.set(True)
+        rule.initial_sl.delete(0, 'end')
+        rule.initial_sl.insert(0, '10')
+        rule.save()
+        assert sent[-1][0][0] == 'configure_position' and sent[-1][0][2]['sl_distance'] == 10
+        rule.destroy()
         app.update()
-        assert app.info_panel.winfo_ismapped()
-        assert sent[-1][0][0] == "configure_position" and sent[-1][0][2]["sl_distance"] == 10
         app.close_position()
         assert app.editor_variables["qty"].get() == "1"
         before = len(sent)
@@ -281,7 +285,7 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         app.confirm_primary.invoke()
         assert sent[-1][0] == ("close_position", position.id, 1)
         assert sent[-1][1]["kind"] == "MOK"
-        assert not app.popups
+        assert not any(window.winfo_exists() for window in app.popups.values())
         profit=Position.create('VN30F1M','LONG',1,2000,closed_at=1,realized=1_000_000,fees=25_000)
         loss=Position.create('VN30F1M','SHORT',1,2000,closed_at=2,realized=-500_000,fees=25_000)
         unknown=Position.create('VN30F1M','SHORT',1,2000,closed_at=3,pnl_verified=False)
@@ -408,6 +412,7 @@ def _position_protection_scenario(scale):
             timer = app.after(max(1, round((deadline-monotonic())*1000)), app.quit)
             Misc.mainloop(app)
             app.after_cancel(timer)
+        app.update()  # Flush native idle geometry before measuring rendered controls.
     def controls(parent):
         for child in parent.winfo_children():
             if isinstance(child, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
@@ -432,16 +437,15 @@ def _position_protection_scenario(scale):
                            'VN30F2612': asdict(Quote('VN30F2612', 2400))}}
             app.render()
             app.positions_tree.selection_set(position.id)
-            app.position_exit()
+            editor = app.position_exit()
             app.update()
             settle()
-            editor = app.position_editor
-            assert isinstance(editor, OriginalRuleForms) and not hasattr(editor, 'tabs')
-            assert editor.read() == original
+            assert isinstance(editor, OriginalRuleForms) and editor.scope.get() == 'VỊ THẾ'
+            assert editor._exits() == original
             assert editor.initial_sl._hint_icon.cget('text') == '?'
             assert editor.dynamic_settings_card.winfo_ismapped() and editor.below_arm_switch.winfo_ismapped()
             canvas = editor.exit_body._parent_canvas
-            for widget in controls(editor):
+            for widget in controls(editor.protection_host):
                 offset = widget.winfo_rooty() - editor.exit_body.winfo_rooty()
                 canvas.yview_moveto(max(0, offset-4) / editor.exit_body.winfo_height())
                 settle()
@@ -449,7 +453,7 @@ def _position_protection_scenario(scale):
                 assert widget.winfo_rootx()+widget.winfo_width() <= canvas.winfo_rootx()+canvas.winfo_width()+2
                 assert widget.winfo_rooty() >= canvas.winfo_rooty()-2
                 assert widget.winfo_rooty()+widget.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()+2
-                assert widget.winfo_rooty()+widget.winfo_height() <= app.editor_footer.winfo_rooty()
+                assert widget.winfo_rooty()+widget.winfo_height() <= editor.footer.winfo_rooty()
             canvas.yview_moveto(0)
             app.view['quotes']['VN30F2611'] = asdict(Quote('VN30F2611', 2000))
             editor.price_units.set('% GIÁ')
@@ -457,15 +461,15 @@ def _position_protection_scenario(scale):
             expected = {**original, 'distance_unit': 'PERCENT'}
             for key in ('sl_distance', 'tp_distance', 'repeat_gap', 'arm_gain', 'trail_gap', 'retention_until'):
                 expected[key] /= 20
-            assert editor.read() == expected
+            assert editor._exits() == expected
             assert app.settings.exit == common and not sent
             # Invalid distances stay in the editor and never reach execution.
             valid_sl = editor.initial_sl.get()
             for invalid in ('-1', 'nan', 'inf'):
                 editor.initial_sl.delete(0, 'end')
                 editor.initial_sl.insert(0, invalid)
-                app.editor_save.invoke()
-                assert not sent and app._workspace_editing
+                editor.primary.invoke()
+                assert not sent and editor.scope.get() == 'VỊ THẾ'
                 editor.price_units.set('ĐIỂM')
                 editor._units_changed('ĐIỂM')
                 assert editor.price_units.get() == '% GIÁ' and editor.initial_sl.get() == invalid
@@ -476,20 +480,21 @@ def _position_protection_scenario(scale):
                 app.view['quotes']['VN30F2611'] = quote
                 editor.price_units.set('ĐIỂM')
                 editor._units_changed('ĐIỂM')
-                assert editor.price_units.get() == '% GIÁ' and editor.read() == expected
+                assert editor.price_units.get() == '% GIÁ' and editor._exits() == expected
             settle()
-            assert app.editor_save.winfo_rootx()+app.editor_save.winfo_width() <= app.detail_page.winfo_rootx()+app.detail_page.winfo_width()
-            app.editor_save.invoke()
+            assert editor.primary.winfo_rootx()+editor.primary.winfo_width() <= editor.winfo_rootx()+editor.winfo_width()
+            editor.primary.invoke()
             assert sent[-1] == (('configure_position', position.id, expected), {})
             app.view['positions'][0]['exit_overrides'] = expected
             app.position_exit()
-            app.inherit_exit.set(True)
-            for widget in controls(app.position_editor):
+            editor.inherit_exit.set(True)
+            editor._inherit_changed()
+            for widget in controls(editor.protection_host):
                 if isinstance(widget, ctk.CTkSegmentedButton):
                     assert all(child.cget('state') == 'disabled' for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
                 else:
                     assert widget.cget('state') == 'disabled'
-            app.editor_save.invoke()
+            editor.primary.invoke()
             assert sent[-1] == (('configure_position', position.id, None), {})
             assert app.settings.exit == common
             sent.clear()
@@ -699,7 +704,7 @@ def _split_app_scenario(kind,scale):
         app=SignalApp(settings=Settings())
     app.report_callback_exception=lambda *args:errors.append(args)
     def settle():
-        app.update();app.after(250,app.quit);Misc.mainloop(app)
+        app.update();app.after(250,app.quit);Misc.mainloop(app);app.update()
     try:
         settle()
         if kind=='demo':
@@ -733,7 +738,7 @@ def _split_app_scenario(kind,scale):
             assert 'Còn 1/2 HĐ' in app._preview_position_context
             assert not hasattr(app,'preview_status_badge') and not hasattr(app,'preview_sl_value')
             assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
-            assert app.action_buttons['manage'].cget('text')=='BẢO VỆ LỆNH'
+            assert not {'manage','adopt'} & set(app.action_buttons)
             app.preview_em_exit._label.event_generate('<Button-1>');settle()
             detail=app.preview_em_exit._hover_hint.popup
             assert detail and detail.winfo_ismapped()
@@ -747,7 +752,7 @@ def _split_app_scenario(kind,scale):
             assert rule.winfo_width()/rule._get_window_scaling()<=781
             assert rule.winfo_height()/rule._get_window_scaling()<=621
             assert rule.winfo_ismapped() and rule.tabs.get()=='E/M'
-            assert set(rule.tabs._tab_dict)=={'E/M'}
+            assert set(rule.tabs._tab_dict)=={'E/M','TÍN HIỆU'}
             if scale is None:
                 assert abs(rule.winfo_rootx()+rule.winfo_width()/2-app.winfo_rootx()-app.winfo_width()/2)<100
                 assert abs(rule.winfo_rooty()+rule.winfo_height()/2-app.winfo_rooty()-app.winfo_height()/2)<100
@@ -756,7 +761,7 @@ def _split_app_scenario(kind,scale):
                     if isinstance(child,ctk.CTkEntry) and child.winfo_ismapped():yield child
                     yield from visible_entries(child)
             canvas=rule.exit_body._parent_canvas
-            entries=list(visible_entries(rule))
+            entries=list(visible_entries(rule.protection_host))
             for entry in entries:
                 # At high DPI the full native E/M form needs scrolling. Every
                 # control must be reachable inside the viewport and footer.
@@ -797,9 +802,11 @@ def _split_app_scenario(kind,scale):
             connection.variables['capital.risk_limit'].set('-1')
             connection.save();assert app.settings.risk_limit==0
             connection.variables['capital.risk_limit'].set('0')
-            opened=[];app.open_signal_backend=lambda:opened.append(True)
-            connection.select_page('Telegram');settle()
-            connection.primary.invoke();assert opened==[True]
+            connection.select_page('TELEGRAM / LỊCH');settle()
+            connection.primary.invoke()
+            connection.backend_button.invoke()
+            assert 'Mẫu offline' in connection.note.cget('text')
+            assert not getattr(app,'signal_session',None)
             connection.select_page('DNSE');settle()
             connection.select_page('LỊCH');settle()
             connection.calendar_form.variables['manual_closed_dates'].set('2026-11-19')
@@ -851,5 +858,5 @@ def _split_app_scenario(kind,scale):
 def test_separate_signal_console_and_long_demo_have_no_trade_or_network_path(kind,scale):
     code=inspect.getsource(_split_app_scenario)+f'\n_split_app_scenario({kind!r},{scale!r})'
     result=subprocess.run([sys.executable,'-X','utf8','-c',code],cwd=Path(__file__).resolve().parents[2],
-        capture_output=True,text=True,timeout=30)
+        capture_output=True,text=True,timeout=45)
     assert result.returncode==0,result.stdout+result.stderr

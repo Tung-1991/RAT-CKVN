@@ -135,6 +135,7 @@ def test_signal_switch_does_not_replay_old_condition_and_channels_do_not_share_c
     engine,broker,store=system
     state={'buy_alert':True,'exit_alert':False,'indicators':{
         'buy_ema_fast':2001,'buy_ema_slow':2000,'sell_ema_fast':1998,'sell_ema_slow':1999,'rsi':51}}
+    engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings().to_dict()
     runtime=SignalRuntime.__new__(SignalRuntime)
     runtime.settings,runtime.latest,runtime.store=engine.settings,engine.latest,store
@@ -162,6 +163,7 @@ def test_signal_switch_does_not_replay_old_condition_and_channels_do_not_share_c
 def test_fresh_quote_cannot_grant_notification_to_stale_analysis(system):
     from ckps.rules.signal_settings import SignalSettings
     engine,broker,store=system
+    engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings(buy_alert_enabled=True).to_dict()
     analysis={'contract':engine.latest.contract,'observed_at':time.time()-30,'p2':{
         'buy_alert':True,'indicators':{'buy_ema_fast':2001,'buy_ema_slow':2000,'rsi':51}}}

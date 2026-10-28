@@ -268,6 +268,7 @@ def test_signal_alert_switches_gate_notifications_without_orders(system, signal_
     from types import SimpleNamespace
     from ckps.rules.signal_settings import SignalSettings
     engine, broker, store=system
+    engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings(buy_alert_enabled=signal_alert,sell_alert_enabled=exit_alert).to_dict()
     runtime=SignalRuntime.__new__(SignalRuntime)
     runtime.settings,runtime.latest,runtime.store=engine.settings,engine.latest,store
@@ -291,6 +292,7 @@ def test_signal_alert_switches_gate_notifications_without_orders(system, signal_
 def test_disabled_signal_branch_drops_restored_alert_before_network(system, disabled_label, signal_alert, exit_alert):
     from ckps.rules.signal_settings import SignalSettings
     engine, broker, store=system
+    engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings(buy_alert_enabled=signal_alert,sell_alert_enabled=exit_alert).to_dict()
     store.notify('owner:offline-chat',f'VN30F1M PAPER · {disabled_label} · ALERT\nold message')
     runtime=SignalRuntime.__new__(SignalRuntime)
@@ -330,6 +332,7 @@ def test_one_signal_channel_rejects_order_and_protection_notifications(system,mo
     engine,broker,store=system
     engine.settings.telegram_enabled=True
     engine.settings.telegram_chat='one-chat'
+    engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings(buy_alert_enabled=True,sell_alert_enabled=True).to_dict()
     engine.settings.market_alerts={'trend_enabled':True,'movement_enabled':True}
     runtime=SignalRuntime.__new__(SignalRuntime)

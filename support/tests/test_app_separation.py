@@ -56,7 +56,7 @@ def test_trading_and_signal_apps_can_run_together_with_isolated_ledgers_and_sett
 
 def test_signal_condition_and_cooldown_survive_backend_restart_without_replay(system):
     engine,broker,store=system
-    settings=Settings(telegram_enabled=True,telegram_chat='offline-chat',
+    settings=Settings(telegram_enabled=True,telegram_chat='offline-chat',entry_notifications=True,
         signals=SignalSettings(buy_alert_enabled=True).to_dict())
     condition={'buy_alert':True,'indicators':{'buy_ema_fast':2001,'buy_ema_slow':2000,'rsi':51}}
     def session():
@@ -96,18 +96,11 @@ def test_demo_long_uses_same_dynamic_repeat_and_arm_milestones_without_ledger():
     assert not folder.exists()
 
 
-def test_main_telegram_shortcut_opens_only_signal_app_and_reuses_its_process(monkeypatch):
+def test_main_telegram_shortcut_uses_the_connection_settings_window():
     from ckps.dashboard.actions import DashboardActionsMixin
-    calls,reports=[],[]
-    process=SimpleNamespace(poll=lambda:None)
-    def launch(command,**kwargs):
-        calls.append((command,kwargs))
-        return process
-    monkeypatch.setattr('subprocess.Popen',launch)
-    app=SimpleNamespace(report=lambda text:reports.append(text))
-    DashboardActionsMixin.open_signal_backend(app)
-    DashboardActionsMixin.open_signal_backend(app)
-    assert len(calls)==1
-    assert calls[0][0][-2:]==['-m','ckps.signal_app']
-    assert 'CKPS_TELEGRAM_TOKEN' not in str(calls[0])
-    assert len(reports)==2 and not hasattr(app,'runtime')
+    pages=[]
+    window=SimpleNamespace(select_page=pages.append)
+    app=SimpleNamespace(connection=lambda:window)
+    assert DashboardActionsMixin.open_signal_backend(app) is window
+    assert pages==['TELEGRAM / LỊCH']
+    assert not hasattr(app,'runtime')

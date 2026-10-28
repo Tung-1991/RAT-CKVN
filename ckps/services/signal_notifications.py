@@ -36,7 +36,7 @@ class SignalNotifications:
         previous = self.owner_state or (False, False)
         self.owner_state = state
         self.store.put('notification','condition:'+latest.contract,{'state':state,'sent':getattr(self,'owner_sent',{})})
-        if not self.owner_enabled or not self.owner_token or not self.owner_chat or not signals.enabled:
+        if not self.owner_enabled or not self.owner_token or not self.owner_chat or not signals.enabled or not self.settings.entry_notifications:
             return
         sent = getattr(self,'owner_sent',{})
         enabled = (signals.buy_alert_enabled,signals.sell_alert_enabled)
@@ -62,7 +62,7 @@ class SignalNotifications:
         if ' · VOLATILITY · ALERT' in text:
             return market.movement_enabled
         signals = SignalSettings.from_dict(self.settings.signals)
-        return signals.enabled and (signals.sell_alert_enabled if ' · E · ALERT' in text else
+        return self.settings.entry_notifications and signals.enabled and (signals.sell_alert_enabled if ' · E · ALERT' in text else
                                     signals.buy_alert_enabled if ' · TÍN HIỆU · ALERT' in text else False)
 
     def _drop_disabled_owner(self):

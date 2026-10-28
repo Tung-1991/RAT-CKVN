@@ -150,7 +150,6 @@ class OriginalRuleForms:
         ctk.CTkSegmentedButton(normal, values=['GỐC', 'CÒN LẠI'], variable=self.normal_sell_basis, selected_color=self.BLUE,height=27,font=('Segoe UI',12)).pack(fill='x', padx=8 if compact else 12, pady=3)
         self.normal_repeat = self._switch(normal, 'LẶP ĐÓNG', self.params.normal_repeat_enabled, 'Cho phép đóng tiếp sau khi lệnh trước kết thúc, theo Bước LẶP hoặc đỉnh/đáy mới.')
         self.repeat_switch = next((child for child in self.normal_repeat._viking_row.winfo_children() if isinstance(child, ctk.CTkSwitch)))
-        ctk.CTkLabel(normal, text='Long bám đỉnh · Short bám đáy', font=('Segoe UI', 11), text_color=self.MUTED, justify='left', anchor='w', wraplength=230).pack(fill='x', padx=12, pady=(0, 4))
         dynamic_box = self._card(groups, 'DYNAMIC', 'TRƯỚC ARM: bảo vệ bằng ATR và/hoặc giữ một phần lãi. Nhường cho ARM khi đạt ARM. AUTO tự đóng khi đủ quyền; ALERT chỉ ghi LOG, độc lập Telegram.', 0, 1,compact=compact)
         self.dynamic_settings_card = dynamic_box
         dynamic_header = dynamic_box._viking_header

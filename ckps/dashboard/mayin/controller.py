@@ -170,7 +170,7 @@ class MayinController(OriginalPanels):
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
-                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE hoặc BẢO VỆ LỆNH.'
+                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M → CHUNG hoặc VỊ THẾ.'
                 continue
             policy=getattr(rules,prefix+'_policy')
             basis='gốc' if getattr(rules,prefix+'_basis')=='ORIGINAL' else 'còn lại'

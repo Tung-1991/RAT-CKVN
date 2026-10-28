@@ -36,8 +36,8 @@ class DashboardPanelsMixin(MayinController):
         self.action_bar = ctk.CTkFrame(self.running_page, fg_color=COL_PANEL_HEADER,border_width=1,border_color=COL_GRID,corner_radius=6)
         self.action_bar.grid(row=1, column=0, sticky='ew', padx=5, pady=(0, 4))
         self.action_buttons = {}
-        for key, label, command, color in (('close', 'ĐÓNG / GIẢM', self.close_position, '#B91C1C'), ('manage', 'BẢO VỆ LỆNH', self.position_exit, BLUE), ('adopt', 'NHẬN QUẢN LÝ', self.manage_position, SLATE), ('cancel', 'HỦY LỆNH', self.cancel_order, SLATE), ('edit', 'SỬA LO', self.edit_order, SLATE), ('reconcile', 'ĐỐI SOÁT', self.bind_unknown, SLATE)):
-            button = ctk.CTkButton(self.action_bar, text=label, height=30, width=132 if key in {'manage','adopt'} else 108,
+        for key, label, command, color in (('close', 'ĐÓNG / GIẢM', self.close_position, '#B91C1C'), ('cancel', 'HỦY LỆNH', self.cancel_order, SLATE), ('edit', 'SỬA LO', self.edit_order, SLATE), ('reconcile', 'ĐỐI SOÁT', self.bind_unknown, SLATE)):
+            button = ctk.CTkButton(self.action_bar, text=label, height=30, width=108,
                 font=('Segoe UI',14,'bold'),fg_color=color, command=command)
             self.action_buttons[key] = button
         self.action_bar.grid_remove()

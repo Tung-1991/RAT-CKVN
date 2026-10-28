@@ -1,12 +1,11 @@
 """Backend application entry point; deliberately separate from trading."""
 def main():
-    import customtkinter as ctk
-    ctk.set_appearance_mode('Dark')
-    ctk.set_default_color_theme('dark-blue')
-    from ckps.dashboard.signal_app import SignalApp
-    app=SignalApp()
-    app.mainloop()
-    return 0
+    import sys
+    if '--headless' in sys.argv:
+        from ckps.services.signal_process import serve
+        return serve(sys.stdin, sys.stdout)
+    from ckps.services.signal_process import standalone
+    return standalone()
 
 
 if __name__=='__main__':

@@ -112,6 +112,9 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
     def close(self):
         self.running = False
         self.closing = True
+        session = getattr(self, 'signal_session', None)
+        if session:
+            session.close()
         timer=getattr(self,'_preview_layout_after',None)
         if timer:
             self.after_cancel(timer)

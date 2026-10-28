@@ -77,11 +77,7 @@ class DashboardActionsMixin:
                      + (" + phí" if not self.settings.estimated_fee_per_contract and rules.sl_enabled else ""), submit)
 
     def manage_position(self):
-        raw = self.selected(self.positions_tree, "positions")
-        if raw:
-            enabled = not raw["managed"]
-            self.confirm(f"{self.settings.mode} · {'NHẬN' if enabled else 'DỪNG'} QUẢN LÝ · {raw['side']} {raw['symbol']} · {raw['quantity']} HĐ",
-                         lambda: self.send("set_managed", raw["id"], enabled))
+        return self.settings_dialog('E/M', scope='VỊ THẾ')
 
     def cancel_order(self):
         raw = self.selected(self.orders_tree, "orders")
@@ -93,7 +89,7 @@ class DashboardActionsMixin:
         from .history import HistoryWindow
         return self.popup("history", lambda: HistoryWindow(self))
 
-    def settings_dialog(self,page="RULE"):
+    def settings_dialog(self,page="RULE", *, scope=None):
         if page in {"KẾT NỐI","Kết nối","Hệ thống"}:
             window=self.connection()
             window.select_page("DNSE")
@@ -101,6 +97,8 @@ class DashboardActionsMixin:
         from .mayin.rule_window import RuleWindow
         window=self.popup("rule",lambda:RuleWindow(self,page))
         window.select(page)
+        if scope:
+            window.select_scope(scope)
         return window
 
     def connection(self,requested_mode=None):
@@ -111,18 +109,9 @@ class DashboardActionsMixin:
         return window
 
     def open_signal_backend(self):
-        import subprocess
-        import sys
-        from ckps.config import ROOT
-        process=getattr(self,'_signal_process',None)
-        if process is not None and process.poll() is None:
-            self.report('Backend Telegram đang mở ở cửa sổ riêng.')
-            return
-        interpreter=Path(sys.executable)
-        windowed=interpreter.with_name('pythonw.exe')
-        self._signal_process=subprocess.Popen([str(windowed if windowed.exists() else interpreter),'-X','utf8','-m','ckps.signal_app'],
-            cwd=ROOT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-        self.report('Đã mở backend Telegram tín hiệu.')
+        window = self.connection()
+        window.select_page('TELEGRAM / LỊCH')
+        return window
 
     def _mode_selected(self, mode):
         if self.switch_pending:

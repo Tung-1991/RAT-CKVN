@@ -7,6 +7,8 @@ from .forms import OriginalRuleForms
 from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup
 from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.models import quantity
+from ckps.rules.market_alerts import MarketAlertSettings
+from ..settings_state import signal_settings, save_signal_settings, start_signal_backend
 
 
 class ConnectionFields(OriginalRuleForms):
@@ -50,7 +52,7 @@ class ConnectionFields(OriginalRuleForms):
                 variable._viking_entry = entry
                 entry.configure(width=width,height=32,font=FONT_VALUE,show='•' if secret else '',
                     justify='left' if secret or any(word in key for word in ('chat','account','loan')) else 'right')
-                is_connection=key.startswith('connection.')
+                is_connection=key.startswith(('connection.','telegram.'))
                 entry.master.grid_columnconfigure(0,weight=0 if is_connection else 1)
                 entry.master.grid_columnconfigure(1,weight=1 if is_connection else 0)
                 entry.grid_configure(sticky='ew')
@@ -80,19 +82,17 @@ class ConnectionWindow(_StableToplevel):
             segmented_button_selected_color=BLUE,segmented_button_unselected_color='#3A3F47',command=self._page_changed)
         self.tabs.grid(row=0,column=0,sticky='nsew',padx=8,pady=(4,0))
         self.tabs._segmented_button.configure(font=('Segoe UI',14,'bold'),height=30)
-        self.pages={name:self.tabs.add(name) for name in ('DNSE','VỐN','Telegram','LỊCH')}
+        self.pages={name:self.tabs.add(name) for name in ('DNSE','VỐN','TELEGRAM / LỊCH')}
         for page in self.pages.values():page.grid_columnconfigure(0,weight=1)
         self._connection(self.pages['DNSE'])
         self._capital(self.pages['VỐN'])
-        self._telegram(self.pages['Telegram'])
-        from .calendar_form import CalendarForm
-        self.calendar_form=CalendarForm(self.pages['LỊCH'],settings=getattr(app,'_demo_calendar',None))
-        self.calendar_form.grid(row=0,column=0,sticky='nsew')
+        self._telegram(self.pages['TELEGRAM / LỊCH'])
         self.footer=ctk.CTkFrame(self,fg_color='transparent')
         self.footer.grid(row=1,column=0,sticky='ew',padx=16,pady=(4,10))
         self.footer.grid_columnconfigure(0,weight=1)
-        self.note=ctk.CTkLabel(self.footer,text='',text_color=MUTED,font=('Segoe UI',12),anchor='w',justify='left',wraplength=350)
+        self.note=ctk.CTkLabel(self.footer,text='',width=1,text_color=MUTED,font=('Segoe UI',12),anchor='w',justify='left',wraplength=350)
         self.note.grid(row=0,column=0,sticky='ew',padx=(0,8))
+        self.note.bind('<Configure>',lambda _:self.note.configure(wraplength=max(120,int(self.note.winfo_width()/self.note._get_widget_scaling())-4)),add='+')
         self.primary=ctk.CTkButton(self.footer,text='',height=34,width=165,font=('Segoe UI',13,'bold'),fg_color=GREEN,command=self.save)
         self.primary.grid(row=0,column=1)
         self.protocol('WM_DELETE_WINDOW',self.destroy)
@@ -156,16 +156,71 @@ class ConnectionWindow(_StableToplevel):
         self.paper_capital_button.grid(row=0,column=2)
 
     def _telegram(self,page):
-        card=self.form.card(page,'TELEGRAM · TÍN HIỆU')
-        for title,detail in (('BIẾN ĐỘNG VN30','Báo thay đổi giá theo nhịp theo dõi.'),
-                             ('NHẮC ĐÁO HẠN','Báo trước; Ngài tự quyết định giao dịch.'),
-                             ('VÀO LỆNH','Gợi ý và thông báo gửi/khớp lệnh.')):
-            row=ctk.CTkFrame(card,fg_color='#1B1F25',corner_radius=6)
-            row.pack(fill='x',padx=10,pady=3)
-            ctk.CTkLabel(row,text=title,font=('Segoe UI',12,'bold'),text_color=self.form.TITLE,anchor='w',width=145).pack(side='left',padx=10,pady=5)
-            ctk.CTkLabel(row,text=detail,font=('Segoe UI',12),text_color=MUTED,anchor='w').pack(side='left',fill='x',expand=True,pady=5)
-        ctk.CTkLabel(card,text='Chọn MỞ TELEGRAM để nhập token/chat ID và bật từng thông báo.',font=('Segoe UI',12),
-            text_color=MUTED,anchor='w').pack(fill='x',padx=10,pady=(6,10))
+        self.notification_body=self.form._content(page,columns=1)
+        card=self.form.card(self.notification_body,'TELEGRAM · MỘT KÊNH')
+        settings=signal_settings(self.app)
+        credentials=getattr(self.app,'signal_credentials',{})
+        self.form.field(card,'telegram.token','Bot token',credentials.get('telegram_token',''),secret=True)
+        self.form.field(card,'telegram.chat','Chat ID',settings.telegram_chat)
+        self.backend_button=ctk.CTkButton(card._viking_header,text='CHẠY',width=100,height=26,
+            font=('Segoe UI',12,'bold'),command=self.toggle_backend)
+        self.backend_button.pack(side='right')
+        self.backend_state=ctk.CTkLabel(card,text='Chưa chạy · Phân tích độc lập BOT giao dịch',font=('Segoe UI',12),text_color=MUTED,anchor='w')
+        self.backend_state.pack(fill='x',padx=10,pady=(2,4))
+        from .calendar_form import CalendarForm
+        self.calendar_form=CalendarForm(self.notification_body,settings=getattr(self.app,'_demo_calendar',None),notice_toggle=False)
+        self.calendar_form.grid(row=1,column=0,sticky='ew')
+        market=MarketAlertSettings.from_dict(settings.market_alerts)
+        self.options={'movement':tk.BooleanVar(value=market.movement_enabled),
+            'expiry':self.calendar_form.variables['expiry_notice_enabled'],
+            'entry':tk.BooleanVar(value=settings.entry_notifications)}
+        row=ctk.CTkFrame(card,fg_color='transparent')
+        row.pack(fill='x',padx=10,pady=5)
+        for key,title in (('movement','Biến động VN30'),('expiry','Nhắc đáo hạn'),('entry','Vào lệnh')):
+            ctk.CTkCheckBox(row,text=title,variable=self.options[key],width=1,
+                checkbox_width=16,checkbox_height=16,font=('Segoe UI',12)).pack(side='left',padx=(0,20))
+
+    def notification_values(self):
+        settings=signal_settings(self.app)
+        market=replace(MarketAlertSettings.from_dict(settings.market_alerts),
+            movement_enabled=self.options['movement'].get(),trend_enabled=self.options['entry'].get())
+        settings=replace(settings,telegram_chat=self.variables['telegram.chat'].get().strip(),
+            telegram_enabled=any(option.get() for option in self.options.values()),
+            entry_notifications=self.options['entry'].get(),market_alerts=market.to_dict()).validate()
+        credentials={key:self.variables['connection.'+key].get().strip() or self.app.credentials.get(key,'')
+                     or os.environ.get('CKPS_DNSE_API_'+key.upper(),'') for key in ('key','secret')}
+        credentials['telegram_token']=self.variables['telegram.token'].get().strip()
+        return settings,self.calendar_form.values(),credentials
+
+    def save_notifications(self):
+        settings,schedule,credentials=self.notification_values()
+        from ckps.services import calendar
+        if getattr(self.app,'preview_only',False):self.app._demo_calendar=schedule
+        else:calendar.write_settings(schedule)
+        self.app.signal_credentials=credentials
+        save_signal_settings(self.app,settings)
+        self.note.configure(text='Đã áp dụng thông báo/lịch vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
+            else 'Đã lưu Telegram/lịch; tắt thông báo vẫn phân tích.',text_color=GREEN)
+
+    def toggle_backend(self):
+        try:
+            if getattr(self.app,'preview_only',False):
+                raise ValueError('Mẫu offline chỉ rà UI; không kết nối hoặc gửi Telegram.')
+            session=getattr(self.app,'signal_session',None)
+            if session and session.running:
+                session.close()
+                self.backend_state.configure(text='Đang dừng backend…')
+                return
+            settings,schedule,credentials=self.notification_values()
+            if not credentials['key'] or not credentials['secret']:
+                raise ValueError('Nhập API key/secret ở DNSE trước khi chạy tín hiệu.')
+            if settings.telegram_enabled and not (credentials['telegram_token'] and settings.telegram_chat):
+                raise ValueError('Nhập Bot token và Chat ID trước khi bật thông báo.')
+            from ckps.services import calendar
+            calendar.write_settings(schedule)
+            start_signal_backend(self.app,settings,credentials)
+            self.note.configure(text='Đã chạy backend riêng · Không có quyền giao dịch.',text_color=GREEN)
+        except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
     def save_limits(self):
         try:
@@ -205,17 +260,17 @@ class ConnectionWindow(_StableToplevel):
         self.select_page('DNSE')
 
     def select_page(self,page):
+        if page in {'Telegram','LỊCH'}:page='TELEGRAM / LỊCH'
         self.tabs.set(page if page in self.pages else 'DNSE')
         self._page_changed()
 
     def _page_changed(self):
         if not hasattr(self,'primary'):return
         page,mode=self.tabs.get(),self.variables['connection.mode'].get()
-        self.primary.configure(text={'DNSE':'KẾT NỐI DNSE','VỐN':'LƯU HẠN MỨC','Telegram':'MỞ TELEGRAM','LỊCH':'LƯU LỊCH'}[page])
+        self.primary.configure(text={'DNSE':'KẾT NỐI DNSE','VỐN':'LƯU HẠN MỨC','TELEGRAM / LỊCH':'LƯU THAY ĐỔI'}[page])
         text='Mẫu: rà cấu hình DNSE/API; không kết nối thật.' if getattr(self.app,'preview_only',False) else ('PAPER chỉ đọc dữ liệu DNSE.' if mode=='PAPER' else 'Kết nối trước, xác thực OTP sau.')
         if page=='VỐN':text='0 = không đặt trần riêng; không thay đổi E/M.'
-        elif page=='Telegram':text='Một kênh thông báo; bot quản lý vị thế tại app.'
-        elif page=='LỊCH':text='Đáo hạn chỉ nhắc; ngày nghỉ và phiên giữ kiểm tra.'
+        elif page=='TELEGRAM / LỊCH':text='Đáo hạn chỉ nhắc · EMA/RSI chỉnh tại RULE.'
         self.note.configure(text=text,text_color=MUTED)
     def connect(self):
         try:
@@ -245,19 +300,17 @@ class ConnectionWindow(_StableToplevel):
 
     def save(self):
         if self.tabs.get()=='VỐN':self.save_limits()
-        elif self.tabs.get()=='Telegram':self.app.open_signal_backend()
-        elif self.tabs.get()=='LỊCH':
+        elif self.tabs.get()=='TELEGRAM / LỊCH':
             try:
-                from ckps.services import calendar
-                settings=self.calendar_form.values()
-                if getattr(self.app,'preview_only',False):self.app._demo_calendar=settings
-                else:calendar.write_settings(settings)
-                self.note.configure(text='Đã áp dụng lịch vào mẫu trong phiên.' if getattr(self.app,'preview_only',False) else 'Đã lưu lịch cho app và backend.',text_color=GREEN)
+                self.save_notifications()
             except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
         else:self.connect()
 
     def _update_view(self):
         self._update_after=None
+        session=getattr(self.app,'signal_session',None)
+        self.backend_button.configure(text='DỪNG' if session and session.running else 'CHẠY')
+        if session:self.backend_state.configure(text=session.status)
         packages=self.app.view.get('loan_packages',[])
         self.packages_label.configure(text=' · '.join(f"{p['id']} {p['name']}" for p in packages[:2]))
         self.packages_label.pack(fill='x',padx=9,pady=(0,4)) if packages else self.packages_label.pack_forget()

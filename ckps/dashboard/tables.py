@@ -127,7 +127,7 @@ class DashboardTablesMixin:
         order = row[1] if row and row[0] == "orders" else None
         reserved = sum(o["quantity"] - o["filled"] for o in self.view.get("orders", [])
             if position and o.get("position_id") == position["id"] and o["action"] == "CLOSE" and o["status"] not in FINAL)
-        enabled = {"close":bool(position and position["quantity"] > reserved), "manage":bool(position), "adopt":bool(position),
+        enabled = {"close":bool(position and position["quantity"] > reserved),
                    "cancel":bool(order and order["broker_id"] and order["status"] in {"WORKING", "PARTIAL"}),
                    "edit":bool(order and order["kind"] == "LO" and order["broker_id"] and order["status"] in {"WORKING", "PARTIAL"}),
                    "reconcile":bool(order and order["status"] == "UNKNOWN")}
@@ -138,8 +138,6 @@ class DashboardTablesMixin:
                 button.pack(side="right", padx=3, pady=3)
         if row:
             self.action_bar.grid()
-            if position:
-                self.action_buttons["adopt"].configure(text="BỎ QUẢN LÝ" if position["managed"] else "NHẬN QUẢN LÝ")
         else:
             self.action_bar.grid_remove()
         self._refresh_ticket_preview()

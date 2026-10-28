@@ -12,6 +12,7 @@ from ckps.rules.p2.business import (indicator_snapshot, crossover_signal_from_sn
 from ckps.rules.p2.ema_memory import consume_cross, crossing_totals, va_scan_counts, recent_session_start
 from ckps.rules.p2.market import VN_TZ, market_phase, exchange_sessions, history_working_dates
 from ckps.rules.p2.session_cross import HistoryCache, SessionCrossService
+from .technical_notifications import completed_bars
 
 
 class AnalysisState:
@@ -105,7 +106,7 @@ class SignalAnalysis:
         result = {"contract": symbol, "observed_at": now.timestamp(),
                   "quote_at": quote.get('at'), "quote_price": price,
                   "market_phase": market_phase(now, working_dates, exchange="VN30")[0],
-                  "p1": p1_snapshot(bars, price, fresh=fresh),
+                  "p1": p1_snapshot(completed_bars(bars, now), price, fresh=fresh),
                   "p2": {"status": "CHỜ DỮ LIỆU", "badge": "WAIT", "mode": p.buy_ema_cross_mode,
                          "observation": p.signal_mode, "interval": p.realtime_indicator_interval, "policy": "ALERT"}}
         if not p.enabled:

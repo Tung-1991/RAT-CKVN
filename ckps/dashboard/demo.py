@@ -61,8 +61,7 @@ class DemoApp(App):
             'entry':{'state':'READY','price':2007,'observed_at':time.time()}}
         super().render()
         for button in self.open_buttons:button.configure(state='disabled')
-        for key,button in self.action_buttons.items():
-            if key!='manage':button.configure(state='disabled')
+        for button in self.action_buttons.values():button.configure(state='disabled')
         self.lbl_brain.configure(text='MẪU OFFLINE',text_color='#F59E0B')
         self.lbl_market.configure(text='GIÁ MẪU · KHÔNG KẾT NỐI DNSE')
         self.lbl_account.configure(text='MẪU · Không dùng sổ giao dịch')
@@ -82,8 +81,7 @@ class DemoApp(App):
 
     def _sync_selection(self):
         super()._sync_selection()
-        for key,button in getattr(self,'action_buttons',{}).items():
-            if key!='manage':button.configure(state='disabled')
+        for button in getattr(self,'action_buttons',{}).values():button.configure(state='disabled')
 
     def send(self,name,*args,**kwargs):
         if name=='arm':
@@ -94,6 +92,11 @@ class DemoApp(App):
         if name=='configure_position':
             position=next(row for row in self.view['positions'] if row['id']==args[0])
             position['exit_overrides']=args[1]
+            self.render()
+            return
+        if name=='set_managed':
+            position=next(row for row in self.view['positions'] if row['id']==args[0])
+            position['managed']=bool(args[1])
             self.render()
             return
         self.report('Bản mẫu chỉ rà UI/E/M; không gửi lệnh hoặc lưu cấu hình thật.')

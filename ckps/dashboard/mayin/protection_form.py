@@ -10,6 +10,14 @@ from .forms import OriginalRuleForms
 
 
 class ProtectionFormMixin(OriginalRuleForms):
+    @staticmethod
+    def set_protection_enabled(parent, enabled):
+        for widget in parent.winfo_children():
+            if isinstance(widget, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
+                widget.configure(state='normal' if enabled else 'disabled')
+            else:
+                ProtectionFormMixin.set_protection_enabled(widget, enabled)
+
     def _init_protection(self, parent, values):
         exits = load_record(ExitSettings, values)
         self.values = exits
@@ -51,8 +59,6 @@ class ProtectionFormMixin(OriginalRuleForms):
             font=('Segoe UI',12,'bold'),command=self._units_changed).pack(side='right')
         ctk.CTkLabel(row,text='ĐƠN VỊ',font=('Segoe UI',11,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
         self._hint_icon(row, 'ĐIỂM: khoảng điểm VN30. % GIÁ: phần trăm so với giá vốn. Khi đổi, app quy đổi theo giá hợp đồng đang xem; kiểm tra lại trước khi lưu.').pack(side='right',padx=3)
-        ctk.CTkLabel(bar,text='ĐIỂM: khoảng điểm VN30  ·  % GIÁ: tỷ lệ trên giá vốn',
-            font=('Segoe UI',11),text_color=self.MUTED,anchor='w').pack(fill='x',pady=(2,0))
 
     def _units_changed(self, selected):
         previous=self._current_unit

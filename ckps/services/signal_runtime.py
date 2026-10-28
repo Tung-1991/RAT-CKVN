@@ -20,6 +20,7 @@ from .calendar import CalendarNotices
 class SignalRuntime(SignalNotifications):
     def __init__(self,settings,credentials=None,*,market=None):
         self.settings=settings.validate()
+        self.persist_settings=True
         credentials=credentials or {}
         folder=signal_folder()
         self.lease=AccountLease(folder/'session.lock')
@@ -70,7 +71,7 @@ class SignalRuntime(SignalNotifications):
             self.owner_token=token
             self.owner_enabled,self.owner_chat=settings.telegram_enabled,settings.telegram_chat
             self._drop_disabled_owner()
-            write_signal_settings(settings)
+            if getattr(self,'persist_settings',True):write_signal_settings(settings)
 
     def _run(self):
         next_poll=0.

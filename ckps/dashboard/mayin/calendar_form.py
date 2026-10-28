@@ -10,7 +10,7 @@ from .tokens import *
 
 
 class CalendarForm(ctk.CTkFrame):
-    def __init__(self,parent,*,settings=None):
+    def __init__(self,parent,*,settings=None,notice_toggle=True):
         super().__init__(parent,fg_color='transparent',height=1,width=1)
         self.settings=settings or calendar.read_settings()
         self.variables={}
@@ -36,8 +36,11 @@ class CalendarForm(ctk.CTkFrame):
         notices.grid(row=1,column=0,columnspan=2,sticky='ew',padx=4,pady=(4,3))
         self.variables['notify_enabled']=tk.BooleanVar(value=self.settings.notify_enabled)
         self.variables['expiry_notice_enabled']=tk.BooleanVar(value=self.settings.expiry_notice_enabled)
-        ctk.CTkSwitch(notices,text='Nhắc trước đáo hạn',variable=self.variables['expiry_notice_enabled'],font=('Segoe UI',12),
-            progress_color=COL_GREEN).pack(side='left',padx=(10,8),pady=6)
+        if notice_toggle:
+            ctk.CTkSwitch(notices,text='Nhắc trước đáo hạn',variable=self.variables['expiry_notice_enabled'],font=('Segoe UI',12),
+                progress_color=COL_GREEN).pack(side='left',padx=(10,8),pady=6)
+        else:
+            ctk.CTkLabel(notices,text='Nhắc trước đáo hạn',font=('Segoe UI',12)).pack(side='left',padx=(10,8),pady=6)
         for key,value,width in (('notice_days',self.settings.notice_days,45),('notice_time',self.settings.notice_time,70)):
             variable=tk.StringVar(value=str(value));self.variables[key]=variable
             if key=='notice_time':ctk.CTkLabel(notices,text='ngày · lúc',font=('Segoe UI',12)).pack(side='left',padx=6)

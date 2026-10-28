@@ -210,8 +210,13 @@ class OriginalPanels:
         def label(parent,name,text='',size=14,color=COL_PREVIEW_TEXT,bold=False,mono=False,**grid):
             font=('Cascadia Mono' if mono else 'Segoe UI',size,*(['bold'] if bold else []))
             widget=StatusLabel(parent,text=text,width=1,height=size+5,font=font,text_color=color,anchor='w')
+            widget.grid_propagate(False)
             widget.grid(sticky='ew',**grid)
-            widget.bind('<Configure>',self._fit_preview_text,add='+')
+            # CTkLabel.bind targets its inner label/canvas. Observe the outer
+            # allocation and Map as well: restored hidden rows may reuse inner
+            # dimensions without another Configure on those children.
+            tk.Misc.bind(widget,'<Configure>',self._queue_preview_layout,add='+')
+            tk.Misc.bind(widget,'<Map>',self._queue_preview_layout,add='+')
             setattr(self,name,widget);self._preview_fit_labels.append((widget,font))
             return widget
         self.market_context_label=ctk.CTkLabel(self.info_header,text='CHỈ THAM KHẢO',height=28,
@@ -268,11 +273,13 @@ class OriginalPanels:
                 if widget.winfo_manager():widget.grid_remove()
                 continue
             if not widget.winfo_manager():widget.grid()
-            if widget.winfo_ismapped() and widget.winfo_width()>30:
+            if widget.winfo_width()>30:
                 length=max(30,int(widget.winfo_width()/widget._get_widget_scaling())-4)
                 if widget.cget('wraplength')!=length:widget.configure(wraplength=length)
+                height=max(font[1]+5,ceil(widget._label.winfo_reqheight()/widget._get_widget_scaling()))
+                if widget.cget('height')!=height:widget.configure(height=height)
 
-    def _queue_preview_layout(self):
+    def _queue_preview_layout(self,_event=None):
         if getattr(self,'_preview_layout_after',None):return
         def settle():
             self._preview_layout_after=None
