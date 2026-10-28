@@ -120,8 +120,11 @@ def _layout_scenario(scale):
         dialog.save()
         assert len(saved)==1 and saved[0].signals==SignalSettings().to_dict()
         assert not any(name[0] in {'open_manual','close_position'} for name,kw in sent)
+        popup_size=(connection.winfo_width(),connection.winfo_height())
+        assert popup_size==(dialog.winfo_width(),dialog.winfo_height())
         for name in connection.pages:
             connection.select_page(name);settle(600)
+            assert (connection.winfo_width(),connection.winfo_height())==popup_size
             for widget in widgets(connection):
                 if widget is not connection.primary and isinstance(widget,(ctk.CTkEntry,ctk.CTkSwitch,ctk.CTkButton)) and widget.winfo_ismapped():
                     bottom=connection.pages[name].winfo_rooty()+connection.pages[name].winfo_height()-4
@@ -335,12 +338,26 @@ def _rule_adapter_scenario():
         app.save_config=saved.append
         app.send=lambda *a,**kw:sent.append((a,kw))
         window.price_units.set('% GIÁ')
+        window._units_changed('% GIÁ')
+        assert window.price_units.get()=='ĐIỂM' and 'Cần giá' in window.status.cget('text')
+        from ckps.models import Quote
+        app.view.update(contract='VN30F1M',quotes={'VN30F1M':asdict(Quote('VN30F1M',2000))})
+        window.price_units.set('% GIÁ')
+        window._units_changed('% GIÁ')
         window.save()
         assert len(saved)==1
-        assert saved[0].exit=={**asdict(exits),'distance_unit':'PERCENT'}
+        expected={**asdict(exits),'distance_unit':'PERCENT'}
+        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
+            expected[key]=getattr(exits,key)/20
+        assert saved[0].exit==expected
         assert saved[0].capital_limit==settings.capital_limit and saved[0].max_contracts==3
         assert saved[0].signals==signals.to_dict()  # Hidden backend settings are not overwritten by MAIN.
         assert not sent  # Rule/indicator controls cannot submit or close a trade.
+        window.price_units.set('ĐIỂM');window._units_changed('ĐIỂM')
+        assert window._exits()==asdict(exits)
+        app.view['quotes']['VN30F1M']['at']=0
+        window.price_units.set('% GIÁ');window._units_changed('% GIÁ')
+        assert window.price_units.get()=='ĐIỂM' and window._exits()==asdict(exits)
     finally:
         app.close()
 
@@ -513,8 +530,9 @@ def _split_app_scenario(kind,scale):
     def forbidden(*args,**kwargs):raise AssertionError('UI review cannot use a network or start trading.')
     requests.Session.request=forbidden
     socket.socket.connect=forbidden
-    ctk.deactivate_automatic_dpi_awareness()
-    ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
+    if scale is not None:
+        ctk.deactivate_automatic_dpi_awareness()
+        ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
     from ckps.dashboard.mayin.ui_compat import NativeFontMetrics
     errors=[]
     if kind=='demo':
@@ -562,20 +580,41 @@ def _split_app_scenario(kind,scale):
             app.rule_button.invoke();settle()
             rule=app.popups['rule']
             assert rule.winfo_width()/rule._get_window_scaling()<=781
-            assert rule.winfo_height()/rule._get_window_scaling()<=561
+            assert rule.winfo_height()/rule._get_window_scaling()<=621
             assert rule.winfo_ismapped() and rule.tabs.get()=='E/M'
             assert set(rule.tabs._tab_dict)=={'E/M'}
+            if scale is None:
+                assert abs(rule.winfo_rootx()+rule.winfo_width()/2-app.winfo_rootx()-app.winfo_width()/2)<100
+                assert abs(rule.winfo_rooty()+rule.winfo_height()/2-app.winfo_rooty()-app.winfo_height()/2)<100
             def visible_entries(parent):
                 for child in parent.winfo_children():
                     if isinstance(child,ctk.CTkEntry) and child.winfo_ismapped():yield child
                     yield from visible_entries(child)
-            for entry in visible_entries(rule):
+            canvas=rule.exit_body._parent_canvas
+            entries=list(visible_entries(rule))
+            for entry in entries:
+                # At high DPI the full native E/M form needs scrolling. Every
+                # control must be reachable inside the viewport and footer.
+                offset=entry.winfo_rooty()-rule.exit_body.winfo_rooty()
+                canvas.yview_moveto(max(0,offset-4)/rule.exit_body.winfo_height())
+                settle()
+                assert entry.winfo_rooty()>=canvas.winfo_rooty()-2,entry.get()
                 assert entry.winfo_rooty()+entry.winfo_height()<=rule.footer.winfo_rooty(),entry.get()
-                canvas=rule.exit_body._parent_canvas
-                assert entry.winfo_rooty()+entry.winfo_height()<=canvas.winfo_rooty()+canvas.winfo_height(),entry.get()
-            rule.advanced_button.toggle();settle()
+                assert entry.winfo_rooty()+entry.winfo_height()<=canvas.winfo_rooty()+canvas.winfo_height()+2,entry.get()
+            canvas.yview_moveto(0);settle()
+            assert rule.dynamic_settings_card.winfo_ismapped()
             assert rule.below_arm_switch.winfo_ismapped()
-            rule.advanced_button.toggle();settle()
+            assert rule.initial_sl._hint_icon.cget('text')=='?'
+            icon=rule.initial_sl._hint_icon
+            icon._label.event_generate('<Enter>')
+            app.after(650,app.quit);Misc.mainloop(app);settle()
+            hint=icon._hover_hint.popup
+            assert hint and hint.winfo_ismapped()
+            assert 'cắt lỗ' in hint.body.get('1.0','end')
+            assert hint.winfo_rootx()>=rule.winfo_rootx()
+            assert hint.winfo_rootx()+hint.winfo_width()<=rule.winfo_rootx()+rule.winfo_width()
+            assert hint.winfo_rooty()+hint.winfo_height()<=rule.winfo_rooty()+rule.winfo_height()
+            icon._hover_hint._hide()
             rule.initial_sl.delete(0,'end');rule.initial_sl.insert(0,'12')
             rule.save();settle()
             assert app.settings.exit['sl_distance']==12
@@ -586,8 +625,6 @@ def _split_app_scenario(kind,scale):
             connection=app.popups['connection']
             assert connection.winfo_ismapped()
             connection.select_page('VỐN');settle()
-            assert not connection.variables['capital.max_contracts']._viking_entry.winfo_ismapped()
-            connection.capital_advanced_switch.toggle();settle()
             assert connection.variables['capital.max_contracts']._viking_entry.winfo_ismapped()
             connection.variables['capital.max_contracts'].set('3')
             connection.save();assert app.settings.max_contracts==3
@@ -644,7 +681,7 @@ def _split_app_scenario(kind,scale):
     finally:app.close()
 
 
-@pytest.mark.parametrize('kind,scale',[('demo',1.),('demo',1.5),('backend',1.),('backend',1.5)])
+@pytest.mark.parametrize('kind,scale',[('demo',None),('demo',1.),('demo',1.5),('demo',2.),('backend',1.),('backend',1.5)])
 def test_separate_signal_console_and_long_demo_have_no_trade_or_network_path(kind,scale):
     code=inspect.getsource(_split_app_scenario)+f'\n_split_app_scenario({kind!r},{scale!r})'
     result=subprocess.run([sys.executable,'-X','utf8','-c',code],cwd=Path(__file__).resolve().parents[2],

@@ -30,6 +30,8 @@
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
+- E/M phải hiện đầy đủ TSL/ARM và DYNAMIC (ATR, giữ lãi, tỷ lệ đóng, LẶP),
+  không giấu trong nâng cao. Giữ hint giải thích và cùng kích thước hai cửa sổ.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

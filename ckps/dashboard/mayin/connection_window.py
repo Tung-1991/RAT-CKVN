@@ -1,11 +1,10 @@
 """Compact connection pages built from MayinTien's original cards and fields."""
 from dataclasses import replace
 import os
-from math import ceil
 import tkinter as tk
 import customtkinter as ctk
 from .forms import OriginalRuleForms
-from .widgets import StableTabview, _StableToplevel, FONT_VALUE
+from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup
 from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.models import quantity
 
@@ -22,8 +21,18 @@ class ConnectionFields(OriginalRuleForms):
         return card
 
     def field(self, card, key, label, value, choices=None, secret=False, width=180):
+        hints={'connection.key':'API key DNSE dùng cho phiên kết nối; không lưu vào cấu hình.',
+               'connection.secret':'API secret DNSE dùng cho phiên kết nối; không ghi vào log.',
+               'connection.account':'Số tiểu khoản phái sinh DNSE dùng cho REAL.',
+               'connection.loan':'Gói ký quỹ DNSE. Nếu chỉ có một gói, app tự chọn.',
+               'capital.capital_limit':'0: không đặt trần riêng; sức mở vẫn do DNSE xác nhận.',
+               'capital.max_contracts':'0: không giới hạn HĐ riêng. Tính cả vị thế và lệnh đang chờ.',
+               'capital.risk_limit':'Trần rủi ro giá tới SL bằng tiền; 0 là không đặt riêng.',
+               'capital.risk_nav_pct':'Trần rủi ro theo NAV phái sinh; thiếu NAV không tự tính.',
+               'capital.estimated_fee_per_contract':'Phí ước tính cho một HĐ mỗi chiều; 0 hiện chờ phí.'}
+        hint=hints.get(key,'')
         if isinstance(value, bool):
-            variable = self._switch(card, label, value, '')
+            variable = self._switch(card, label, value, hint)
             for widget in variable._viking_row.winfo_children():
                 if isinstance(widget, ctk.CTkSwitch):
                     widget.configure(font=('Segoe UI',13), height=26)
@@ -37,14 +46,20 @@ class ConnectionFields(OriginalRuleForms):
                 ctk.CTkSegmentedButton(row,values=list(choices),variable=variable,
                     font=('Segoe UI',13,'bold'),height=32,selected_color=self.BLUE).pack(side='right')
             else:
-                entry = self._field(card,label,value,'',variable=variable)
+                entry = self._field(card,label,value,hint,variable=variable)
                 variable._viking_entry = entry
                 entry.configure(width=width,height=32,font=FONT_VALUE,show='•' if secret else '',
                     justify='left' if secret or any(word in key for word in ('chat','account','loan')) else 'right')
+                is_connection=key.startswith('connection.')
+                entry.master.grid_columnconfigure(0,weight=0 if is_connection else 1)
+                entry.master.grid_columnconfigure(1,weight=1 if is_connection else 0)
+                entry.grid_configure(sticky='ew')
+                entry.configure(width=min(width,180))
                 entry.master.pack_configure(pady=4)
                 for widget in entry.master.winfo_children():
-                    if isinstance(widget,ctk.CTkLabel) and widget.cget('text'):
+                    if isinstance(widget,ctk.CTkLabel) and widget is not entry._hint_icon and widget.cget('text'):
                         widget.configure(font=('Segoe UI',13))
+                        if is_connection:widget.configure(width=90)
         self.variables[key] = variable
         return variable
 
@@ -55,9 +70,7 @@ class ConnectionWindow(_StableToplevel):
         self.app=app
         self.title('RAT VN30 · KẾT NỐI')
         self.configure(fg_color=BG)
-        self._window_width=min(620,self.winfo_screenwidth()-60)
-        self.geometry(f'{self._window_width}x320')
-        self.minsize(min(560,self._window_width),260)
+        self._window_width,self._window_height=size_popup(self)
         self.transient(app)
         self.grid_columnconfigure(0,weight=1)
         self.grid_rowconfigure(0,weight=1)
@@ -84,24 +97,24 @@ class ConnectionWindow(_StableToplevel):
         self.primary.grid(row=0,column=1)
         self.protocol('WM_DELETE_WINDOW',self.destroy)
         self.bind('<Escape>',lambda _:self.destroy())
-        self._fit_after=self._update_after=None
+        self._update_after=None
         self.select_mode(requested_mode or app.settings.mode)
         self.after(80,self.lift)
         self._update_after=self.after(400,self._update_view)
 
     def _connection(self,page):
-        api=self.form.card(page,'API DNSE')
+        page.grid_columnconfigure((0,1),weight=1,uniform='dnse')
+        api=self.api_card=self.form.card(page,'API DNSE')
         self.target_label=ctk.CTkLabel(api,text='',font=('Segoe UI',13,'bold'),text_color=MUTED,anchor='w')
         self.target_label.pack(fill='x',padx=9,pady=(0,4))
         for key,label in (('key','API key'),('secret','API secret')):
             self.form.field(api,'connection.'+key,label,self.app.credentials.get(key,''),secret=True,width=350)
-        self.real_rows=[]
+        self.real_account_card=self.form.card(page,'TÀI KHOẢN PHÁI SINH',1)
         for key,label,value in (('account','Tài khoản CKPS',self.app.settings.account_no),('loan','Gói ký quỹ',self.app.settings.loan_package_id)):
-            variable=self.form.field(api,'connection.'+key,label,value,width=350)
-            self.real_rows.append(variable._viking_entry.master)
+            variable=self.form.field(self.real_account_card,'connection.'+key,label,value,width=180)
             if key=='loan':variable._viking_entry.configure(placeholder_text='Tự chọn nếu DNSE có một gói')
         self.otp_card=self.form.card(page,'XÁC THỰC GIAO DỊCH REAL')
-        self.otp_card.grid_configure(row=1)
+        self.otp_card.grid_configure(row=1,columnspan=2)
         otp_row=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         otp_row.pack(fill='x',padx=9,pady=4)
         otp_row.grid_columnconfigure(1,weight=1)
@@ -111,6 +124,8 @@ class ConnectionWindow(_StableToplevel):
             font=('Segoe UI',12,'bold'),height=30,width=150).grid(row=0,column=0,padx=(0,10))
         ctk.CTkEntry(otp_row,textvariable=self.variables['connection.otp'],show='•',height=30,
             font=FONT_VALUE,placeholder_text='Mã OTP').grid(row=0,column=1,sticky='ew')
+        ctk.CTkLabel(self.otp_card,text='EMAIL: mã qua email · SMART: mã từ ứng dụng DNSE',
+            font=('Segoe UI',11),text_color=MUTED,anchor='w').pack(fill='x',padx=10)
         buttons=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         buttons.pack(fill='x',padx=9,pady=4)
         self.otp_buttons=[ctk.CTkButton(buttons,text='GỬI OTP',width=120,height=30,command=lambda:self.app.send('send_otp')),
@@ -125,14 +140,9 @@ class ConnectionWindow(_StableToplevel):
         risk=self.form.card(page,'RỦI RO / PHÍ',1)
         self.capital_keys=('capital_limit','max_contracts','risk_limit','risk_nav_pct','estimated_fee_per_contract')
         for key,label in (('capital_limit','Trần ký quỹ (đ)'),('max_contracts','Tổng HĐ tối đa'),
-                ('risk_limit','Rủi ro tới SL (đ)'),('risk_nav_pct','Rủi ro / NAV (%)'),('estimated_fee_per_contract','Phí / HĐ / chiều (đ)')):
-            self.form.field(limits if key in {'capital_limit','max_contracts'} else risk,'capital.'+key,label,getattr(self.app.settings,key),width=130)
-        self.capital_advanced = tk.BooleanVar(value=any(getattr(self.app.settings,key) for key in self.capital_keys))
-        self.capital_advanced_switch = ctk.CTkSwitch(page,text='HẠN MỨC NÂNG CAO',variable=self.capital_advanced,
-            command=lambda: self._show_capital_advanced(limits,risk),font=('Segoe UI',12),progress_color=GREEN)
-        self.capital_advanced_switch.grid(row=2,column=0,columnspan=2,sticky='w',padx=8,pady=5)
+                ('risk_limit','Lỗ tới SL (đ)'),('risk_nav_pct','Lỗ / NAV (%)'),('estimated_fee_per_contract','Phí / HĐ (đ)')):
+            self.form.field(limits if key in {'capital_limit','max_contracts'} else risk,'capital.'+key,label,getattr(self.app.settings,key),width=100)
         self._capital_cards=(limits,risk)
-        self._show_capital_advanced(limits,risk)
         self.paper_card=self.form.card(page,'TIỀN ẢO PAPER')
         self.paper_card.grid_configure(row=1,columnspan=2)
         self.paper_funds=ctk.CTkFrame(self.paper_card,fg_color='transparent')
@@ -145,18 +155,17 @@ class ConnectionWindow(_StableToplevel):
         self.paper_capital_button=ctk.CTkButton(self.paper_funds,text='ÁP DỤNG',width=120,height=32,font=('Segoe UI',12,'bold'),command=self.apply_capital)
         self.paper_capital_button.grid(row=0,column=2)
 
-    def _show_capital_advanced(self, limits, risk):
-        for card in (limits, risk):
-            card.grid() if self.capital_advanced.get() else card.grid_remove()
-        if hasattr(self,'primary'):
-            self._page_changed()
-
     def _telegram(self,page):
         card=self.form.card(page,'TELEGRAM · TÍN HIỆU')
-        ctk.CTkLabel(card,text='Biến động VN30 · Nhắc đáo hạn · Thông báo vào lệnh.',
-            font=('Segoe UI',13),text_color=MUTED,anchor='w',justify='left',wraplength=550).pack(fill='x',padx=10,pady=8)
-        ctk.CTkLabel(card,text='Mở backend để cấu hình và chạy thông báo.',font=('Segoe UI',13),
-            text_color=MUTED,anchor='w').pack(fill='x',padx=10,pady=(0,10))
+        for title,detail in (('BIẾN ĐỘNG VN30','Báo thay đổi giá theo nhịp theo dõi.'),
+                             ('NHẮC ĐÁO HẠN','Báo trước; Ngài tự quyết định giao dịch.'),
+                             ('VÀO LỆNH','Gợi ý và thông báo gửi/khớp lệnh.')):
+            row=ctk.CTkFrame(card,fg_color='#1B1F25',corner_radius=6)
+            row.pack(fill='x',padx=10,pady=3)
+            ctk.CTkLabel(row,text=title,font=('Segoe UI',12,'bold'),text_color=self.form.TITLE,anchor='w',width=145).pack(side='left',padx=10,pady=5)
+            ctk.CTkLabel(row,text=detail,font=('Segoe UI',12),text_color=MUTED,anchor='w').pack(side='left',fill='x',expand=True,pady=5)
+        ctk.CTkLabel(card,text='Chọn MỞ TELEGRAM để nhập token/chat ID và bật từng thông báo.',font=('Segoe UI',12),
+            text_color=MUTED,anchor='w').pack(fill='x',padx=10,pady=(6,10))
 
     def save_limits(self):
         try:
@@ -189,8 +198,8 @@ class ConnectionWindow(_StableToplevel):
     def select_mode(self,mode):
         self.variables['connection.mode'].set(mode)
         self.target_label.configure(text='PAPER · Giá DNSE, tiền ảo' if mode=='PAPER' else 'REAL · Tài khoản và lệnh DNSE')
-        for row in self.real_rows:
-            row.pack(fill='x',padx=8,pady=4) if mode=='REAL' else row.pack_forget()
+        self.real_account_card.grid() if mode=='REAL' else self.real_account_card.grid_remove()
+        self.api_card.grid_configure(columnspan=1 if mode=='REAL' else 2)
         self.otp_card.grid() if mode=='REAL' else self.otp_card.grid_remove()
         self.paper_card.grid() if mode=='PAPER' else self.paper_card.grid_remove()
         self.select_page('DNSE')
@@ -208,32 +217,6 @@ class ConnectionWindow(_StableToplevel):
         elif page=='Telegram':text='Một kênh thông báo; bot quản lý vị thế tại app.'
         elif page=='LỊCH':text='Đáo hạn chỉ nhắc; ngày nghỉ và phiên giữ kiểm tra.'
         self.note.configure(text=text,text_color=MUTED)
-        if self._fit_after:self.after_cancel(self._fit_after)
-        self._fit_rounds=0
-        self._fit_after=self.after(30,self._fit_page)
-
-    def _fit_page(self):
-        self._fit_after=None
-        page=self.pages[self.tabs.get()]
-        if page.winfo_height()<=1:
-            self._fit_after=self.after(50,self._fit_page)
-            return
-        scale=self._get_window_scaling()
-        cards=[child for child in page.winfo_children() if isinstance(child,ctk.CTkFrame) and child.winfo_manager()]
-        rows={}
-        for child in cards:
-            row=child.grid_info()['row']
-            rows[row]=max(rows.get(row,0),child.winfo_reqheight()+12*scale)
-        content=sum(rows.values())
-        controls=self.tabs._segmented_button.winfo_reqheight()+self.footer.winfo_reqheight()
-        height=min(self.winfo_screenheight()-90,max(270,ceil((content+controls)/scale)+48))
-        x=max(0,(self.winfo_screenwidth()-self._window_width)//2)
-        y=max(0,(self.winfo_screenheight()-height)//2)
-        self.geometry(f'{self._window_width}x{height}+{x}+{y}')
-        if self._fit_rounds<2:
-            self._fit_rounds+=1
-            self._fit_after=self.after(35,self._fit_page)
-
     def connect(self):
         try:
             if getattr(self.app,'preview_only',False):
@@ -293,8 +276,7 @@ class ConnectionWindow(_StableToplevel):
         self._update_after=self.after(400,self._update_view)
 
     def destroy(self):
-        for timer in (self._fit_after,self._update_after):
-            if timer:self.after_cancel(timer)
+        if self._update_after:self.after_cancel(self._update_after)
         if not self.app.switch_pending:
             self.app.mode_requested=None
             self.app.ui_status=None

@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import tkinter as tk
 import customtkinter as ctk
 
-from ckps.models import ExitSettings, load_record, quantity
+from ckps.models import ExitSettings, Quote, load_record
 from .forms import OriginalRuleForms
-from .widgets import StableTabview, _StableToplevel
+from .widgets import StableTabview, _StableToplevel, size_popup
 
 
 class RuleWindow(OriginalRuleForms, _StableToplevel):
@@ -14,12 +14,7 @@ class RuleWindow(OriginalRuleForms, _StableToplevel):
         super().__init__(app)
         self.app, self.top = app, self
         self.title('RAT VN30 · RULE')
-        width = min(780, app.winfo_screenwidth()-60)
-        height = min(560, app.winfo_screenheight()-80)
-        x=max(0,(self.winfo_screenwidth()-width)//2)
-        y=max(0,(self.winfo_screenheight()-height)//2)
-        self.geometry(f'{width}x{height}+{x}+{y}')
-        self.minsize(min(width,740), min(height,520))
+        size_popup(self)
         self.configure(fg_color='#111318')
         self.transient(app)
         self.grid_columnconfigure(0,weight=1)
@@ -45,36 +40,24 @@ class RuleWindow(OriginalRuleForms, _StableToplevel):
         em = self.tabs.add('E/M')
         self._exit_manager_tab(em,include_signals=False)
         self.arm_repeat_below_arm=tk.BooleanVar(value=exits.arm_repeat_below_arm)
-        self.below_arm_switch=ctk.CTkSwitch(self.protect_trail_card,text='LẶP DƯỚI ARM',
+        below_row=ctk.CTkFrame(self.protect_trail_card,fg_color='transparent')
+        below_row.pack(fill='x',padx=8,pady=2)
+        self.below_arm_switch=ctk.CTkSwitch(below_row,text='LẶP DƯỚI ARM',
             variable=self.arm_repeat_below_arm,font=('Segoe UI',11),progress_color=self.GREEN)
+        self.below_arm_switch.pack(side='left')
+        self._hint_icon(below_row, 'OFF: chỉ lặp khi mức lãi còn đạt ARM. ON: cho lặp dưới ARM nhưng vẫn phải còn lãi trước phí.').pack(side='right')
         self._execution_controls(self.exit_body,exits)
-        self.advanced = tk.BooleanVar(value=False)
-        self.advanced_button = ctk.CTkSwitch(self.exit_body, text='NÂNG CAO', variable=self.advanced,
-            command=self._advanced_view, font=('Segoe UI', 12), progress_color=self.GREEN)
-        self.advanced_button.grid(row=3, column=0, sticky='w', padx=12, pady=4)
-        self._advanced_view()
         self._update_units()
         self.footer = ctk.CTkFrame(self,fg_color='transparent')
         self.footer.grid(row=1,column=0,sticky='ew',padx=12,pady=(3,8))
-        self.status = ctk.CTkLabel(self.footer,text='AUTO: quản lý vị thế · ALERT: ghi LOG trong app.',font=('Segoe UI',11),text_color=self.TEXT)
+        self.status = ctk.CTkLabel(self.footer,text='AUTO: tự đóng · ALERT: chỉ LOG trong app',font=('Segoe UI',11),text_color=self.TEXT,
+            anchor='w',justify='left',wraplength=350)
         self.status.pack(side='left')
         ctk.CTkButton(self.footer,text='LƯU THAY ĐỔI',width=145,height=34,font=('Segoe UI',12,'bold'),
             fg_color=self.GREEN,hover_color='#16A34A',command=self.save).pack(side='right')
         self.select(page)
         self.bind('<Escape>',lambda _:self.destroy())
         self.after(100,self.lift)
-
-    def _advanced_view(self):
-        expanded = self.advanced.get()
-        for widget in (self.dynamic_settings_card,):
-            widget.grid() if expanded else widget.grid_remove()
-        for widget in (self.protect_policy_row, self.normal_sell.master, self.normal_repeat._viking_row):
-            widget.pack() if expanded else widget.pack_forget()
-        self.below_arm_switch.pack(anchor='w',padx=10,pady=3) if expanded else self.below_arm_switch.pack_forget()
-        for child in self.protect_trail_card.winfo_children():
-            if isinstance(child, ctk.CTkSegmentedButton):
-                child.pack(fill='x', padx=8, pady=3) if expanded else child.pack_forget()
-        self.reentry_sl.master.master.grid() if expanded else self.reentry_sl.master.master.grid_remove()
 
     def select(self,page):
         self.tabs.set('E/M')
@@ -83,23 +66,56 @@ class RuleWindow(OriginalRuleForms, _StableToplevel):
     def _execution_controls(self,body,exits):
         bar=ctk.CTkFrame(body,fg_color='transparent')
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=8,pady=3)
+        row=ctk.CTkFrame(bar,fg_color='transparent')
+        row.pack(fill='x')
         for key,label in (('sl_enabled','SL'),('tp_enabled','TP'),('arm_enabled','TSL / ARM')):
             variable=tk.BooleanVar(value=getattr(exits,key))
             setattr(self,key,variable)
-            ctk.CTkSwitch(bar,text=label,variable=variable,width=110,font=('Segoe UI',13),progress_color=self.GREEN).pack(side='left',padx=(0,18))
+            ctk.CTkSwitch(row,text=label,variable=variable,width=105,font=('Segoe UI',12),progress_color=self.GREEN).pack(side='left',padx=(0,12))
         self.price_units=tk.StringVar(value='ĐIỂM' if exits.distance_unit=='POINTS' else '% GIÁ')
-        ctk.CTkSegmentedButton(bar,values=['ĐIỂM','% GIÁ'],variable=self.price_units,selected_color=self.BLUE,
-            font=('Segoe UI',12,'bold'),command=lambda _:self._update_units()).pack(side='right')
+        self._current_unit=self.price_units.get()
+        ctk.CTkSegmentedButton(row,values=['ĐIỂM','% GIÁ'],variable=self.price_units,selected_color=self.BLUE,
+            font=('Segoe UI',12,'bold'),command=self._units_changed).pack(side='right')
+        ctk.CTkLabel(row,text='ĐƠN VỊ',font=('Segoe UI',11,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
+        self._hint_icon(row, 'ĐIỂM: khoảng điểm VN30. % GIÁ: phần trăm so với giá vốn. Khi đổi, app quy đổi theo giá hợp đồng đang xem; kiểm tra lại trước khi lưu.').pack(side='right',padx=3)
+        ctk.CTkLabel(bar,text='ĐIỂM: khoảng điểm VN30  ·  % GIÁ: tỷ lệ trên giá vốn',
+            font=('Segoe UI',11),text_color=self.MUTED,anchor='w').pack(fill='x',pady=(2,0))
+
+    def _units_changed(self, selected):
+        previous=self._current_unit
+        if selected==previous:return
+        entries=(self.initial_sl,self.reentry_sl,self.take_profit,self.normal_arm,self.normal_giveback,self.normal_retention_until_pct)
+        try:
+            values=[float(entry.get()) for entry in entries]
+            quote=self.app.view.get('quotes',{}).get(self.app.view.get('contract','VN30F1M'),{})
+            fresh=bool(quote and load_record(Quote,quote).fresh(self.app.settings.max_quote_age))
+            if any(values) and not fresh:
+                raise ValueError('Cần giá hợp đồng mới để đổi đơn vị; các ngưỡng chưa thay đổi.')
+            price=float(quote.get('last',0)) if fresh else 1.0
+            factor=100/price if selected=='% GIÁ' else price/100
+            converted=[f'{value*factor:.8g}' for value in values]
+            for entry,value in zip(entries,converted):
+                entry.delete(0,'end');entry.insert(0,value)
+            self._current_unit=selected
+            self._update_units()
+            message=(f'Đã quy đổi theo giá {price:,.1f}; kiểm tra trước khi lưu.' if fresh
+                     else 'Đã đổi đơn vị; các ngưỡng đều bằng 0.')
+            self.status.configure(text=message,text_color=self.WARN)
+        except (ValueError,TypeError,OverflowError) as exc:
+            self.price_units.set(previous)
+            self.status.configure(text=str(exc),text_color='#EF4444')
 
     def _update_units(self):
-        suffix='điểm' if self.price_units.get()=='ĐIỂM' else '% giá'
-        for entry,title in ((self.initial_sl,'SL'),(self.reentry_sl,'Bước LẶP'),(self.take_profit,'TP'),
-                (self.normal_arm,'ARM'),(self.normal_giveback,'Trailing'),(self.normal_retention_until_pct,'Tới MFE')):
+        suffix='điểm' if self.price_units.get()=='ĐIỂM' else '%'
+        for entry,title in ((self.initial_sl,'SL'),(self.reentry_sl,'LẶP'),(self.take_profit,'TP'),
+                (self.normal_arm,'ARM'),(self.normal_giveback,'Lùi'),(self.normal_retention_until_pct,'Tới MFE')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')),None)
             if label:
                 label.configure(text=f'{title} ({suffix})')
 
     def _exits(self):
+        if self.price_units.get()!=self._current_unit:
+            raise ValueError('Cần quy đổi các ngưỡng trước khi đổi đơn vị.')
         values=asdict(load_record(ExitSettings,self.app.settings.exit))
         mapping={'sl_distance':'initial_sl','tp_distance':'take_profit','repeat_gap':'reentry_sl','arm_gain':'normal_arm',
             'trail_gap':'normal_giveback','arm_close_pct':'normal_sell','arm_policy':'normal_policy','arm_repeat':'normal_repeat',

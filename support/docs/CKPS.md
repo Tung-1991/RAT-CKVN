@@ -14,13 +14,15 @@ Khớp, vị thế và queue cùng transaction; FILLED thiếu bằng chứng đ
 
 ## Bảo vệ
 
-RULE mặc định các nhánh OFF; cần nhập và bật SL, ARM và khoảng lùi phù hợp. BOT và quyền vị thế cùng ON mới cho app tự gửi lệnh bảo vệ. SL/TP đóng toàn bộ HĐ có thể đóng; ARM/DYNAMIC chỉ xử lý khi còn lãi trước phí. Long bám đỉnh, Short bám đáy, sàn không tự nới. ARM phần trăm tính khoảng lùi trên giá vốn; điểm là khoảng cách điểm. LẶP ARM theo đỉnh/đáy mới sau lượt trước; mặc định không lặp dưới ARM. AUTO/ALERT, tỷ lệ đóng, LẶP và ATR/DYNAMIC giữ ở phần nâng cao. Khớp từng phần cùng lệnh chỉ tính một lượt; mốc bất lợi được giữ qua UNKNOWN/restart.
+RULE mặc định các nhánh OFF; cần nhập và bật SL, ARM và khoảng lùi phù hợp. BOT và quyền vị thế cùng ON mới cho app tự gửi lệnh bảo vệ. SL/TP đóng toàn bộ HĐ có thể đóng; ARM/DYNAMIC chỉ xử lý khi còn lãi trước phí. Long bám đỉnh, Short bám đáy, sàn không tự nới. ARM phần trăm tính khoảng lùi trên giá vốn; điểm là khoảng cách điểm. LẶP ARM theo đỉnh/đáy mới sau lượt trước; mặc định không lặp dưới ARM. E/M hiện đầy đủ TSL/ARM, DYNAMIC, ATR, giữ lãi, tỷ lệ đóng, GỐC/CÒN LẠI và LẶP; không giấu trong nâng cao. AUTO tự đóng khi đủ quyền; ALERT chỉ ghi LOG trong app, độc lập Telegram. Khớp từng phần cùng lệnh chỉ tính một lượt; mốc bất lợi được giữ qua UNKNOWN/restart.
+
+ĐIỂM và % GIÁ là hai đơn vị khoảng giá. Đổi đơn vị sẽ quy đổi sáu ngưỡng theo giá hợp đồng mới đang xem; thiếu giá mới thì giữ nguyên đơn vị/ngưỡng và báo lý do. Ngưỡng phần trăm sau khi lưu vẫn áp dụng theo giá vốn từng vị thế; cần kiểm tra trước khi lưu.
 
 SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE. BOT OFF, app ngừng, OTP hết hạn hoặc dữ liệu lỗi có thể làm app không gửi đóng. Chưa tích hợp API SL tại broker; chưa nghiệm thu REAL. Nến REAL tải trên worker riêng, không chặn worker xử lý E/M.
 
 ## Giao diện
 
-Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Preview có một dòng bối cảnh MA200 1D và biến động chỉ đọc, cùng SL/TP, ARM/DYNAMIC và LẶP; thiếu nguồn hiện chờ. Không có quyền giao dịch từ tín hiệu. Tùy chọn ít dùng nằm trong nâng cao. Các giới hạn vốn/rủi ro cũ vẫn được giữ nếu đã cấu hình; 0 là không đặt trần riêng.
+Bố cục MayinTien: tài khoản/vé lệnh trái, bảng vị thế/lệnh phải, PREVIEW/LOG dưới. Preview có một dòng bối cảnh MA200 1D và biến động chỉ đọc, cùng SL/TP, ARM/DYNAMIC và LẶP; thiếu nguồn hiện chờ. Không có quyền giao dịch từ tín hiệu. RULE và KẾT NỐI cùng kích thước, giới hạn theo màn hình/DPI; tab KẾT NỐI không tự đổi cỡ. E/M cuộn khi màn hình nhỏ; các nút ? giải thích nghiệp vụ ngay trong cửa sổ. VỐN hiện trực tiếp hạn mức/rủi ro/phí; 0 là không đặt trần riêng.
 
 ## Lịch và Telegram
 

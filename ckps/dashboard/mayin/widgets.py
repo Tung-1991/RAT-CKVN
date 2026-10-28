@@ -197,6 +197,23 @@ class _StableToplevel(ctk.CTkToplevel):
         super().destroy()
 
 
+def size_popup(window, width=780, height=620):
+    """Use one centered logical size for RULE/KẾT NỐI without going off-screen at high DPI."""
+    scale = max(.5, window._get_window_scaling())
+    # Tk caches the screen size before CTk enables Windows DPI awareness.
+    # Restore native pixels before comparing with CTk's scaled geometry;
+    # otherwise a 200% desktop shrinks these popups to half their usable size.
+    dpi = ctk.ScalingTracker.get_window_dpi_scaling(window)
+    screen_w, screen_h = window.winfo_screenwidth()*dpi, window.winfo_screenheight()*dpi
+    width = min(width, max(300, int((screen_w - 40) / scale)))
+    height = min(height, max(260, int((screen_h - 80) / scale)))
+    x = max(0, int((screen_w - round(width * scale)) // 2))
+    y = max(0, int((screen_h - round(height * scale) - 40) // 2))
+    window.geometry(f'{width}x{height}+{x}+{y}')
+    window.minsize(min(width, 680), min(height, 450))
+    return width, height
+
+
 class StableTabview(ctk.CTkTabview):
     def _grid_forget_all_tabs(self, exclude_name=None):
         # CTk queues this 100 ms after set(). A stale callback must not hide

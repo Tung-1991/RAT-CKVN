@@ -67,5 +67,16 @@
     "source": "dashboard/position_em.py",
     "sha256": "c49a4eb4cdfb2d6a5f9d671cac93a132a953f20024e727a94793e7280c77d930",
     "adaptation": "Read-only START/ARM/protect/repeat milestones; CKPS Long/Short and integer contracts; uses ckps.rules.protection without state mutation."
+  },
+  "hint_box.py": {
+    "source": "dashboard/hint_box.py",
+    "sha256": "ef3f4e0d3fb56b9fd8169a628c3d204953375519c8ade99de23b201040d6ef9a",
+    "adaptation": "Native MayinTien selectable, bounded hints; copied without business dependencies."
+  },
+  "_HoverHint": {
+    "source": "dashboard/windows.py",
+    "line": 621,
+    "sha256": "34183aeea9157a9c97a4d8d565eb5d3d1dd005fe30551906118f6957cdc38a4e",
+    "adaptation": "Extracted to hover_hint.py; local hint_box imports only."
   }
 }
