@@ -1,0 +1,71 @@
+{
+  "ui_compat.py": {
+    "source": "dashboard/ui_compat.py",
+    "sha256": "6c39eaf2be950819ca6447848d0191e553570b3dadc3eba9f5ae27ad5e50a337"
+  },
+  "DashboardPanelsMixin._left_panel": {
+    "source": "dashboard/panels.py",
+    "line": 233,
+    "sha256": "491c56f95e2f315d08484b6adb030ffd7f1ccfd58e270e9621b2adeb62c028c8"
+  },
+  "DashboardPanelsMixin._manual_input": {
+    "source": "dashboard/panels.py",
+    "line": 626,
+    "sha256": "32fdaf97bef4827c1d1a62fc079ef649db26b39654782bc332fb62a780d7c2c9"
+  },
+  "DashboardPanelsMixin._build_order_preview_tab": {
+    "source": "dashboard/panels.py",
+    "line": 957,
+    "sha256": "5b78d45b72e918c5e0a6c741019ffad36cff9172c1f546a7d0e11d62ec468058"
+  },
+  "DashboardPanelsMixin._sync_left_scrollbar": {
+    "source": "dashboard/panels.py",
+    "line": 3972,
+    "sha256": "0a8d3cf15d53b6ccc6a8a15ca41e269aef93888923aaeffe5b2d30bcd06f4065"
+  },
+  "RuleSettingsPopup._tab_font": {
+    "source": "rules/window.py",
+    "line": 249,
+    "sha256": "6305f901017996b991b797068eb9e12a900474418626fdf9032225456e624c5f"
+  },
+  "RuleSettingsPopup._content": {
+    "source": "rules/window.py",
+    "line": 276,
+    "sha256": "9be500e4afe3aca6e9d080f9796e2f6a3ba944e4878691ffa444716daf1166dd"
+  },
+  "RuleSettingsPopup._card": {
+    "source": "rules/window.py",
+    "line": 336,
+    "sha256": "54e42238aee25b3404fc7bf440e60a2818aa941a77db62eb08fa3e74301dcfb3"
+  },
+  "RuleSettingsPopup._field": {
+    "source": "rules/window.py",
+    "line": 362,
+    "sha256": "f3599e4dee88acf6e05356a62a2a6c4f55323e38d9ef4e9cfee9f8371552872e"
+  },
+  "RuleSettingsPopup._dynamic_field": {
+    "source": "rules/window.py",
+    "line": 393,
+    "sha256": "2aad0fd2fa5716723bf306ca093aa557eb8146bf18039e7e4181b4cf6d92f760"
+  },
+  "RuleSettingsPopup._switch": {
+    "source": "rules/window.py",
+    "line": 419,
+    "sha256": "5a9d79a3deab69c6ba4ba4b89ae550b5ac4e90893564022f270ed54c3b1f3a32"
+  },
+  "RuleSettingsPopup._exit_manager_tab": {
+    "source": "rules/window.py",
+    "line": 826,
+    "sha256": "09a9736eb76f2a69e1606b5eeb0134091987e3d22f539255b186d0497aeb1022"
+  },
+  "RuleSettingsPopup._select_normal_policy": {
+    "source": "rules/window.py",
+    "line": 1126,
+    "sha256": "de6850d3d711b8657f2e31d6a7b2a62bb2bd792e9da1aebe18af128b18055910"
+  },
+  "management_preview.py": {
+    "source": "dashboard/position_em.py",
+    "sha256": "c49a4eb4cdfb2d6a5f9d671cac93a132a953f20024e727a94793e7280c77d930",
+    "adaptation": "Read-only START/ARM/protect/repeat milestones; CKPS Long/Short and integer contracts; uses ckps.rules.protection without state mutation."
+  }
+}

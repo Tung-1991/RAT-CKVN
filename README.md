@@ -1,0 +1,16 @@
+# RAT VN30 · Semi-auto
+
+- `main.py`: vào Long/Short bằng tay, quản lý SL/TP và TSL/PROTECT.
+- `backend.py`: thông báo biến động, nhắc đáo hạn và vào lệnh qua Telegram.
+- `START_SYSTEM.bat`: mở app, backend, preview mẫu hoặc kiểm thử offline.
+
+MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. RULE chỉ cần bật các ngưỡng bảo vệ muốn dùng; BOT OFF khi khởi động. Preview hiển thị bối cảnh thị trường và mốc bảo vệ. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
+
+PAPER dùng giá DNSE và tiền ảo; REAL cần tài khoản phái sinh và OTP. SL hiện do app thực thi, cần app và BOT đang hoạt động; chưa nghiệm thu REAL. Chi tiết: [nghiệp vụ CKPS](support/docs/CKPS.md).
+
+```powershell
+.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe backend.py
+.venv\Scripts\python.exe -m ckps --demo
+.venv\Scripts\python.exe -X utf8 -m pytest support/tests -q -p no:cacheprovider --tb=short
+```
