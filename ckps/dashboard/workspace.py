@@ -68,8 +68,12 @@ class WorkspaceMixin:
         self.editor_body.grid(row=1, column=0, sticky="nsew", padx=8)
         self.editor_footer = ctk.CTkFrame(self.detail_page, fg_color="transparent")
         self.editor_footer.grid(row=2, column=0, sticky="ew", padx=10, pady=7)
-        self.editor_note = ctk.CTkLabel(self.editor_footer, text="", font=("Segoe UI", 11), text_color=MUTED)
-        self.editor_note.pack(side="left")
+        self.editor_footer.grid_columnconfigure(0, weight=1)
+        self.editor_note = ctk.CTkLabel(self.editor_footer, text="", width=1,
+            font=("Segoe UI", 11), text_color=MUTED, anchor='w', justify='left')
+        self.editor_note.grid(row=0, column=0, sticky='ew', padx=(0, 10))
+        self.editor_note.bind('<Configure>', lambda _: self.editor_note.configure(
+            wraplength=max(120, int(self.editor_note.winfo_width() / self.editor_note._get_widget_scaling()) - 4)), add='+')
         def save():
             try:
                 callback()
@@ -77,7 +81,7 @@ class WorkspaceMixin:
                 self.report(str(exc), error=True)
                 self.editor_note.configure(text=str(exc), text_color=RED)
         self.editor_save = ctk.CTkButton(self.editor_footer, text=save_text, width=135, height=30, command=save)
-        self.editor_save.pack(side="right")
+        self.editor_save.grid(row=0, column=1)
         self.editor_variables = {}
         return CompactForm(self.editor_variables)
 
@@ -112,7 +116,8 @@ class WorkspaceMixin:
         self.editor_body.grid_rowconfigure(1, weight=1)
         self.inherit_exit = tk.BooleanVar(value=raw.get("exit_overrides") is None)
         ctk.CTkSwitch(self.editor_body, text="Dùng RULE chung", variable=self.inherit_exit).grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.position_editor = ExitEditor(self.editor_body, raw.get("exit_overrides") or self.settings.exit)
+        self.position_editor = ExitEditor(self.editor_body, raw.get("exit_overrides") or self.settings.exit,
+            app=self, symbol=raw['symbol'], status=self.editor_note)
         self.position_editor.grid(row=1, column=0, sticky="nsew")
         self.inherit_exit.trace_add("write", lambda *_: self.position_editor.set_enabled(not self.inherit_exit.get()))
         self.position_editor.set_enabled(not self.inherit_exit.get())

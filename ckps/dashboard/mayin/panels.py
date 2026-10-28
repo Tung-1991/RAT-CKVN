@@ -211,6 +211,7 @@ class OriginalPanels:
             font=('Cascadia Mono' if mono else 'Segoe UI',size,*(['bold'] if bold else []))
             widget=StatusLabel(parent,text=text,width=1,height=size+5,font=font,text_color=color,anchor='w')
             widget.grid(sticky='ew',**grid)
+            widget.bind('<Configure>',self._fit_preview_text,add='+')
             setattr(self,name,widget);self._preview_fit_labels.append((widget,font))
             return widget
         self.market_context_label=ctk.CTkLabel(self.info_header,text='CHỈ THAM KHẢO',height=28,

@@ -28,7 +28,7 @@ Preview tập trung hai ô kết quả: ĐIỂM VÀO và THỊ TRƯỜNG. Điể
 
 Backend chuyển kết quả rút gọn qua tệp JSON local ghi nguyên tử. Chỉ dùng khi đúng mã và thời gian giá/phân tích còn mới; backend chưa chạy, thiếu nến hoặc giá cũ hiện CHỜ. Tắt Telegram không tắt phân tích. Không chuyển trạng thái tín hiệu cũ thành mới chỉ vì có quote mới.
 
-SL/TP và trạng thái chỉ hiện một lần tại bảng lệnh. Chọn vị thế mới hiện hai dòng TSL/ARM và DYNAMIC bên dưới hai ô tín hiệu. Bảng lệnh giãn toàn bộ chiều cao còn lại, Preview bám đáy cửa sổ; không dành vùng đen trống bên dưới. Chi tiết cấu hình/LẶP mở khi bấm tiêu đề, không tự bung khi rê chuột. Nút BẢO VỆ LỆNH chỉnh riêng vị thế; RULE giữ cấu hình chung. Bản mẫu ghi rõ MẪU, không dùng runtime hoặc dữ liệu tài khoản thật.
+SL/TP và trạng thái chỉ hiện một lần tại bảng lệnh. Chọn vị thế mới hiện hai dòng TSL/ARM và DYNAMIC bên dưới hai ô tín hiệu. Bảng lệnh giãn toàn bộ chiều cao còn lại, Preview bám đáy cửa sổ; không dành vùng đen trống bên dưới. Chi tiết cấu hình/LẶP mở khi bấm tiêu đề, không tự bung khi rê chuột. Nút BẢO VỆ LỆNH chỉnh riêng vị thế ngay trong màn hình bằng cùng form MayinTien và hint của RULE; hiện đủ SL/TP, TSL/ARM, DYNAMIC trên một trang. Đổi đơn vị ở đây dùng giá mới của đúng mã vị thế, kể cả hợp đồng khác mã đang xem trên MAIN. RULE giữ cấu hình chung. Bản mẫu ghi rõ MẪU, không dùng runtime hoặc dữ liệu tài khoản thật.
 
 Chữ thống nhất theo vai trò: nhãn 13–14, nội dung 14, kết quả 18, giá/vốn lớn 24. Preview xuống dòng khi thiếu chỗ, không tự thu nhỏ chữ. Bảng chính dùng chữ 14 và dòng cao 44; lịch sử giữ dòng phụ khi cần. Nền trung tính; Long/UP/TP xanh, SL/DOWN đỏ, TSL xanh dương và DYNAMIC cam; trạng thái tạm dừng vàng.
 

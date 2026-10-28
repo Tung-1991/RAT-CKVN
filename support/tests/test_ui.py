@@ -172,7 +172,10 @@ def _layout_scenario(scale):
             assert getattr(widget,'_viking_fit_font_size',font[1])>=14, widget.cget('text')
         for label in (app.preview_normal_value,app.preview_normal_detail,app.preview_exit_value,app.preview_exit_detail):
             assert label.winfo_rooty()+label.winfo_height()<=label.master.winfo_rooty()+label.master.winfo_height()
-            assert NativeFontMetrics(label,label._label.cget('font')).measure(label.cget('text'))<=label.winfo_width(), (label.cget('text'),label.winfo_width(),label._label.cget('font'))
+            # Tk measures the rendered, wrapped label. Measuring the whole string
+            # as one line rejects the intentional fixed-font wrapping at high DPI.
+            assert label._label.winfo_reqwidth()<=label.winfo_width(), label.cget('text')
+            assert label._label.winfo_reqheight()<=label.winfo_height(), label.cget('text')
         app.geometry('1080x700');settle(500)
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.preview_management.winfo_ismapped() and app.preview_exit_value.winfo_ismapped()
@@ -182,7 +185,8 @@ def _layout_scenario(scale):
             if not widget.winfo_ismapped():continue
             assert widget.winfo_rooty()+widget.winfo_height()<=app.info_panel.winfo_rooty()+app.info_panel.winfo_height(), (widget.cget('text'),widget.winfo_rooty(),widget.winfo_height(),app.info_panel.winfo_rooty()+app.info_panel.winfo_height(),app.info_panel.cget('height'),app.preview_data.winfo_reqheight())
             assert widget.winfo_rooty()+widget.winfo_height()<=widget.master.winfo_rooty()+widget.master.winfo_height(), widget.cget('text')
-            assert NativeFontMetrics(widget,widget._label.cget('font')).measure(widget.cget('text'))<=widget.winfo_width(), widget.cget('text')
+            assert widget._label.winfo_reqwidth()<=widget.winfo_width(), widget.cget('text')
+            assert widget._label.winfo_reqheight()<=widget.winfo_height(), widget.cget('text')
             ancestor=widget.master
             while ancestor is not app.info_panel:
                 assert widget.winfo_rooty()+widget.winfo_height()<=ancestor.winfo_rooty()+ancestor.winfo_height(), (widget.cget('text'),ancestor)
@@ -249,25 +253,22 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         app.position_exit()
         app.update()
         assert not app.info_panel.winfo_ismapped()
-        for page in ("SL / TP", "ARM", "DYNAMIC"):
-            app.position_editor.tabs.set(page)
-            app.after(150, app.quit)
-            app.mainloop()
-            def controls(widget):
-                for child in widget.winfo_children():
+        assert not hasattr(app.position_editor, 'tabs')
+        def controls(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
                     yield child
+                else:
                     yield from controls(child)
-            for widget in controls(app.position_editor):
-                if getattr(widget, "_compact_control", False):
-                    if isinstance(widget, ctk.CTkSegmentedButton):
-                        assert all(child.cget("state") == "disabled" for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
-                    else:
-                        assert widget.cget("state") == "disabled"
-                if getattr(widget, "_compact_control", False) and widget.winfo_ismapped():
-                    assert widget.winfo_rooty() + widget.winfo_height() < app.editor_footer.winfo_rooty()
+        for widget in controls(app.position_editor):
+            if isinstance(widget, ctk.CTkSegmentedButton):
+                assert all(child.cget("state") == "disabled" for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
+            else:
+                assert widget.cget("state") == "disabled"
         app.inherit_exit.set(False)
-        app.position_editor.variables["sl_enabled"].set(True)
-        app.position_editor.variables["sl_distance"].set("10")
+        app.position_editor.sl_enabled.set(True)
+        app.position_editor.initial_sl.delete(0, 'end')
+        app.position_editor.initial_sl.insert(0, '10')
         app.editor_save.invoke()
         app.update()
         assert app.info_panel.winfo_ismapped()
@@ -376,6 +377,133 @@ def test_original_rule_forms_roundtrip_ckps_protection_and_private_signals():
         inspect.getsource(_rule_adapter_scenario)+'\n_rule_adapter_scenario()'],
         cwd=Path(__file__).resolve().parents[2],capture_output=True,text=True,timeout=30)
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def _position_protection_scenario(scale):
+    import socket
+    import requests
+    import customtkinter as ctk
+    from dataclasses import asdict
+    from tkinter import Misc
+    from ckps.dashboard.window import App
+    from ckps.dashboard.mayin.forms import OriginalRuleForms
+    from ckps.models import ExitSettings, Position, Quote, Settings
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('UI verification must remain offline.')
+    socket.socket.connect = requests.Session.request = forbidden
+    ctk.deactivate_automatic_dpi_awareness()
+    ctk.set_widget_scaling(scale)
+    ctk.set_window_scaling(scale)
+    app = App(settings=Settings(), start_runtime=False)
+    app.geometry('1080x700')
+    app.update()
+    errors, sent = [], []
+    app.report_callback_exception = lambda *args: errors.append(args)
+    app.send = lambda *args, **kwargs: sent.append((args, kwargs))
+    def settle(ms=180):
+        from time import monotonic
+        deadline = monotonic()+ms/1000
+        while monotonic() < deadline:
+            timer = app.after(max(1, round((deadline-monotonic())*1000)), app.quit)
+            Misc.mainloop(app)
+            app.after_cancel(timer)
+    def controls(parent):
+        for child in parent.winfo_children():
+            if isinstance(child, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
+                yield child
+            else:
+                yield from controls(child)
+    try:
+        settle(500)
+        original = asdict(ExitSettings(sl_enabled=True, sl_distance=12, tp_enabled=True, tp_distance=42,
+            arm_enabled=True, arm_gain=20, trail_gap=5, arm_policy='ALERT', arm_close_pct=33,
+            arm_basis='ORIGINAL', arm_repeat=True, repeat_gap=4, arm_repeat_below_arm=True,
+            dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=67,
+            dynamic_basis='ORIGINAL', dynamic_repeat=True, atr_start_multiplier=.6,
+            atr_trail_multiplier=.9, retention_pct=81, retention_until=18))
+        common = dict(app.settings.exit)
+        # A carried contract must use its own quote, even when MAIN shows another month.
+        for side in ('LONG', 'SHORT'):
+            position = Position.create('VN30F2611', side, 3, 1980, history_verified=True,
+                                       exit_overrides=original)
+            app.view = {'contract': 'VN30F2612', 'positions': [asdict(position)], 'orders': [],
+                'quotes': {'VN30F2611': asdict(Quote('VN30F2611', 2000)),
+                           'VN30F2612': asdict(Quote('VN30F2612', 2400))}}
+            app.render()
+            app.positions_tree.selection_set(position.id)
+            app.position_exit()
+            app.update()
+            settle()
+            editor = app.position_editor
+            assert isinstance(editor, OriginalRuleForms) and not hasattr(editor, 'tabs')
+            assert editor.read() == original
+            assert editor.initial_sl._hint_icon.cget('text') == '?'
+            assert editor.dynamic_settings_card.winfo_ismapped() and editor.below_arm_switch.winfo_ismapped()
+            canvas = editor.exit_body._parent_canvas
+            for widget in controls(editor):
+                offset = widget.winfo_rooty() - editor.exit_body.winfo_rooty()
+                canvas.yview_moveto(max(0, offset-4) / editor.exit_body.winfo_height())
+                settle()
+                assert widget.winfo_rootx() >= canvas.winfo_rootx()-2
+                assert widget.winfo_rootx()+widget.winfo_width() <= canvas.winfo_rootx()+canvas.winfo_width()+2
+                assert widget.winfo_rooty() >= canvas.winfo_rooty()-2
+                assert widget.winfo_rooty()+widget.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()+2
+                assert widget.winfo_rooty()+widget.winfo_height() <= app.editor_footer.winfo_rooty()
+            canvas.yview_moveto(0)
+            app.view['quotes']['VN30F2611'] = asdict(Quote('VN30F2611', 2000))
+            editor.price_units.set('% GIÁ')
+            editor._units_changed('% GIÁ')
+            expected = {**original, 'distance_unit': 'PERCENT'}
+            for key in ('sl_distance', 'tp_distance', 'repeat_gap', 'arm_gain', 'trail_gap', 'retention_until'):
+                expected[key] /= 20
+            assert editor.read() == expected
+            assert app.settings.exit == common and not sent
+            # Invalid distances stay in the editor and never reach execution.
+            valid_sl = editor.initial_sl.get()
+            for invalid in ('-1', 'nan', 'inf'):
+                editor.initial_sl.delete(0, 'end')
+                editor.initial_sl.insert(0, invalid)
+                app.editor_save.invoke()
+                assert not sent and app._workspace_editing
+                editor.price_units.set('ĐIỂM')
+                editor._units_changed('ĐIỂM')
+                assert editor.price_units.get() == '% GIÁ' and editor.initial_sl.get() == invalid
+            editor.initial_sl.delete(0, 'end')
+            editor.initial_sl.insert(0, valid_sl)
+            # Old, absent or mismatched quotes cannot reinterpret the saved thresholds.
+            for quote in ({}, asdict(Quote('VN30F2611', 2000, at=0)), asdict(Quote('VN30F2612', 2400))):
+                app.view['quotes']['VN30F2611'] = quote
+                editor.price_units.set('ĐIỂM')
+                editor._units_changed('ĐIỂM')
+                assert editor.price_units.get() == '% GIÁ' and editor.read() == expected
+            settle()
+            assert app.editor_save.winfo_rootx()+app.editor_save.winfo_width() <= app.detail_page.winfo_rootx()+app.detail_page.winfo_width()
+            app.editor_save.invoke()
+            assert sent[-1] == (('configure_position', position.id, expected), {})
+            app.view['positions'][0]['exit_overrides'] = expected
+            app.position_exit()
+            app.inherit_exit.set(True)
+            for widget in controls(app.position_editor):
+                if isinstance(widget, ctk.CTkSegmentedButton):
+                    assert all(child.cget('state') == 'disabled' for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
+                else:
+                    assert widget.cget('state') == 'disabled'
+            app.editor_save.invoke()
+            assert sent[-1] == (('configure_position', position.id, None), {})
+            assert app.settings.exit == common
+            sent.clear()
+        assert not errors, errors
+    finally:
+        app.close()
+
+
+@pytest.mark.parametrize('scale', [1., 1.25, 1.5, 2.])
+def test_position_protection_native_form_and_contract_unit_conversion(scale):
+    result = subprocess.run([sys.executable, '-X', 'utf8', '-c',
+        inspect.getsource(_position_protection_scenario)+f'\n_position_protection_scenario({scale!r})'],
+        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stdout+result.stderr
 
 
 def test_failed_mode_start_clears_previous_snapshot_and_cannot_leave_trading_ready(monkeypatch):
@@ -697,7 +825,8 @@ def _split_app_scenario(kind,scale):
             for widget,font in app._preview_fit_labels:
                 if not widget.winfo_ismapped() or not widget.cget('text'):continue
                 assert widget.winfo_rooty()+widget.winfo_height()<=app.info_panel.winfo_rooty()+app.info_panel.winfo_height(),widget.cget('text')
-                assert NativeFontMetrics(widget,widget._label.cget('font')).measure(widget.cget('text'))<=widget.winfo_width(),widget.cget('text')
+                assert widget._label.winfo_reqwidth()<=widget.winfo_width(),widget.cget('text')
+                assert widget._label.winfo_reqheight()<=widget.winfo_height(),widget.cget('text')
         else:
             assert set(app.options)=={'movement','expiry','entry'}
             assert app.options['expiry'].get() and not app.options['entry'].get() and not app.options['movement'].get()
