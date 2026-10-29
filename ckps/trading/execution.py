@@ -178,7 +178,8 @@ class Engine:
             self.store.event("ORDER", f"{order.action} {order.side} {order.symbol} · {order.status} · {order.filled}/{order.quantity} HĐ")
             self._notify(f"{order.action} {order.side} {order.symbol} · {order.status}\nKhớp {order.filled}/{order.quantity} HĐ @ {order.avg_fill:g} · {order.reason}",
                          f"order:{order.id}:{order.status}:{order.filled}")
-            self._record_entry_notice(order)
+            if any(getattr(order, key) != before[key] for key in ('status', 'filled', 'quantity', 'price')):
+                self._record_order_notice(order)
         if order.source == "AUTO" and order.reason == "ARM" and order.position_id:
             position = self.store.position(order.position_id)
             state = position.metrics.get("ARM:AUTO", {})
@@ -189,13 +190,22 @@ class Engine:
                 position.metrics["ARM:AUTO"] = state
                 self.store.save_position(position)
 
-    def _record_entry_notice(self, order):
-        if order.action == "OPEN":
-            self.store.put("entry_notice", f"{order.id}:{order.status}:{order.filled}", {
-                "at": time.time(), "mode": self.broker.mode, "symbol": order.symbol,
-                "side": order.side, "status": order.status, "filled": order.filled,
-                "quantity": order.quantity, "price": order.avg_fill or order.price,
-            })
+    def _record_order_notice(self, order):
+        # Kept in the fill transaction. Only this fixed receipt crosses to the
+        # read-only backend; never account IDs, broker errors or credentials.
+        key = f"{order.id}:{order.status}:{order.filled}:{order.quantity}:{order.price:g}"
+        if self.store.get("entry_notice", key):
+            return
+        value = {
+            "at": time.time(), "mode": self.broker.mode, "symbol": order.symbol,
+            "action": order.action, "side": order.side, "status": order.status,
+            "filled": order.applied, "quantity": order.quantity,
+            "price": order.avg_fill if order.applied else order.price,
+            "reason": order.reason, "source": order.source,
+        }
+        if order.action == "CLOSE" and order.position_id:
+            value["remaining"] = self.store.position(order.position_id).quantity
+        self.store.put("entry_notice", key, value)
 
     def _apply_fill(self, order, qty, price, total_fee):
         fee_delta = max(0.0, total_fee - order.applied_fee)
@@ -558,13 +568,13 @@ class Engine:
             order.status, order.message = "UNKNOWN", str(exc)
             with self.store.transaction():
                 self.store.save_order(order)
-                self._record_entry_notice(order)
+                self._record_order_notice(order)
             self._notify(f"LỆNH CHƯA RÕ · {order.symbol}\n{exc}", "unknown:" + order.id)
         except SubmissionCancelled as exc:
             order.status, order.message = "CANCELLED", str(exc)
             with self.store.transaction():
                 self.store.save_order(order)
-                self._record_entry_notice(order)
+                self._record_order_notice(order)
                 self.store.event("ORDER", order.message)
         except Exception as exc:
             if handed_off:
@@ -574,7 +584,7 @@ class Engine:
                 order.status, order.message = "FAILED", str(exc)
             with self.store.transaction():
                 self.store.save_order(order)
-                self._record_entry_notice(order)
+                self._record_order_notice(order)
             raise
 
     def _handoff_allowed(self, order):

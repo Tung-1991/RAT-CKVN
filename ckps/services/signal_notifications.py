@@ -51,7 +51,7 @@ class SignalNotifications:
         self.owner_state, self.owner_last = state, time.time()
 
     def _private_alert_allowed(self, text):
-        if ' · ENTRY · ' in text:
+        if ' · ENTRY · ' in text or ' · EXIT · ' in text:
             return self.settings.entry_notifications
         if ' · CALENDAR · ALERT' in text:
             from .calendar import read_settings
@@ -80,6 +80,8 @@ class SignalNotifications:
                 self.telegram_error = 'Telegram đang chờ gửi; phân tích tín hiệu tiếp tục.'
 
     def _flush_telegram(self):
+        if time.monotonic() < getattr(self, 'telegram_retry_at', 0):
+            return
         with self.store.lock:
             pending=self.store.db.execute('SELECT id,target,text FROM outbox WHERE sent=0 ORDER BY rowid LIMIT 6').fetchall()
         for key, target, text in pending:
@@ -107,12 +109,21 @@ class SignalNotifications:
             try:
                 response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
                     json={"chat_id": chat, "text": text[:4096]}, timeout=(3, 5))
-                if not response.ok or not response.json().get("ok"):
-                    self.telegram_error = f"Telegram chưa gửi được (HTTP {response.status_code})."
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise ValueError('Invalid Telegram response')
+                if not response.ok or not result.get("ok"):
+                    parameters = result.get('parameters')
+                    retry = parameters.get('retry_after') if isinstance(parameters, dict) else None
+                    delay = retry if type(retry) is int and retry > 0 else 5
+                    self.telegram_retry_at = time.monotonic() + delay
+                    self.telegram_error = (f'Telegram giới hạn gửi · chờ {delay} giây.' if response.status_code == 429 else
+                                           f"Telegram chưa gửi được (HTTP {response.status_code}).")
                     break
                 with self.store.lock:
                     self.store.db.execute("UPDATE outbox SET sent=1 WHERE id=?", (key,))
                 self.telegram_error = ""
             except (requests.RequestException, ValueError):
+                self.telegram_retry_at = time.monotonic() + 5
                 self.telegram_error = "Telegram mất kết nối; đang giữ tin để thử lại."
                 break

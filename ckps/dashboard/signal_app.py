@@ -58,7 +58,7 @@ class SignalApp(ctk.CTk):
         schedule = read_calendar()
         for column,(key,label,value) in enumerate((('movement','Biến động VN30',market.movement_enabled),
                 ('expiry','Nhắc đáo hạn',schedule.notify_enabled and schedule.expiry_notice_enabled),
-                ('entry','Vào lệnh',self.settings.entry_notifications or signals.buy_alert_enabled or signals.sell_alert_enabled or market.trend_enabled))):
+                ('entry','Tín hiệu / Lệnh',self.settings.entry_notifications or signals.buy_alert_enabled or signals.sell_alert_enabled or market.trend_enabled))):
             variable=tk.BooleanVar(value=value)
             self.options[key]=variable
             ctk.CTkSwitch(options,text=label,variable=variable,font=('Segoe UI',14),progress_color=COL_GREEN,
@@ -121,7 +121,7 @@ class SignalApp(ctk.CTk):
             write_signal_settings(self.settings)
             for variable in self.variables.values():variable._viking_entry.configure(state='disabled')
             self.primary.configure(text='DỪNG BACKEND')
-            self.note.configure(text='Biến động · Nhắc đáo hạn · Vào lệnh. Chỉ thông báo.',text_color=COL_MUTED)
+            self.note.configure(text='Biến động · Nhắc đáo hạn · Tín hiệu / Lệnh. Chỉ thông báo.',text_color=COL_MUTED)
         except Exception as exc:self.note.configure(text=str(exc),text_color=COL_RED)
 
     def _drain(self):

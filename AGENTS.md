@@ -5,7 +5,8 @@
 - Một agent, trừ khi Kaiser yêu cầu rõ dùng subagent.
 - Entry chỉ từ thao tác tay. P1 so giá hợp đồng đang giao dịch với MA200.
 - Backend riêng giữ P1/P2 MayinTien để phân tích; Telegram gồm biến động VN30,
-  nhắc trước đáo hạn và thông báo/gợi ý vào lệnh. Không có quyền mở/đóng lệnh.
+  nhắc trước đáo hạn và Tín hiệu / Lệnh (gợi ý, biên nhận mở/đóng/giảm).
+  Không có quyền mở/đóng lệnh.
 - UI dùng TÍN HIỆU / GIỜ THEO DÕI, không dùng BUY/ENTRY BUY/giờ mua. P2 và E
   giữ cổng ALERT riêng trong backend, UI gom dưới EMA/RSI; mặc định OFF,
   tắt chỉ ngừng thông báo, vẫn phân tích.
@@ -38,7 +39,7 @@
 - Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
   cùng kích thước/DPI; ít tab, không mở cửa sổ cài đặt backend riêng. Lịch sử ở góc bảng.
   RULE E/M chọn CHUNG / VỊ THẾ; cấu hình riêng, kế thừa và nhận/bỏ quản lý đều ở đó.
-  Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và vào lệnh.
+  Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và Tín hiệu / Lệnh.
   Không danh mục CKCS, không tab BOT, không tooltip/legend/preview trùng lặp.
 - DNSE dùng chung một cặp API key/secret; ĐỌC API hiển thị tài khoản CKPS/gói/phí,
   tự chọn khi duy nhất, có nhiều thì chọn từ API. Không nhập ID/phí tay; phí gói không đồng nghĩa tổng thuế/phí Sở.

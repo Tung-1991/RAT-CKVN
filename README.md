@@ -6,7 +6,9 @@
 
 MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. Cài đặt tập trung vào RULE (E/M chung/riêng, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH), hai cửa sổ cùng kích thước. DNSE / VỐN có ĐỌC API để chọn tài khoản/gói và xem ký quỹ/phí từ DNSE, dùng chung một cặp key/secret, có OTP và tùy chọn ghi nhớ kết nối bằng mã hóa Windows; không lưu mã OTP dùng một lần. Giá lưu gần nhất có thời gian và nhãn CŨ, chỉ để xem. Nhận/bỏ quản lý tại RULE → E/M → VỊ THẾ. BOT OFF khi khởi động. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN cùng trạng thái OTP; giấu thông số chỉ báo, chỉ hiện bảo vệ khi chọn vị thế. Bảng chính ẩn PNL. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
 
-E/M nhập duy nhất % PNL trước phí trên ký quỹ cơ sở vị thế, giữ cố định qua đóng bớt/restart; chỉ bình quân lại khi vào thêm. Cấu hình điểm/% giá cũ được quy đổi khi LƯU, thiếu cơ sở thì CHỜ. Hướng dẫn ở hint; lịch ngày nghỉ tự động, ngày riêng thu gọn.
+E/M chỉ nhập % giá vốn bình quân hợp đồng, không tính trên ký quỹ hoặc NAV và không chọn đơn vị. App chưa lưu RULE tự nạp TP OFF, SL 0,5%, ARM 1%, TSL/LẶP 0,25%, đóng 50% HĐ còn lại; DYNAMIC ATR/giữ lãi và LẶP ON. RULE đã lưu được giữ nguyên, BOT vẫn OFF khi mở. Cấu hình điểm/% PNL cũ chỉ quy đổi khi LƯU, thiếu cơ sở thì CHỜ. Hướng dẫn ở hint; lịch ngày nghỉ tự động, ngày riêng thu gọn.
+
+Telegram giữ ba nhóm Biến động VN30, Nhắc đáo hạn, Tín hiệu / Lệnh. Nhóm thứ ba báo tín hiệu tham khảo và trạng thái mở/đóng/giảm, gồm SL/TP/TSL/DYNAMIC, số HĐ khớp và còn lại. Backend chỉ nhận biên nhận rút gọn đã ghi sổ, không có quyền giao dịch; lỗi Telegram không chặn quản lý E/M.
 
 PAPER dùng giá DNSE và tiền ảo; REAL cần tài khoản phái sinh và OTP. SL hiện do app thực thi, cần app và BOT đang hoạt động; chưa nghiệm thu REAL. Chi tiết: [nghiệp vụ CKPS](support/docs/CKPS.md).
 

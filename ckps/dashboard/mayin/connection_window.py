@@ -168,7 +168,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.backend_button=ctk.CTkButton(card._viking_header,text='CHẠY',width=100,height=26,
             font=('Segoe UI',12,'bold'),command=self.toggle_backend)
         self.backend_button.pack(side='right')
-        self.form._hint_icon(card._viking_header,'Backend dùng API DNSE đã nhập ở DNSE / VỐN để phân tích riêng; không có quyền giao dịch. Telegram cần Bot token/Chat ID riêng. Tắt từng nhóm chỉ dừng thông báo, phân tích vẫn chạy.').pack(side='left',padx=5)
+        self.form._hint_icon(card._viking_header,'Dùng chung API DNSE ở DNSE / VỐN; Telegram cần Bot token/Chat ID riêng. Tín hiệu / Lệnh gồm gợi ý P1/P2/E và trạng thái gửi/khớp/hủy/lỗi của lệnh mở, đóng/giảm, SL/TP/TSL/DYNAMIC. Chỉ thông báo, không nhận lệnh từ Telegram. Tắt nhóm vẫn phân tích, không gửi bù tin cũ.').pack(side='left',padx=5)
         self.backend_state=ctk.CTkLabel(card,text='CHƯA CHẠY',font=('Segoe UI',12),text_color=MUTED,anchor='w')
         self.backend_state.pack(fill='x',padx=10,pady=(2,4))
         from .calendar_form import CalendarForm
@@ -180,7 +180,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             'entry':tk.BooleanVar(value=settings.entry_notifications)}
         row=ctk.CTkFrame(card,fg_color='transparent')
         row.pack(fill='x',padx=10,pady=5)
-        for key,title in (('movement','Biến động VN30'),('expiry','Nhắc đáo hạn'),('entry','Vào lệnh')):
+        for key,title in (('movement','Biến động VN30'),('expiry','Nhắc đáo hạn'),('entry','Tín hiệu / Lệnh')):
             ctk.CTkCheckBox(row,text=title,variable=self.options[key],width=1,
                 checkbox_width=16,checkbox_height=16,font=('Segoe UI',12)).pack(side='left',padx=(0,20))
 

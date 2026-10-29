@@ -54,6 +54,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.protocol("WM_DELETE_WINDOW", self.close)
         if start_runtime:
             self.runtime = Runtime(self.settings, self.credentials)
+        self.render()
         self.after(100, self._drain)
 
     def _drain(self):

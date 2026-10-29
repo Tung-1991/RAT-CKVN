@@ -4,6 +4,7 @@ Presentation lives in panels.py. This module never submits an order implicitly.
 """
 from datetime import datetime
 from dataclasses import asdict
+from math import isfinite
 import time
 import tkinter as tk
 import customtkinter as ctk
@@ -122,31 +123,42 @@ class MayinController(OriginalPanels):
     def _refresh_ticket_preview(self):
         if not hasattr(self,'ticket_sl'):
             return
+        rules=load_record(ExitSettings,self.settings.exit)
         try:
             account=self.view.get('account',{})
             quote=self.view.get('quotes',{}).get(self.view.get('contract','VN30F1M'),{})
-            entry=float(self.limit.get()) if self.kind.get()=='LO' and self.limit.get() else quote.get('last',0)
+            entry=float(self.limit.get()) if self.kind.get()=='LO' else quote.get('last',0)
+            if not isfinite(entry) or entry<=0:
+                raise ValueError('Chờ giá hợp lệ.')
             rules,_=self.ticket_rules(entry)
-            long_capacity=self.ticket_capacity('LONG',entry,rules)
-            margin=long_capacity.margin_per_contract
-            qty=quantity(self.qty.get()) if self.qty.get().strip() else long_capacity.maximum
-            qty_unknown=not self.qty.get().strip() and (account.get('qmax_long') is None or account.get('margin_per_contract') is None)
+            held_side=next((p['side'] for p in self.view.get('positions',[])
+                            if p['symbol']==self.view.get('contract')),None)
+            side=held_side if held_side in {'LONG','SHORT'} else 'LONG'
+            available=self.ticket_capacity(side,entry,rules)
+            margin=available.margin_per_contract
+            qty=quantity(self.qty.get()) if self.qty.get().strip() else available.maximum
+            if self.qty.get().strip() and qty<=0:
+                raise ValueError('Chờ khối lượng hợp lệ.')
+            qty_unknown=not self.qty.get().strip() and (account.get('qmax_'+side.lower()) is None
+                or margin is None or (not held_side and account.get('qmax_long')!=account.get('qmax_short')))
             sl=(money(-rules.points(rules.sl_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
             tp=(money(rules.points(rules.tp_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
             package=account.get('package_fees',{})
             per_contract=package.get('open')
             if per_contract is None and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
                 per_contract=self.settings.estimated_fee_per_contract
-            fee=per_contract*qty if per_contract is not None else None
-            fees=money(fee) if fee is not None else 'CHỜ DNSE'
+            fee=per_contract*qty if per_contract is not None and not qty_unknown else None
+            fees=money(fee) if fee is not None else 'CHỜ HĐ' if qty_unknown else 'CHỜ DNSE'
             self.lbl_fee_title.configure(text='PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')
             self.lbl_order_value_title.configure(text='KÝ QUỸ + PHÍ GÓI' if package.get('open') is not None else 'KÝ QUỸ + PHÍ' if per_contract is not None else 'KÝ QUỸ · CHỜ PHÍ')
-            margin=long_capacity.margin_per_contract
-            cash=money(margin*qty+(fee or 0)) if margin is not None else '—'
+            cash=money(margin*qty+fee) if margin is not None and fee is not None and not qty_unknown else '—'
             for widget,text in ((self.lbl_tp_preview,tp),(self.lbl_sl_preview,sl),(self.lbl_fee_preview,fees),(self.lbl_order_value,cash)):
                 widget.configure(text=text)
         except (ValueError,TypeError):
-            pass
+            for widget,text in ((self.lbl_tp_preview,'—' if rules.tp_enabled else 'OFF'),
+                                (self.lbl_sl_preview,'—' if rules.sl_enabled else 'OFF'),
+                                (self.lbl_fee_preview,'—'),(self.lbl_order_value,'—')):
+                widget.configure(text=text)
         finally:
             if hasattr(self,'preview_management'):
                 self._render_signal_preview()

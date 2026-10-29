@@ -67,6 +67,8 @@ class SignalRuntime(SignalNotifications):
         with self.store.lock:
             if (settings.telegram_enabled,settings.telegram_chat,token)!=(self.owner_enabled,self.owner_chat,self.owner_token):
                 self.store.db.execute('UPDATE outbox SET sent=2 WHERE sent=0')
+                self.telegram_retry_at = 0
+                self.telegram_error = ''
             self.settings=settings
             self.owner_token=token
             self.owner_enabled,self.owner_chat=settings.telegram_enabled,settings.telegram_chat

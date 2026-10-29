@@ -33,7 +33,7 @@ class SignalForm(OriginalRuleForms, ctk.CTkFrame):
             self.flag(row, prefix+'_alert_enabled', 'ALERT')
         row = self.row(ema)
         self.number(row, 'rsi_period', 'RSI', width=48)
-        self._hint_icon(row, 'ALERT của điểm vào và E độc lập; OFF vẫn phân tích. Telegram chỉ gửi khi nhóm Vào lệnh được bật tại KẾT NỐI. CẮT: yêu cầu giao cắt; E không có quyền đóng vị thế.').pack(side='right')
+        self._hint_icon(row, 'ALERT của điểm vào và E độc lập; OFF vẫn phân tích. Telegram chỉ gửi khi nhóm Tín hiệu / Lệnh được bật tại KẾT NỐI. CẮT: yêu cầu giao cắt; E không có quyền đóng vị thế.').pack(side='right')
         memory = self._card(self.body, 'GIAO CẮT / XÁC NHẬN', '', 2, 0, compact=True)
         row = self.row(memory)
         self.choice(row, 'buy_ema_cross_mode', ('VA', 'SESSIONS'), labels={'VA': '∞ VA', 'SESSIONS': 'X PHIÊN'})

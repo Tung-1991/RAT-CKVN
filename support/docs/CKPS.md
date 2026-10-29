@@ -56,9 +56,11 @@ Chữ thống nhất theo vai trò: nhãn 13–14, nội dung 14, kết quả 18
 
 Đáo hạn tính thứ Năm thứ ba, lùi theo ngày nghỉ đã biết; nếu thiếu lịch hiển thị dự kiến. Trước ngày đáo hạn backend gửi nhắc, không chặn giao dịch ngày đó. Ngày nghỉ, đổi rổ và ATO/ATC vẫn theo cấu hình; chỉ chặn mở mới, không chặn đóng/E/M.
 
-Một kênh Telegram với ba lựa chọn: Biến động VN30, Nhắc đáo hạn, Vào lệnh. Nhóm vào lệnh gồm tín hiệu P1/P2/E chỉ tham khảo và thông báo gửi/khớp/hủy/lỗi lệnh mở từ app. App chuyển biên nhận rút gọn qua SQLite cục bộ; backend không đọc tài khoản, token giao dịch hay nhận lệnh giao dịch. Không gửi lại tin cũ khi backend khởi động, tắt nhánh chỉ dừng thông báo. Token chỉ trong phiên/biến môi trường.
+Một kênh Telegram với ba lựa chọn: Biến động VN30, Nhắc đáo hạn, Tín hiệu / Lệnh. Nhóm thứ ba gồm tín hiệu P1/P2/E chỉ tham khảo và thông báo gửi/khớp/hủy/lỗi lệnh mở, đóng/giảm từ app. Biên nhận đóng/giảm ghi rõ Long/Short, lý do đóng tay/SL/TP/TSL/ARM/DYNAMIC, HĐ đã khớp và số còn lại tại thời điểm ghi nhận. UNKNOWN luôn báo chờ đối soát; yêu cầu gửi/hủy không đồng nghĩa đã khớp/đã hủy. Không lấy lãi lũy kế vị thế làm lãi của một lượt đóng.
 
-Token/chat, ba nhóm thông báo, lịch và nút CHẠY/DỪNG nằm trong KẾT NỐI → TELEGRAM / LỊCH. CHẠY tạo tiến trình backend không giao diện; pipe riêng chỉ truyền API đọc giá, token Telegram và tham số tín hiệu, không truyền số tài khoản, OTP hoặc E/M. Lưu áp dụng cấu hình vào backend đang chạy. Tắt Vào lệnh chặn cả P1/P2/E và biên nhận mở lệnh; không tắt phân tích hoặc gửi bù điều kiện cũ khi bật lại.
+App ghi biên nhận cùng transaction khớp/vị thế rồi chuyển bản rút gọn qua SQLite cục bộ; backend không đọc sổ tài khoản, thông báo lỗi broker, token giao dịch hay nhận lệnh giao dịch. Cập nhật phí muộn hoặc poll cùng trạng thái không tạo thêm tin khớp. Không gửi lại tin cũ khi backend khởi động, tắt nhánh chỉ dừng thông báo. Token chỉ trong phiên/biến môi trường. Telegram lỗi giữ hàng đợi; khi bị giới hạn gửi, chờ `retry_after` từ API trước khi thử lại, không chặn E/M. Trạng thái lỗi Telegram vẫn hiện ở KẾT NỐI khi backend đang chờ giá/nến. Timeout gửi tin có thể đã tới Telegram, nên không cam kết giao đúng một lần ở phía dịch vụ.
+
+Token/chat, ba nhóm thông báo, lịch và nút CHẠY/DỪNG nằm trong KẾT NỐI → TELEGRAM / LỊCH. CHẠY tạo tiến trình backend không giao diện; pipe riêng chỉ truyền API đọc giá, token Telegram và tham số tín hiệu, không truyền số tài khoản, OTP hoặc E/M. Lưu áp dụng cấu hình vào backend đang chạy. Tắt Tín hiệu / Lệnh chặn cả P1/P2/E và biên nhận mở/đóng/giảm; không tắt phân tích hoặc gửi bù điều kiện cũ khi bật lại. Không thêm checkbox riêng cho từng lý do đóng.
 
 ## Kiểm thử
 

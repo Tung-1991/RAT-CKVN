@@ -16,6 +16,21 @@ def public_settings(settings):
     return {key: raw[key] for key in FIELDS}
 
 
+def snapshot_status(value, settings, *, token_available):
+    quote = value.get('quotes', {}).get(value.get('contract'), {})
+    if not quote or not load_record(Quote, quote).fresh(settings.max_quote_age):
+        state = 'Chờ giá DNSE'
+    elif not value.get('analysis', {}).get('p2', {}).get('indicators'):
+        state = 'Đã có giá · Chờ nến 1D'
+    else:
+        state = 'Đang phân tích'
+    if not settings.telegram_enabled:
+        return state + ' · Telegram OFF'
+    if not token_available or not settings.telegram_chat:
+        return state + ' · Telegram thiếu token / Chat ID'
+    return state + ' · ' + (value.get('telegram_error') or 'Telegram ON')
+
+
 class SignalProcess:
     def __init__(self, settings, credentials):
         self.status = 'Đang kết nối dữ liệu…'
@@ -124,15 +139,7 @@ def serve(source, target, *, runtime_factory=None):
                         emit('Đã dừng backend')
                         return 0
                     if kind == 'snapshot':
-                        error = value.get('telegram_error') or value.get('connection', {}).get('error')
-                        quote = value.get('quotes', {}).get(value.get('contract'), {})
-                        if not quote or not load_record(Quote, quote).fresh(runtime.settings.max_quote_age):
-                            emit('Chờ giá DNSE')
-                        elif not value.get('analysis', {}).get('p2', {}).get('indicators'):
-                            emit('Đã có giá · Chờ nến 1D')
-                        else:
-                            emit('Đang phân tích · Telegram chờ kết nối' if error else
-                                 'Đang phân tích · Telegram '+('ON' if runtime.settings.telegram_enabled else 'OFF'))
+                        emit(snapshot_status(value, runtime.settings, token_available=bool(runtime.owner_token)))
                     elif kind == 'error':
                         emit('Backend chờ dữ liệu; kiểm tra API hoặc phiên đang chạy.')
     except Exception:

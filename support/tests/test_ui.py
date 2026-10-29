@@ -38,6 +38,9 @@ def _layout_scenario(scale):
             yield from widgets(child)
     try:
         settle(500)
+        assert app.lbl_tp_preview.cget('text') == 'OFF'
+        assert app.lbl_sl_preview.cget('text') == '—'
+        assert all(label.cget('text') != 'NA' for label in (app.lbl_tp_preview, app.lbl_sl_preview, app.lbl_fee_preview, app.lbl_order_value))
         app.render()
         settle()
         assert isinstance(app,OriginalPanels)
