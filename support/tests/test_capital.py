@@ -218,7 +218,8 @@ def test_ticket_preview_uses_only_shared_rules_and_ignores_old_private_values():
     app = SimpleNamespace(settings=settings, ticket_sl=Value('RULE'), ticket_tp=Value('RULE'),
         view={'contract':'VN30F1M', 'positions':[{'symbol':'VN30F1M','exit_overrides':wide}]})
     rules, override = DashboardActionsMixin.ticket_rules(app, 2000)
-    assert asdict(rules) == settings.exit and override is None
+    from ckps.rules.defaults import shared_exit_settings
+    assert asdict(rules) == shared_exit_settings(settings.exit) and override is None
     app.ticket_tp = Value('20')
     rules, override = DashboardActionsMixin.ticket_rules(app, 2000)
     assert rules.sl_distance == 1 and not rules.tp_enabled and override is None

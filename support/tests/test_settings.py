@@ -181,6 +181,13 @@ def _consolidated_scenario(scale):
             assert rule.below_arm_switch.winfo_rooty()+rule.below_arm_switch.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
         common = dict(app.settings.exit)
         assert not hasattr(rule, 'scope_selector') and not hasattr(rule, 'inherit_switch')
+        for name in ('normal_policy_menu','dynamic_policy_menu','normal_sell_basis','dynamic_sell_basis_selector','normal_sell','dynamic_sell'):
+            assert not hasattr(rule,name),name
+        assert not any(isinstance(w,ctk.CTkOptionMenu) for w in controls(rule.protection_host))
+        assert not any(isinstance(w,ctk.CTkSegmentedButton) for w in controls(rule.protection_host))
+        assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
+        assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
+        assert rule._exits()['arm_close_pct']==50 and rule._exits()['dynamic_close_pct']==50
         assert rule.primary.cget('text') == 'LƯU RULE'
         settle()
         if scale == 1.:

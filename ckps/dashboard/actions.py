@@ -4,6 +4,7 @@ from pathlib import Path
 from tkinter import filedialog
 from ckps.config import write_settings
 from ckps.models import FINAL, ExitSettings, Position, Quote, Snapshot, Order, load_record, quantity
+from ckps.rules.defaults import shared_exit_settings
 from .formatting import price, clock
 from .theme import BORDER
 
@@ -160,7 +161,7 @@ class DashboardActionsMixin:
 
     def ticket_rules(self, entry):
         """The ticket cannot override the shared protection settings."""
-        return load_record(ExitSettings, self.settings.exit).validate(), None
+        return load_record(ExitSettings, shared_exit_settings(self.settings.exit)).validate(), None
 
 
     def export_history(self):

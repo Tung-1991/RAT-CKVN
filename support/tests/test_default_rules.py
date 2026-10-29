@@ -6,7 +6,7 @@ import pytest
 
 from ckps.config import read_settings, runtime_root, write_settings
 from ckps.models import ExitSettings, Position, Settings, load_record
-from ckps.rules.defaults import default_exit_settings
+from ckps.rules.defaults import default_exit_settings, shared_exit_settings
 from ckps.rules.protection import evaluate, levels
 from ckps.trading.execution import Engine
 
@@ -62,7 +62,7 @@ def test_saved_user_rules_including_explicit_off_survive_restart(disabled):
     write_settings(custom)
     for _ in range(2):
         loaded = read_settings()
-        assert loaded.exit == policy and loaded.paper_balance == 180_000_000
+        assert loaded.exit == shared_exit_settings(policy) and loaded.paper_balance == 180_000_000
         write_settings(loaded)
 
 

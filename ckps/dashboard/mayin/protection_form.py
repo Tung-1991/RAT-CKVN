@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 from ckps.models import ExitSettings, Quote, load_record
 from ckps.rules.distances import price_percent_rules, reference_margin
+from ckps.rules.defaults import shared_exit_settings
 from .forms import OriginalRuleForms
 
 
@@ -19,7 +20,7 @@ class ProtectionFormMixin(OriginalRuleForms):
                 ProtectionFormMixin.set_protection_enabled(widget, enabled)
 
     def _init_protection(self, parent, values):
-        values={**values,'tp_enabled':False,'tp_distance':0.0}
+        values=shared_exit_settings(values)
         self._migration_error=''
         self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT'
         try:
@@ -32,10 +33,8 @@ class ProtectionFormMixin(OriginalRuleForms):
         self.values = exits
         values = {}
         mapping = {'initial_sl_pct':'sl_distance','reentry_sl_pct':'repeat_gap','take_profit_pct':'tp_distance',
-            'normal_arm_pct':'arm_gain','normal_giveback_pct':'trail_gap','normal_sell_pct':'arm_close_pct',
-            'normal_sell_basis':'arm_basis','normal_repeat_enabled':'arm_repeat','normal_policy':'arm_policy',
-            'normal_dynamic_enabled':'dynamic_enabled','dynamic_policy':'dynamic_policy','dynamic_sell_pct':'dynamic_close_pct',
-            'dynamic_sell_basis':'dynamic_basis','dynamic_repeat_enabled':'dynamic_repeat',
+            'normal_arm_pct':'arm_gain','normal_giveback_pct':'trail_gap','normal_repeat_enabled':'arm_repeat',
+            'normal_dynamic_enabled':'dynamic_enabled','dynamic_repeat_enabled':'dynamic_repeat',
             'normal_atr_activation_multiplier':'atr_start_multiplier','normal_atr_activation_enabled':'atr_start_enabled',
             'normal_atr_multiplier':'atr_trail_multiplier','normal_atr_trail_enabled':'atr_trail_enabled',
             'normal_retention_pct':'retention_pct','normal_retention_enabled':'retention_enabled',
@@ -93,8 +92,8 @@ class ProtectionFormMixin(OriginalRuleForms):
         if self._migration_error:raise ValueError(self._migration_error)
         values=asdict(self.values)
         mapping={'sl_distance':'initial_sl','tp_distance':'take_profit','repeat_gap':'reentry_sl','arm_gain':'normal_arm',
-            'trail_gap':'normal_giveback','arm_close_pct':'normal_sell','arm_policy':'normal_policy','arm_repeat':'normal_repeat',
-            'dynamic_enabled':'normal_dynamic','dynamic_policy':'dynamic_policy','dynamic_close_pct':'dynamic_sell','dynamic_repeat':'dynamic_repeat',
+            'trail_gap':'normal_giveback','arm_repeat':'normal_repeat',
+            'dynamic_enabled':'normal_dynamic','dynamic_repeat':'dynamic_repeat',
             'atr_start_enabled':'normal_atr_activation_enabled','atr_start_multiplier':'normal_atr_activation_multiplier',
             'atr_trail_enabled':'normal_atr_trail_enabled','atr_trail_multiplier':'normal_atr_multiplier',
             'retention_enabled':'normal_retention_enabled','retention_pct':'normal_retention_pct',
@@ -106,9 +105,5 @@ class ProtectionFormMixin(OriginalRuleForms):
             old=values[key]
             values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(str(raw).strip().removesuffix('%').replace(',','.'))
         values['sl_distance']=abs(values['sl_distance'])
-        values['tp_enabled']=False
-        values['tp_distance']=0.0
         values['distance_unit']='PRICE_PERCENT'
-        values['arm_basis']='ORIGINAL' if self.normal_sell_basis.get()=='GỐC' else 'REMAINING'
-        values['dynamic_basis']='ORIGINAL' if self.dynamic_sell_basis.get()=='GỐC' else 'REMAINING'
-        return asdict(load_record(ExitSettings,values).validate())
+        return asdict(load_record(ExitSettings,shared_exit_settings(values)).validate())

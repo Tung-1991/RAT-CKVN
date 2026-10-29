@@ -363,7 +363,8 @@ def _rule_adapter_scenario():
             account={'margin_per_contract':40_000_000,'margin_reference_price':2000})
         window.destroy()
         window=app.settings_dialog('E/M');app.update()
-        expected={**asdict(exits),'distance_unit':'PRICE_PERCENT','tp_enabled':False,'tp_distance':0.0}
+        from ckps.rules.defaults import shared_exit_settings
+        expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT'}
         for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
             expected[key]=0.0 if key=='tp_distance' else getattr(exits,key)/2000*100
         assert window._exits()==expected
@@ -450,7 +451,8 @@ def _position_protection_scenario(scale):
             dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=67,
             dynamic_basis='ORIGINAL', dynamic_repeat=True, atr_start_multiplier=.6,
             atr_trail_multiplier=.9, retention_pct=81, retention_until=18))
-        common = {**original, 'tp_enabled':False, 'tp_distance':0.0}
+        from ckps.rules.defaults import shared_exit_settings
+        common = shared_exit_settings(original)
         saved=[]
         app.save_config=saved.append
         # Opening RULE from either direction always edits the same global form.
@@ -637,7 +639,7 @@ def _table_review_scenario(interactive=False):
         assert table.cell(short.id,'pnl')['color']=='#EF4444'
         assert table.cell(short.id,'side')['color']=='#EF4444'
         assert table.cell(long.id,'sl')['text']=='1,990.0'
-        assert table.cell(long.id,'tp')['text']=='2,040.0'
+        assert table.cell(long.id,'tp')['text']=='—'  # TP is fixed OFF in the shared product rule.
         assert table.cell(long.id,'managed')['text']=='TẠM DỪNG'
         assert table._display==('#0','side','entry','sl','tp','managed')
         assert table._row_height==round(44*table._get_widget_scaling())

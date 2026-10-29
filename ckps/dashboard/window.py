@@ -29,7 +29,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.configure(fg_color=BG)
         self.settings = settings or read_settings()
         # Opening the program never reconnects to a REAL trading account silently.
-        self.settings = replace(self.settings, mode="PAPER")
+        self.settings = replace(self.settings, mode="PAPER").validate()
         self.runtime = None
         self.view = {}
         self.running = True

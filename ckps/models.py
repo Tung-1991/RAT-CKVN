@@ -163,7 +163,8 @@ class Settings:
             raise ValueError("Vốn/ký quỹ PAPER không hợp lệ.")
         if not 1 <= self.poll_seconds <= 60 or not 1 <= self.max_quote_age <= 120:
             raise ValueError("Chu kỳ cập nhật không hợp lệ.")
-        self.exit = {**self.exit, 'tp_enabled': False, 'tp_distance': 0.0}
+        from ckps.rules.defaults import shared_exit_settings
+        self.exit = shared_exit_settings(self.exit)
         load_record(ExitSettings, self.exit).validate()
         from ckps.rules.signal_settings import SignalSettings
         self.signals = SignalSettings.from_dict(self.signals).to_dict()

@@ -11,6 +11,7 @@ import customtkinter as ctk
 
 from ckps.models import FINAL, ExitSettings, Position, Quote, load_record, quantity
 from ckps.rules.distances import price_percent_rules
+from ckps.rules.defaults import shared_exit_settings
 from ..formatting import money, price, clock
 from .panels import OriginalPanels, INFO_PANEL_HEIGHT
 from .management_preview import position_milestones
@@ -126,7 +127,7 @@ class MayinController(OriginalPanels):
     def _refresh_ticket_preview(self):
         if not hasattr(self,'ticket_sl'):
             return
-        rules=load_record(ExitSettings,self.settings.exit)
+        rules=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
         try:
             account=self.view.get('account',{})
             quote=self.view.get('quotes',{}).get(self.view.get('contract','VN30F1M'),{})
@@ -194,7 +195,7 @@ class MayinController(OriginalPanels):
     def _render_management_config(self, rules, entry=None, margin=None):
         """Full configuration stays in a readable panel opened from each title."""
         try:
-            rules=load_record(ExitSettings,price_percent_rules(asdict(rules),entry,margin))
+            rules=load_record(ExitSettings,price_percent_rules(shared_exit_settings(asdict(rules)),entry,margin))
         except ValueError:
             for prefix in ('arm','dynamic'):
                 self._preview_help[prefix]='Chờ dữ liệu xác minh để hiển thị % giá vốn. Các mốc đang chạy được giữ nguyên.'
@@ -205,9 +206,7 @@ class MayinController(OriginalPanels):
             if not getattr(rules,prefix+'_enabled'):
                 self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M, áp dụng chung tất cả hợp đồng.'
                 continue
-            policy=getattr(rules,prefix+'_policy')
-            basis='gốc' if getattr(rules,prefix+'_basis')=='ORIGINAL' else 'còn lại'
-            action=f"Đóng {getattr(rules,prefix+'_close_pct'):g}% {basis}" if policy=='AUTO' else 'Chỉ thông báo'
+            action='Tự đóng 50% HĐ còn lại'
             repeat=f'Lặp {rules.repeat_gap:g} {unit}' if getattr(rules,prefix+'_repeat') else 'Không lặp'
             if prefix=='arm':
                 parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} {unit}'
@@ -220,7 +219,7 @@ class MayinController(OriginalPanels):
                 parameters=' · '.join(parts)
                 explanation='Bảo vệ trước ARM. Khi đạt ARM, TSL tiếp quản.'
             self._preview_help[prefix]='\n'.join((title,explanation,parameters,action+' · '+repeat,
-                'AUTO tự đóng khi đủ quyền; ALERT chỉ ghi LOG.'))
+                'Cần BOT và quyền quản lý ON; 1 HĐ còn lại thì đóng 1.'))
 
     def _render_selected_management(self):
         selected=self.positions_tree.selection()
@@ -232,7 +231,7 @@ class MayinController(OriginalPanels):
             return
         if not self.preview_management.winfo_manager():self.preview_management.grid()
         position=load_record(Position,raw)
-        rules=load_record(ExitSettings,self.settings.exit)
+        rules=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
         self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ')
         source='RULE CHUNG'
         self.preview_rule_source.configure(text=source)
@@ -247,7 +246,7 @@ class MayinController(OriginalPanels):
     def render(self):
         view,account=self.view,self.view.get('account',{})
         self.ticket_tp.set('OFF')
-        rules=load_record(ExitSettings,self.settings.exit)
+        rules=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
         try:
             quote=view.get('quotes',{}).get(view.get('contract'),{})
             if quote and (quote.get('symbol')!=view.get('contract') or not load_record(Quote,quote).fresh(self.settings.max_quote_age)):

@@ -6,7 +6,7 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 | File | Phạm vi |
 | --- | --- |
 | `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; bản mẫu dùng chung preset; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
-| `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL tác động đúng Long/Short, fill muộn dùng RULE mới, restart giữ mốc/LẶP, TP luôn OFF |
+| `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL, fill muộn, restart giữ mốc/LẶP; TP OFF; cấu hình cũ ALERT/ORIGINAL/tỷ lệ khác vẫn tự đóng 50% số còn lại sau giảm tay, không spam LẶP và không tự bật nhánh đã tắt |
 | `test_trade_notifications.py` | Biên nhận Long/Short SL/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
 | `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; thiếu sức mở không dựng phí hoặc lỗ SL bằng 0 |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |

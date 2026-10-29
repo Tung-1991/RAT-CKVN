@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ckps.models import FINAL, ExitSettings, Position, load_record
+from ckps.rules.defaults import shared_exit_settings
 from .formatting import money, price, clock
 from .theme import MUTED, GREEN, RED, WARN
 from .mayin.tokens import COL_TEXT as TEXT
@@ -75,7 +76,7 @@ class DashboardTablesMixin:
                 "profit" if pnl and pnl > 0 else "loss" if pnl and pnl < 0 else "flat")
             roots.add(p.id)
             self.running_rows[p.id] = ("positions", raw)
-            rule=load_record(ExitSettings,self.settings.exit)
+            rule=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
             try:
                 sl=price(p.entry-p.sign*rule.points(rule.sl_distance,p.entry,p.margin_per_contract)) if rule.sl_enabled else 'OFF'
                 tp=price(p.entry+p.sign*rule.points(rule.tp_distance,p.entry,p.margin_per_contract)) if rule.tp_enabled else 'OFF'

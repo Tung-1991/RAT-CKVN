@@ -10,6 +10,7 @@ from ckps.models import FINAL, Decision, ExitSettings, Order, Position, Settings
 from ckps.rules.protection import adverse_anchor, evaluate
 from ckps.services.calendar import block_reason as calendar_block_reason
 from ckps.rules.distances import reference_margin, price_rules
+from ckps.rules.defaults import shared_exit_settings
 
 
 class Engine:
@@ -51,7 +52,7 @@ class Engine:
 
     def exits(self, position=None):
         """Every holding and pending/new order uses the one shared RULE."""
-        return load_record(ExitSettings, {**self.settings.exit, 'tp_enabled': False, 'tp_distance': 0.0}).validate()
+        return load_record(ExitSettings, shared_exit_settings(self.settings.exit)).validate()
 
     def paper_capital(self, value):
         if self.broker.mode!='PAPER':

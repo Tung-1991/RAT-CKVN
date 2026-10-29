@@ -21,6 +21,11 @@
   giữ nguyên và báo CHỜ. Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
   lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
   Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
+- TSL và DYNAMIC cố định tự đóng 50% HĐ còn lại mỗi lượt khi đủ quyền.
+  Không AUTO / ALERT, GỐC / CÒN LẠI hoặc ô nhập tỷ lệ đóng trong E/M;
+  chỉ hiển thị dòng 50% HĐ còn lại và giải thích làm tròn trong hint.
+  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ ngưỡng giá và
+  cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
   ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
   DYNAMIC AUTO: ATR START 0,5, ATR trail 0,8, giữ 70% lãi, LẶP ON.
@@ -53,7 +58,7 @@
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
-- E/M phải hiện đầy đủ TSL/ARM và DYNAMIC (ATR, giữ lãi, tỷ lệ đóng, LẶP),
+- E/M phải hiện đầy đủ TSL/ARM và DYNAMIC (ATR, giữ lãi, mức đóng cố định, LẶP),
   không giấu trong nâng cao. Giữ hint giải thích và cùng kích thước hai cửa sổ.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ hiện CHỜ; không suy ngược điểm Short. Ẩn PNL

@@ -56,12 +56,8 @@
   "RuleSettingsPopup._exit_manager_tab": {
     "source": "rules/window.py",
     "line": 826,
-    "sha256": "09a9736eb76f2a69e1606b5eeb0134091987e3d22f539255b186d0497aeb1022"
-  },
-  "RuleSettingsPopup._select_normal_policy": {
-    "source": "rules/window.py",
-    "line": 1126,
-    "sha256": "de6850d3d711b8657f2e31d6a7b2a62bb2bd792e9da1aebe18af128b18055910"
+    "sha256": "09a9736eb76f2a69e1606b5eeb0134091987e3d22f539255b186d0497aeb1022",
+    "adaptation": "One shared RULE; automatic close of 50% remaining contracts. Action/basis selectors and editable close ratios removed; original cards, thresholds, ATR and repeat controls retained."
   },
   "management_preview.py": {
     "source": "dashboard/position_em.py",
