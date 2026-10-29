@@ -9,7 +9,7 @@ from ckps.trading.portfolio import capacity
 from ckps.models import FINAL, Decision, ExitSettings, Order, Position, Settings, Snapshot, direction, is_vn30, load_record, number, quantity
 from ckps.rules.protection import adverse_anchor, evaluate
 from ckps.services.calendar import block_reason as calendar_block_reason
-from ckps.rules.pnl import reference_margin, price_rules
+from ckps.rules.distances import reference_margin, price_rules
 
 
 class Engine:
@@ -32,6 +32,21 @@ class Engine:
                 order.status = "UNKNOWN"
                 order.message = "Khởi động lại: chờ đối soát, không gửi lại."
                 store.save_order(order)
+        self._pin_legacy_rules()
+
+    def _pin_legacy_rules(self):
+        """Keep existing exposure on its old policy before a global unit migration."""
+        legacy = asdict(self.exits())
+        if legacy['distance_unit']=='PRICE_PERCENT':return
+        with self.store.transaction():
+            for position in self.store.positions():
+                if position.exit_overrides is None:
+                    position.exit_overrides=dict(legacy)
+                    self.store.save_position(position)
+            for order in self.store.orders(pending=True):
+                if order.action=='OPEN' and order.exit_settings is None:
+                    order.exit_settings=dict(legacy)
+                    self.store.save_order(order)
 
     def disarm(self):
         # May be called directly by the Tk thread, including during broker I/O.
@@ -345,6 +360,8 @@ class Engine:
                 position.managed, position.history_verified, position.pnl_verified = False, False, False
                 position.source = "MIXED"
                 position.note = "Khối lượng/giá vốn thay đổi ngoài app; cần nhận quản lý lại."
+            if position.exit_overrides is None and self.exits().distance_unit!='PRICE_PERCENT':
+                position.exit_overrides=asdict(self.exits())
             self.store.save_position(position)
             self.store.event("EXTERNAL", f"{position.side} {symbol} · {position.quantity} HĐ · {position.note}")
             self._notify(f"{position.side} {symbol} · {position.quantity} HĐ\n{position.note}",
@@ -466,7 +483,7 @@ class Engine:
         qty = limit.maximum if qty is None else quantity(qty)
         if qty <= 0 or qty > limit.maximum:
             raise ValueError(limit.reason or f"Tối đa {limit.maximum} HĐ theo sức mở DNSE.")
-        pinned = exit_settings is not None or any(p.exit_overrides is not None for p in current) or any(
+        pinned = exit_settings is not None or exits.distance_unit!='PRICE_PERCENT' or any(p.exit_overrides is not None for p in current) or any(
             o.exit_settings is not None for o in self.store.orders(pending=True)
             if o.symbol == self.latest.contract and o.action == "OPEN")
         order = Order.create(self.latest.contract, side, qty, kind=kind, price=price if kind == "LO" else 0,

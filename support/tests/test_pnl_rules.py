@@ -1,10 +1,10 @@
-"""Gross PNL% uses each position's verified, persisted margin basis."""
+"""Compatibility for legacy margin-PNL rules and persisted margin bookkeeping."""
 from dataclasses import asdict, replace
 
 import pytest
 
 from ckps.models import ExitSettings, Position, Settings
-from ckps.rules.pnl import pnl_rules, price_rules, reference_margin
+from ckps.rules.distances import price_percent_rules, price_rules, reference_margin
 from ckps.rules.protection import evaluate, levels, repeat_trigger
 
 
@@ -45,15 +45,15 @@ def test_pnl_trail_repeat_and_dynamic_share_the_same_fixed_margin_basis(side,sig
 def test_old_points_and_price_percent_are_converted_explicitly_without_mutating_source():
     old=ExitSettings(sl_enabled=True,sl_distance=10,tp_distance=40,arm_gain=20,trail_gap=5,repeat_gap=5)
     before=asdict(old)
-    converted=pnl_rules(before,2000,40_000_000)
-    assert converted['distance_unit']=='PNL_PERCENT' and converted['sl_distance']==2.5
+    converted=price_percent_rules(before,2000)
+    assert converted['distance_unit']=='PRICE_PERCENT' and converted['sl_distance']==.5
     assert price_rules(ExitSettings(**converted),2000,40_000_000)==old
     assert asdict(old)==before
     percent=replace(old,distance_unit='PERCENT',sl_distance=.5)
-    assert pnl_rules(asdict(percent),2000,40_000_000)['sl_distance']==2.5
-    for margin in (None,0,float('nan')):
-        with pytest.raises(ValueError):pnl_rules(before,2000,margin)
-    assert Settings().exit['distance_unit']=='PNL_PERCENT'
+    assert price_percent_rules(asdict(percent))['sl_distance']==.5
+    for entry in (None,0,float('nan')):
+        with pytest.raises(ValueError):price_percent_rules(before,entry)
+    assert Settings().exit['distance_unit']=='PRICE_PERCENT'
 
 
 def test_missing_margin_does_not_mutate_protection_or_block_manual_close(system):
@@ -166,7 +166,7 @@ def test_partial_fills_pin_margin_with_position_and_do_not_count_same_fill_twice
     assert store.positions()[0]==position
 
 
-def test_manual_ticket_cannot_reinterpret_legacy_units_as_pnl():
+def test_manual_ticket_cannot_reinterpret_legacy_units_as_price_percent():
     from types import SimpleNamespace
     from ckps.dashboard.actions import DashboardActionsMixin
     class Value:
@@ -174,7 +174,7 @@ def test_manual_ticket_cannot_reinterpret_legacy_units_as_pnl():
         def get(self):return self.value
     app=SimpleNamespace(settings=Settings(exit=asdict(ExitSettings(sl_enabled=True,sl_distance=10))),
         ticket_sl=Value('5%'),ticket_tp=Value('RULE'),view={'contract':'VN30F1M'})
-    with pytest.raises(ValueError,match='% PNL'):DashboardActionsMixin.ticket_rules(app,2000)
-    app.settings.exit=pnl_rules(app.settings.exit,2000,40_000_000)
+    with pytest.raises(ValueError,match='% giá'):DashboardActionsMixin.ticket_rules(app,2000)
+    app.settings.exit=price_percent_rules(app.settings.exit,2000)
     configured,_=DashboardActionsMixin.ticket_rules(app,2000)
-    assert configured.distance_unit=='PNL_PERCENT' and configured.sl_distance==5
+    assert configured.distance_unit=='PRICE_PERCENT' and configured.sl_distance==5

@@ -125,9 +125,9 @@ class OriginalRuleForms:
             cell.grid(row=0, column=column, sticky='nsew')
             cell._viking_compact=compact
             limit_cells.append(cell)
-        self.initial_sl = self._field(limit_cells[0], 'SL (% PNL)', self.params.initial_sl_pct, 'Mức cắt lỗ trước phí trên ký quỹ cơ sở vị thế; nhập số dương. Long/Short tới mức này thì đóng toàn bộ HĐ có thể đóng.')
-        self.reentry_sl = self._field(limit_cells[1], 'LẶP (% PNL)', self.params.reentry_sl_pct, 'PNL giảm thêm bao nhiêu điểm phần trăm giữa các lượt đóng; tính trên ký quỹ cơ sở cố định. Chờ lệnh trước kết thúc, không gửi lặp cùng lượt.')
-        self.take_profit = self._field(limit_cells[2], 'TP (% PNL)', self.params.take_profit_pct, 'Mức lãi trước phí trên ký quỹ cơ sở vị thế; chạm mức sẽ đóng toàn bộ HĐ có thể đóng.')
+        self.initial_sl = self._field(limit_cells[0], 'SL (% GIÁ)', self.params.initial_sl_pct, 'Mức cắt lỗ theo % giá vốn bình quân. Nhập 0,25 hoặc -0,25: app dùng khoảng cách 0,25%. Giá vốn 2.000: Long cắt tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. Không tính trên tiền hoặc NAV.')
+        self.reentry_sl = self._field(limit_cells[1], 'LẶP (% GIÁ)', self.params.reentry_sl_pct, 'Khoảng giá giữa các lượt đóng = giá vốn × bước LẶP / 100. Chờ lệnh trước kết thúc, không gửi lặp cùng lượt; không phụ thuộc ký quỹ.')
+        self.take_profit = self._field(limit_cells[2], 'TP (% GIÁ)', self.params.take_profit_pct, 'Mức tăng giá có lợi so với giá vốn bình quân; Long/Short đối xứng. Chạm mức thì đóng toàn bộ HĐ có thể đóng.')
         self.protect_card = self._card(body, 'PROTECT · BẢO VỆ VỊ THẾ', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Hai nhánh có AUTO/ALERT, tỷ lệ đóng và LẶP riêng.', 2, 0, span=2,compact=compact)
         groups = ctk.CTkFrame(self.protect_card, fg_color='transparent')
         groups.pack(fill='x', padx=4, pady=(0, 0 if compact else 2))
@@ -143,8 +143,8 @@ class OriginalRuleForms:
         self.normal_policy_menu = ctk.CTkOptionMenu(policy_row, values=['AUTO', 'ALERT'], variable=self.normal_policy, width=90, height=28 if compact else 34, font=('Segoe UI',12) if compact else FONT_VALUE, fg_color=self.BLUE, dynamic_resizing=False, button_color='#245C92', button_hover_color='#1D4D7B', command=self._select_normal_policy)
         self.normal_policy_menu.pack(side='right')
         self._hint_icon(policy_row, 'AUTO: gửi lệnh đóng khi BOT và quyền vị thế ON. ALERT: chỉ ghi LOG, không đóng lệnh.').pack(side='right', padx=(0, 6))
-        self.normal_arm = self._field(normal, 'ARM (% PNL)', self.params.normal_arm_pct, 'Đỉnh PNL trước phí phải đạt mức này để kích hoạt TSL; đạt ARM chưa tự đóng ngay.')
-        self.normal_giveback = self._field(normal, 'Lùi (% PNL)', self.params.normal_giveback_pct, 'Khoảng lùi theo điểm phần trăm PNL. Ví dụ đỉnh +10% PNL, lùi 2% PNL thì mốc +8% PNL; không phải 2% của phần lãi 10%.')
+        self.normal_arm = self._field(normal, 'ARM (% GIÁ)', self.params.normal_arm_pct, 'Giá phải đi thuận lợi ít nhất ARM% so với giá vốn bình quân để bật TSL; đạt ARM chưa đóng ngay. Giá vốn 2.000, ARM 1%: Long đạt 2.020, Short đạt 1.980.')
+        self.normal_giveback = self._field(normal, 'Lùi (% GIÁ)', self.params.normal_giveback_pct, 'Khoảng lùi = giá vốn × % Lùi / 100. Giá vốn 2.000, Lùi 0,25% là khoảng giá 5: Long đỉnh 2.020 thì mốc 2.015; Short đáy 1.980 thì mốc 1.985.')
         self.normal_sell = self._field(normal, 'ĐÓNG (% HĐ)', self.params.normal_sell_pct, 'Tỷ lệ HĐ đóng mỗi lượt; GỐC theo tổng HĐ đã khớp, CÒN LẠI theo HĐ đang giữ. 1 HĐ × 33% đóng 1 HĐ.')
         self.normal_sell_basis = tk.StringVar(value='GỐC' if self.params.normal_sell_basis == 'ORIGINAL' else 'CÒN LẠI')
         ctk.CTkSegmentedButton(normal, values=['GỐC', 'CÒN LẠI'], variable=self.normal_sell_basis, selected_color=self.BLUE,height=27,font=('Segoe UI',12)).pack(fill='x', padx=8 if compact else 12, pady=3)
@@ -176,8 +176,8 @@ class OriginalRuleForms:
         retention_box._viking_compact=compact
         self.dynamic_retention_card = retention_box
         ctk.CTkLabel(retention_box, text='GIỮ LÃI THEO ĐỈNH / ĐÁY', font=('Segoe UI', 11, 'bold'), text_color='#60A5FA', anchor='w', height=18).pack(fill='x', padx=8, pady=(4, 0))
-        self.normal_retention_pct, self.normal_retention_enabled = self._dynamic_field(retention_box, 'GIỮ (% LÃI)', self.params.normal_retention_pct, self.params.normal_retention_enabled, 'Giữ phần trăm lãi cao nhất đã quan sát. Ví dụ đỉnh +10% PNL, giữ 70% là sàn +7% PNL, trước phí.')
-        self.normal_retention_until_pct, self.normal_retention_until_enabled = self._dynamic_field(retention_box, 'TỚI MFE (% PNL)', self.params.normal_retention_until_pct, self.params.normal_retention_until_enabled, 'Đỉnh PNL tối đa còn nâng mốc giữ lãi; OFF tiếp tục nâng tới trước ARM.')
+        self.normal_retention_pct, self.normal_retention_enabled = self._dynamic_field(retention_box, 'GIỮ (% LÃI)', self.params.normal_retention_pct, self.params.normal_retention_enabled, 'Giữ phần trăm lãi đỉnh trước phí. Long giá vốn 2.000, đỉnh 2.020: giữ 70% của khoảng lãi 20 là mốc 2.014. Đây là % phần lãi, không phải % giá vốn.')
+        self.normal_retention_until_pct, self.normal_retention_until_enabled = self._dynamic_field(retention_box, 'TỚI MFE (% GIÁ)', self.params.normal_retention_until_pct, self.params.normal_retention_until_enabled, 'Mức giá đi thuận lợi tối đa (% giá vốn) còn nâng mốc giữ lãi; OFF tiếp tục nâng tới trước ARM.')
         sale = ctk.CTkFrame(dynamic_groups, fg_color='#20252C', corner_radius=7)
         sale.grid(row=2, column=0, sticky='ew', pady=(5, 0))
         sale._viking_compact=compact

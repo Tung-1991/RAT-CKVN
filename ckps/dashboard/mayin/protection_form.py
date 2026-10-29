@@ -5,7 +5,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import ExitSettings, Quote, load_record
-from ckps.rules.pnl import pnl_rules, reference_margin
+from ckps.rules.distances import price_percent_rules, reference_margin
 from .forms import OriginalRuleForms
 
 
@@ -20,13 +20,13 @@ class ProtectionFormMixin(OriginalRuleForms):
 
     def _init_protection(self, parent, values):
         self._migration_error=''
-        self._converted_legacy=values.get('distance_unit','POINTS')!='PNL_PERCENT'
+        self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT'
         try:
-            entry,margin=self._pnl_reference()
-            values=pnl_rules(values,entry,margin)
+            entry,margin=self._price_reference()
+            values=price_percent_rules(values,entry,margin)
         except ValueError as exc:
             self._migration_error=str(exc)
-            values={**values,'distance_unit':'PNL_PERCENT'}
+            values={**values,'distance_unit':'PRICE_PERCENT'}
         exits = load_record(ExitSettings, values)
         self.values = exits
         values = {}
@@ -57,7 +57,7 @@ class ProtectionFormMixin(OriginalRuleForms):
                 entry.configure(placeholder_text='CHỜ')
             self.set_protection_enabled(parent,False)
 
-    def _pnl_reference(self):
+    def _price_reference(self):
         position=next((row for row in self.app.view.get('positions',[]) if row['id']==getattr(self,'position_id',None)),None)
         if position:return position['entry'],position.get('margin_per_contract')
         symbol=self.app.view.get('contract','VN30F1M')
@@ -76,11 +76,11 @@ class ProtectionFormMixin(OriginalRuleForms):
             variable=tk.BooleanVar(value=getattr(exits,key))
             setattr(self,key,variable)
             ctk.CTkSwitch(row,text=label,variable=variable,width=105,font=('Segoe UI',12),progress_color=self.GREEN).pack(side='left',padx=(0,12))
-        self._hint_icon(row,'PNL% = lãi/lỗ chưa chốt trước phí ÷ ký quỹ cơ sở của phần vị thế đang giữ × 100. Ví dụ 40 triệu ký quỹ, lãi 4 triệu = +10%. SL nhập mức lỗ dương; Long/Short tính cùng cơ sở. Ký quỹ/HĐ được xác minh lúc ghi nhận vị thế và cố định; đóng bớt không đổi tỷ lệ. Vào thêm tính lại cơ sở bình quân theo khối lượng. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR vẫn dùng hệ số riêng. Cấu hình điểm/% giá cũ được quy đổi để xem và chỉ áp dụng khi LƯU.').pack(side='right',padx=3)
-        ctk.CTkLabel(row,text='% PNL',font=('Segoe UI',12,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
+        self._hint_icon(row,'Mọi khoảng SL/TP/ARM/Lùi/LẶP tính trên giá vốn bình quân của hợp đồng, không trên tiền ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5: Long tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. 2,5% là khoảng giá 50. TSL bám đỉnh Long/đáy Short với khoảng lùi quy ra từ % giá vốn. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR là hệ số riêng. Cấu hình điểm/% PNL cũ chỉ quy đổi bản nháp; LƯU mới áp dụng.').pack(side='right',padx=3)
+        ctk.CTkLabel(row,text='% GIÁ VỐN',font=('Segoe UI',12,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
 
     def _update_units(self):
-        suffix='% PNL'
+        suffix='% GIÁ'
         for entry,title in ((self.initial_sl,'SL'),(self.reentry_sl,'LẶP'),(self.take_profit,'TP'),
                 (self.normal_arm,'ARM'),(self.normal_giveback,'Lùi'),(self.normal_retention_until_pct,'Tới MFE')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')),None)
@@ -102,8 +102,9 @@ class ProtectionFormMixin(OriginalRuleForms):
         for key,name in mapping.items():
             raw=getattr(self,name).get()
             old=values[key]
-            values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(raw)
-        values['distance_unit']='PNL_PERCENT'
+            values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(str(raw).strip().removesuffix('%').replace(',','.'))
+        values['sl_distance']=abs(values['sl_distance'])
+        values['distance_unit']='PRICE_PERCENT'
         values['arm_basis']='ORIGINAL' if self.normal_sell_basis.get()=='GỐC' else 'REMAINING'
         values['dynamic_basis']='ORIGINAL' if self.dynamic_sell_basis.get()=='GỐC' else 'REMAINING'
         return asdict(load_record(ExitSettings,values).validate())

@@ -363,10 +363,14 @@ def _rule_adapter_scenario():
             account={'margin_per_contract':40_000_000,'margin_reference_price':2000})
         window.destroy()
         window=app.settings_dialog('E/M');app.update()
-        expected={**asdict(exits),'distance_unit':'PNL_PERCENT'}
+        expected={**asdict(exits),'distance_unit':'PRICE_PERCENT'}
         for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=getattr(exits,key)/4
+            expected[key]=getattr(exits,key)/2000*100
         assert window._exits()==expected
+        for signed in ('-.25','-0,25%'):
+            window.initial_sl.delete(0,'end');window.initial_sl.insert(0,signed)
+            assert window._exits()['sl_distance']==.25
+        window.initial_sl.delete(0,'end');window.initial_sl.insert(0,str(expected['sl_distance']))
         saved,sent=[],[]
         app.save_config=saved.append
         app.send=lambda *a,**kw:sent.append((a,kw))
@@ -375,6 +379,20 @@ def _rule_adapter_scenario():
         assert saved[0].paper_balance==settings.paper_balance
         assert saved[0].signals==signals.to_dict()
         assert not sent
+        # A legacy PNL policy still needs its actual margin basis, even though
+        # modern price rules can be edited and used without that basis.
+        from dataclasses import replace
+        legacy=asdict(ExitSettings(distance_unit='PNL_PERCENT',sl_enabled=True,sl_distance=2.5))
+        app.settings=replace(settings,exit=legacy)
+        app.view['account']={}
+        window.destroy();window=app.settings_dialog('E/M');app.update()
+        assert 'ký quỹ cơ sở' in window._migration_error
+        assert window.primary.cget('state')=='disabled' and app.settings.exit==legacy
+        assert window.initial_sl.get()==''
+        app.view['account']={'margin_per_contract':40_000_000,'margin_reference_price':2000}
+        window.destroy();window=app.settings_dialog('E/M');app.update()
+        assert not window._migration_error and window._exits()['sl_distance']==.5
+        assert window._exits()['distance_unit']=='PRICE_PERCENT' and app.settings.exit==legacy
     finally:
         app.close()
 
@@ -446,8 +464,8 @@ def _position_protection_scenario(scale):
             app.update()
             settle()
             assert isinstance(editor, OriginalRuleForms) and editor.scope.get() == 'VỊ THẾ'
-            expected={**original,'distance_unit':'PNL_PERCENT'}
-            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]/=4
+            expected={**original,'distance_unit':'PRICE_PERCENT'}
+            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]=expected[key]/1980*100
             assert editor._exits() == expected
             assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
@@ -466,7 +484,7 @@ def _position_protection_scenario(scale):
             assert app.settings.exit == common and not sent
             # Invalid distances stay in the editor and never reach execution.
             valid_sl = editor.initial_sl.get()
-            for invalid in ('-1', 'nan', 'inf'):
+            for invalid in ('0', 'nan', 'inf'):
                 editor.initial_sl.delete(0, 'end')
                 editor.initial_sl.insert(0, invalid)
                 editor.primary.invoke()
@@ -785,7 +803,7 @@ def _split_app_scenario(kind,scale):
             rule.initial_sl.delete(0,'end');rule.initial_sl.insert(0,'12')
             rule.save();settle()
             assert app.settings.exit['sl_distance']==12
-            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,952.0'
+            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,760.0'
             assert 'mẫu' in rule.status.cget('text')
             rule.destroy();settle()
             app.connection_button.invoke();settle()

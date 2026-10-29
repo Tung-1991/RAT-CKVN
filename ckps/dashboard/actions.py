@@ -173,13 +173,13 @@ class DashboardActionsMixin:
             text = variable.get().strip().upper()
             if not text or text in {"AUTO", "RULE"}:
                 continue
-            if values.get('distance_unit','POINTS')!='PNL_PERCENT' and text!='OFF':
-                raise ValueError('Lưu RULE sang % PNL trước khi ghi đè SL/TP trên vé.')
+            if values.get('distance_unit','POINTS')!='PRICE_PERCENT' and text!='OFF':
+                raise ValueError('Lưu RULE sang % giá trước khi ghi đè SL/TP trên vé.')
             changed = True
             if text == "OFF":
                 values[prefix + "_enabled"] = False
                 continue
-            distance = abs(float(text.removesuffix("%")))
+            distance = abs(float(text.removesuffix("%").replace(',','.')))
             if distance <= 0:
                 raise ValueError("Khoảng SL/TP phải lớn hơn 0, hoặc nhập OFF.")
             if entry <= 0:

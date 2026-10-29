@@ -138,8 +138,8 @@ class OriginalPanels:
         self.quantity = self._manual_input(form, 0, 'HĐ · AUTO', '', placeholder='AUTO', row=0)
         self.quantity.bind('<FocusOut>', lambda _event: self._update_order_preview(), add='+')
         self.price = self._manual_input(form, 1, 'GIÁ LO', '', row=0)
-        self.tp = self._manual_input(form, 0, 'TP', self._default_tp_text(), dimmed=True, row=1)
-        self.sl = self._manual_input(form, 1, 'SL', 'RULE', dimmed=True, row=1)
+        self.tp = self._manual_input(form, 0, 'TP % GIÁ', self._default_tp_text(), dimmed=True, row=1)
+        self.sl = self._manual_input(form, 1, 'SL % GIÁ', 'RULE', dimmed=True, row=1)
         entries = (self.quantity, self.price, self.tp)
         for entry in entries:
             entry.bind('<KeyRelease>', lambda _event: self._update_order_preview(), add='+')

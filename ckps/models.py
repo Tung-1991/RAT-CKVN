@@ -86,7 +86,7 @@ class ExitSettings:
     retention_until: float = 0.0
 
     def validate(self):
-        if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT"}:
+        if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
                      "atr_start_multiplier", "atr_trail_multiplier", "retention_until"):
@@ -118,7 +118,7 @@ class ExitSettings:
                 if value == 0:return 0.
                 raise ValueError('Chờ ký quỹ xác minh để tính % PNL.')
             return value * margin_per_contract / 100 / 100_000
-        return value * entry / 100 if self.distance_unit == "PERCENT" else value
+        return value * entry / 100 if self.distance_unit in {"PERCENT", "PRICE_PERCENT"} else value
 
 
 @dataclass
@@ -132,7 +132,7 @@ class Settings:
     estimated_fee_per_contract: float = 0.0
     poll_seconds: float = 2.0
     max_quote_age: float = 10.0
-    exit: dict = field(default_factory=lambda: asdict(ExitSettings(distance_unit='PNL_PERCENT')))
+    exit: dict = field(default_factory=lambda: asdict(ExitSettings(distance_unit='PRICE_PERCENT')))
     telegram_enabled: bool = False
     telegram_chat: str = ""
     signals: dict = field(default_factory=dict)

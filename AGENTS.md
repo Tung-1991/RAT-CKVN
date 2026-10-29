@@ -11,9 +11,12 @@
   tắt chỉ ngừng thông báo, vẫn phân tích.
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
-  E/M mới dùng duy nhất % PNL trước phí trên ký quỹ cơ sở/HĐ
-  được xác minh và lưu cố định cùng vị thế. Không còn chọn điểm/% giá; cấu hình cũ quy đổi
-  bản nháp rồi LƯU, thiếu cơ sở giữ nguyên và báo CHỜ. Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP.
+  E/M mới dùng duy nhất % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa
+  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5; TP mặc định OFF.
+  TSL/LẶP bám đỉnh Long/đáy Short, khoảng lùi quy ra từ cùng % giá vốn.
+  Không chọn đơn vị. Điểm/% PNL cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
+  giữ nguyên và báo CHỜ. Vị thế/lệnh đang chờ giữ E/M cũ riêng khi đổi RULE chung.
+  Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,
   Ngài tự quyết định giao dịch, không chặn mở mới theo đáo hạn.

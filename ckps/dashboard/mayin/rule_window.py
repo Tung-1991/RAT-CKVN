@@ -174,8 +174,10 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
             raise ValueError('Lưu E/M và chờ cập nhật vị thế trước khi nhận quản lý.')
 
     def _management_snapshot(self, raw):
+        policy=raw.get('exit_overrides') or self.app.settings.exit
         return deepcopy((raw['side'], raw['symbol'], raw['quantity'], raw['entry'],
-            raw.get('margin_per_contract'), raw.get('exit_overrides') or self.app.settings.exit, bool(self.app.view.get('armed'))))
+            raw.get('margin_per_contract') if policy.get('distance_unit')=='PNL_PERCENT' else None,
+            policy, bool(self.app.view.get('armed'))))
 
     def confirm_management(self):
         self.confirmation.grid_remove()

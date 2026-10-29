@@ -5,7 +5,7 @@ from math import floor, isfinite
 
 from ckps.models import Decision, ExitSettings, Position
 from ckps.rules.calculations import protect_level
-from ckps.rules.pnl import price_rules
+from ckps.rules.distances import price_rules
 
 
 def close_quantity(remaining, original, pct, basis="REMAINING"):

@@ -176,7 +176,7 @@ class MayinController(OriginalPanels):
 
     def _render_management_config(self, rules):
         """Full configuration stays in a readable panel opened from each title."""
-        unit='% PNL' if rules.distance_unit=='PNL_PERCENT' else 'điểm' if rules.distance_unit=='POINTS' else '% giá cũ'
+        unit={'PRICE_PERCENT':'% giá vốn','PNL_PERCENT':'% PNL cũ','POINTS':'điểm cũ','PERCENT':'% giá cũ'}[rules.distance_unit]
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
@@ -214,7 +214,7 @@ class MayinController(OriginalPanels):
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
         self.preview_rule_source.configure(text='RULE RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG')
         self._render_management_config(rules)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)} · PNL trước phí\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nE/M theo '+{'PRICE_PERCENT':'% giá vốn','PNL_PERCENT':'% PNL cũ','POINTS':'điểm cũ','PERCENT':'% giá cũ'}[rules.distance_unit]+f'\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

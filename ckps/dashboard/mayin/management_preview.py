@@ -8,7 +8,7 @@ from math import isfinite
 
 from ckps.models import ExitSettings, Position
 from ckps.rules.protection import close_quantity, levels, repeat_trigger
-from ckps.rules.pnl import price_rules
+from ckps.rules.distances import price_rules
 from ..formatting import price
 
 
@@ -26,7 +26,8 @@ def ticket_milestones(entry: float, rules: ExitSettings, atr_pct=None, *, margin
     """A ticket has two possible directions and no observed peak yet."""
     try:rules=price_rules(rules,entry,margin_per_contract)
     except ValueError:
-        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · CHỜ KÝ QUỸ')
+        waiting='CHỜ KÝ QUỸ' if rules.distance_unit=='PNL_PERCENT' else 'CHỜ GIÁ VỐN'
+        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · '+waiting)
             if getattr(rules,prefix+'_enabled') else BranchPreview('OFF') for prefix in ('arm','dynamic'))
     def pair(distance):
         return f"L {price(entry + distance)} / S {price(entry - distance)}"
@@ -51,14 +52,17 @@ def ticket_milestones(entry: float, rules: ExitSettings, atr_pct=None, *, margin
 def position_milestones(position: Position, rules: ExitSettings, current_price=None,
                         atr_pct=None, *, ready=True, pending=()):
     """Describe the same effective trigger used by evaluate(), including LẶP."""
-    pnl_units = rules.distance_unit=='PNL_PERCENT'
+    unit = rules.distance_unit
     try:converted=price_rules(rules,position.entry,position.margin_per_contract)
     except ValueError:
-        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · CHỜ KÝ QUỸ','Chưa xác minh cơ sở % PNL')
+        waiting='CHỜ KÝ QUỸ' if unit=='PNL_PERCENT' else 'CHỜ GIÁ VỐN'
+        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · '+waiting,'Chưa xác minh cơ sở cấu hình cũ' if unit=='PNL_PERCENT' else 'Chưa xác minh giá vốn')
             if getattr(rules,prefix+'_enabled') else BranchPreview('OFF') for prefix in ('arm','dynamic'))
     rules=converted
     def distance_text(value):
-        return f'{value*100_000/position.margin_per_contract*100:g}% PNL' if pnl_units else f'{value:g} điểm'
+        if unit=='PRICE_PERCENT':return f'{value/position.entry*100:g}% giá'
+        if unit=='PNL_PERCENT':return f'{value*100_000/position.margin_per_contract*100:g}% PNL cũ'
+        return f'{value:g} điểm cũ'
     view = levels(position, rules, _atr(atr_pct) or 0.0)
     armed = rules.arm_enabled and view["mfe_points"] + 1e-9 >= rules.points(rules.arm_gain, position.entry)
 
