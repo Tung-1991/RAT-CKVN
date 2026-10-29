@@ -1,11 +1,11 @@
 """Native MayinTien E/M controls shared by RULE and individual positions."""
 from dataclasses import asdict
-from math import isfinite
 from types import SimpleNamespace
 import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import ExitSettings, Quote, load_record
+from ckps.rules.pnl import pnl_rules, reference_margin
 from .forms import OriginalRuleForms
 
 
@@ -19,6 +19,14 @@ class ProtectionFormMixin(OriginalRuleForms):
                 ProtectionFormMixin.set_protection_enabled(widget, enabled)
 
     def _init_protection(self, parent, values):
+        self._migration_error=''
+        self._converted_legacy=values.get('distance_unit','POINTS')!='PNL_PERCENT'
+        try:
+            entry,margin=self._pnl_reference()
+            values=pnl_rules(values,entry,margin)
+        except ValueError as exc:
+            self._migration_error=str(exc)
+            values={**values,'distance_unit':'PNL_PERCENT'}
         exits = load_record(ExitSettings, values)
         self.values = exits
         values = {}
@@ -43,6 +51,21 @@ class ProtectionFormMixin(OriginalRuleForms):
         self._hint_icon(below_row, 'OFF: chỉ lặp khi mức lãi còn đạt ARM. ON: cho lặp dưới ARM nhưng vẫn phải còn lãi trước phí.').pack(side='right')
         self._execution_controls(self.exit_body,exits)
         self._update_units()
+        if self._migration_error:
+            for entry in (self.initial_sl,self.reentry_sl,self.take_profit,self.normal_arm,self.normal_giveback,self.normal_retention_until_pct):
+                entry.delete(0,'end')
+                entry.configure(placeholder_text='CHỜ')
+            self.set_protection_enabled(parent,False)
+
+    def _pnl_reference(self):
+        position=next((row for row in self.app.view.get('positions',[]) if row['id']==getattr(self,'position_id',None)),None)
+        if position:return position['entry'],position.get('margin_per_contract')
+        symbol=self.app.view.get('contract','VN30F1M')
+        quote=self.app.view.get('quotes',{}).get(symbol,{})
+        if not quote or quote.get('symbol')!=symbol or not load_record(Quote,quote).fresh(self.app.settings.max_quote_age):return None,None
+        account=self.app.view.get('account',{})
+        entry=quote.get('last')
+        return entry,reference_margin(account.get('margin_per_contract'),account.get('margin_reference_price') or entry,entry)
 
     def _execution_controls(self,body,exits):
         bar=ctk.CTkFrame(body,fg_color='transparent')
@@ -53,43 +76,11 @@ class ProtectionFormMixin(OriginalRuleForms):
             variable=tk.BooleanVar(value=getattr(exits,key))
             setattr(self,key,variable)
             ctk.CTkSwitch(row,text=label,variable=variable,width=105,font=('Segoe UI',12),progress_color=self.GREEN).pack(side='left',padx=(0,12))
-        self.price_units=tk.StringVar(value='ĐIỂM' if exits.distance_unit=='POINTS' else '% GIÁ')
-        self._current_unit=self.price_units.get()
-        ctk.CTkSegmentedButton(row,values=['ĐIỂM','% GIÁ'],variable=self.price_units,selected_color=self.BLUE,
-            font=('Segoe UI',12,'bold'),command=self._units_changed).pack(side='right')
-        ctk.CTkLabel(row,text='ĐƠN VỊ',font=('Segoe UI',11,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
-        self._hint_icon(row, 'ĐIỂM: khoảng điểm VN30. % GIÁ: phần trăm so với giá vốn. Khi đổi, app quy đổi theo giá hợp đồng đang xem; kiểm tra lại trước khi lưu.').pack(side='right',padx=3)
-
-    def _units_changed(self, selected):
-        previous=self._current_unit
-        if selected==previous:return
-        entries=(self.initial_sl,self.reentry_sl,self.take_profit,self.normal_arm,self.normal_giveback,self.normal_retention_until_pct)
-        try:
-            values=[float(entry.get()) for entry in entries]
-            if not all(isfinite(value) and value>=0 for value in values):
-                raise ValueError('Các ngưỡng phải là số hữu hạn, không âm trước khi đổi đơn vị.')
-            symbol=getattr(self,'protection_symbol',None) or self.app.view.get('contract','VN30F1M')
-            quote=self.app.view.get('quotes',{}).get(symbol,{})
-            fresh=bool(quote and quote.get('symbol')==symbol
-                       and load_record(Quote,quote).fresh(self.app.settings.max_quote_age))
-            if any(values) and not fresh:
-                raise ValueError('Cần giá hợp đồng mới để đổi đơn vị; các ngưỡng chưa thay đổi.')
-            price=float(quote.get('last',0)) if fresh else 1.0
-            factor=100/price if selected=='% GIÁ' else price/100
-            converted=[f'{value*factor:.8g}' for value in values]
-            for entry,value in zip(entries,converted):
-                entry.delete(0,'end');entry.insert(0,value)
-            self._current_unit=selected
-            self._update_units()
-            message=(f'Đã quy đổi theo giá {price:,.1f}; kiểm tra trước khi lưu.' if fresh
-                     else 'Đã đổi đơn vị; các ngưỡng đều bằng 0.')
-            self.status.configure(text=message,text_color=self.WARN)
-        except (ValueError,TypeError,OverflowError) as exc:
-            self.price_units.set(previous)
-            self.status.configure(text=str(exc),text_color='#EF4444')
+        self._hint_icon(row,'PNL% = lãi/lỗ chưa chốt trước phí ÷ ký quỹ cơ sở của phần vị thế đang giữ × 100. Ví dụ 40 triệu ký quỹ, lãi 4 triệu = +10%. SL nhập mức lỗ dương; Long/Short tính cùng cơ sở. Ký quỹ/HĐ được xác minh lúc ghi nhận vị thế và cố định; đóng bớt không đổi tỷ lệ. Vào thêm tính lại cơ sở bình quân theo khối lượng. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR vẫn dùng hệ số riêng. Cấu hình điểm/% giá cũ được quy đổi để xem và chỉ áp dụng khi LƯU.').pack(side='right',padx=3)
+        ctk.CTkLabel(row,text='% PNL',font=('Segoe UI',12,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
 
     def _update_units(self):
-        suffix='điểm' if self.price_units.get()=='ĐIỂM' else '%'
+        suffix='% PNL'
         for entry,title in ((self.initial_sl,'SL'),(self.reentry_sl,'LẶP'),(self.take_profit,'TP'),
                 (self.normal_arm,'ARM'),(self.normal_giveback,'Lùi'),(self.normal_retention_until_pct,'Tới MFE')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')),None)
@@ -97,8 +88,7 @@ class ProtectionFormMixin(OriginalRuleForms):
                 label.configure(text=f'{title} ({suffix})')
 
     def _exits(self):
-        if self.price_units.get()!=self._current_unit:
-            raise ValueError('Cần quy đổi các ngưỡng trước khi đổi đơn vị.')
+        if self._migration_error:raise ValueError(self._migration_error)
         values=asdict(self.values)
         mapping={'sl_distance':'initial_sl','tp_distance':'take_profit','repeat_gap':'reentry_sl','arm_gain':'normal_arm',
             'trail_gap':'normal_giveback','arm_close_pct':'normal_sell','arm_policy':'normal_policy','arm_repeat':'normal_repeat',
@@ -113,7 +103,7 @@ class ProtectionFormMixin(OriginalRuleForms):
             raw=getattr(self,name).get()
             old=values[key]
             values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(raw)
-        values['distance_unit']='POINTS' if self.price_units.get()=='ĐIỂM' else 'PERCENT'
+        values['distance_unit']='PNL_PERCENT'
         values['arm_basis']='ORIGINAL' if self.normal_sell_basis.get()=='GỐC' else 'REMAINING'
         values['dynamic_basis']='ORIGINAL' if self.dynamic_sell_basis.get()=='GỐC' else 'REMAINING'
         return asdict(load_record(ExitSettings,values).validate())

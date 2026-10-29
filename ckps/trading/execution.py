@@ -9,6 +9,7 @@ from ckps.trading.portfolio import capacity
 from ckps.models import FINAL, Decision, ExitSettings, Order, Position, Settings, Snapshot, direction, is_vn30, load_record, number, quantity
 from ckps.rules.protection import adverse_anchor, evaluate
 from ckps.services.calendar import block_reason as calendar_block_reason
+from ckps.rules.pnl import reference_margin, price_rules
 
 
 class Engine:
@@ -201,6 +202,9 @@ class Engine:
                 if feed:
                     feed.reset_extremes(order.symbol)
             total = position.quantity + qty
+            added_margin = reference_margin(order.margin_per_contract, order.margin_reference_price, price)
+            position.margin_per_contract = ((position.margin_per_contract or 0)*position.quantity + added_margin*qty)/total if (
+                added_margin and (not position.quantity or position.margin_per_contract)) else None
             position.entry = (position.entry * position.quantity + price * qty) / total
             position.quantity, position.original_quantity = total, position.original_quantity + qty
             if order.abandon_remainder:
@@ -289,7 +293,13 @@ class Engine:
                 raise BrokerError("DNSE trả hai chiều cùng hợp đồng; chưa thể gộp vị thế.")
             total = qty + (previous["quantity"] if previous else 0)
             entry = (row["entry"] * qty + (previous["entry"] * previous["quantity"] if previous else 0)) / total
-            actual[symbol] = {"side": side, "quantity": total, "entry": entry}
+            margin = row.get('margin_per_contract')
+            if margin is None and symbol == snapshot.contract and self.broker.mode == 'PAPER':
+                margin = reference_margin(snapshot.margin_per_contract, snapshot.margin_reference_price, row['entry'])
+            old_margin = previous.get('margin_per_contract') if previous else None
+            combined = ((old_margin or 0)*(previous['quantity'] if previous else 0) + margin*qty)/total if (
+                margin and (not previous or old_margin)) else None
+            actual[symbol] = {"side": side, "quantity": total, "entry": entry, 'margin_per_contract': combined}
         active = {p.symbol: p for p in self.store.positions()}
         ambiguous = {o.symbol for o in self.store.orders(pending=True)
                      if o.status in {"UNKNOWN", "SUBMITTING", "REPLACE_PENDING"}}
@@ -299,6 +309,9 @@ class Engine:
             match = (row and position and row["side"] == position.side and
                      row["quantity"] == position.quantity and abs(row["entry"] - position.entry) < 0.051)
             if match:
+                if not position.margin_per_contract and row.get('margin_per_contract'):
+                    position.margin_per_contract = row['margin_per_contract']
+                    self.store.save_position(position)
                 continue
             if symbol in ambiguous:
                 self.consistent = False
@@ -323,9 +336,10 @@ class Engine:
                 self.store.save_position(position)
                 position = None
             if not position:
-                position = Position.create(symbol, row["side"], row["quantity"], row["entry"])
+                position = Position.create(symbol, row["side"], row["quantity"], row["entry"], margin_per_contract=row.get('margin_per_contract'))
                 position.note = "Vị thế DNSE: cần nhận quản lý thủ công."
             else:
+                position.margin_per_contract = row.get('margin_per_contract')
                 position.quantity, position.entry = row["quantity"], row["entry"]
                 position.original_quantity = max(position.original_quantity, position.quantity)
                 position.managed, position.history_verified, position.pnl_verified = False, False, False
@@ -347,7 +361,9 @@ class Engine:
                 quote = self._quote(position.symbol)
             except BrokerError:
                 continue
-            decision = evaluate(position, quote.last, self.exits(position), self._atr(position.symbol))
+            try:decision = evaluate(position, quote.last, self.exits(position), self._atr(position.symbol))
+            except ValueError:
+                continue
             self.store.save_position(position)
             # Monitoring is independent of permission to act.
             if not allowed or not position.managed or position.id in self.suspended:
@@ -454,6 +470,7 @@ class Engine:
             o.exit_settings is not None for o in self.store.orders(pending=True)
             if o.symbol == self.latest.contract and o.action == "OPEN")
         order = Order.create(self.latest.contract, side, qty, kind=kind, price=price if kind == "LO" else 0,
+                             margin_per_contract=limit.margin_per_contract, margin_reference_price=price if kind=='LO' else quote.last,
                              exit_settings=asdict(exits) if pinned else None,
                              parent_position_id=current[0].id if current else "")
         self._send(order)
@@ -590,6 +607,7 @@ class Engine:
             quote = self._quote(position.symbol)
             if position.closed_at:
                 raise ValueError("Vị thế đã đóng.")
+            price_rules(self.exits(position),position.entry,position.margin_per_contract)
             if not position.history_verified:
                 feed = getattr(self.broker, "feed", None)
                 if feed:

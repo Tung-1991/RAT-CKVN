@@ -86,7 +86,7 @@ class ExitSettings:
     retention_until: float = 0.0
 
     def validate(self):
-        if self.distance_unit not in {"POINTS", "PERCENT"}:
+        if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
                      "atr_start_multiplier", "atr_trail_multiplier", "retention_until"):
@@ -112,7 +112,12 @@ class ExitSettings:
             raise ValueError("DYNAMIC cần ATR trail hoặc giữ lãi.")
         return self
 
-    def points(self, value, entry):
+    def points(self, value, entry, margin_per_contract=None):
+        if self.distance_unit == 'PNL_PERCENT':
+            if not margin_per_contract or not isfinite(margin_per_contract) or margin_per_contract <= 0:
+                if value == 0:return 0.
+                raise ValueError('Chờ ký quỹ xác minh để tính % PNL.')
+            return value * margin_per_contract / 100 / 100_000
         return value * entry / 100 if self.distance_unit == "PERCENT" else value
 
 
@@ -131,7 +136,7 @@ class Settings:
     estimated_fee_per_contract: float = 0.0
     poll_seconds: float = 2.0
     max_quote_age: float = 10.0
-    exit: dict = field(default_factory=lambda: asdict(ExitSettings()))
+    exit: dict = field(default_factory=lambda: asdict(ExitSettings(distance_unit='PNL_PERCENT')))
     telegram_enabled: bool = False
     telegram_chat: str = ""
     signals: dict = field(default_factory=dict)
@@ -199,6 +204,7 @@ class Position:
     fees: float = 0.0
     pnl_verified: bool = True
     note: str = ""
+    margin_per_contract: float | None = None
 
     @property
     def sign(self):
@@ -209,6 +215,11 @@ class Position:
 
     def pnl(self, price):
         return self.profit_points(price) * self.quantity * 100_000
+
+    def pnl_pct(self, price):
+        margin = self.margin_per_contract
+        if not margin or not isfinite(margin) or margin <= 0:return None
+        return self.profit_points(price) * 100_000 / margin * 100
 
     @classmethod
     def create(cls, symbol, side, qty, entry, **kwargs):
@@ -222,6 +233,8 @@ class Order:
     symbol: str
     side: Side
     quantity: int
+    margin_per_contract: float | None = None
+    margin_reference_price: float | None = None
     action: str = "OPEN"
     source: str = "MANUAL"
     kind: str = "LO"

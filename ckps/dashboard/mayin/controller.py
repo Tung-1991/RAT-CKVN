@@ -126,10 +126,11 @@ class MayinController(OriginalPanels):
             entry=float(self.limit.get()) if self.kind.get()=='LO' and self.limit.get() else quote.get('last',0)
             rules,_=self.ticket_rules(entry)
             long_capacity=self.ticket_capacity('LONG',entry,rules)
+            margin=long_capacity.margin_per_contract
             qty=quantity(self.qty.get()) if self.qty.get().strip() else long_capacity.maximum
             qty_unknown=not self.qty.get().strip() and (account.get('qmax_long') is None or account.get('margin_per_contract') is None)
-            sl=(money(-rules.points(rules.sl_distance,entry)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
-            tp=(money(rules.points(rules.tp_distance,entry)*qty*100_000) if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
+            sl=(money(-rules.points(rules.sl_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
+            tp=(money(rules.points(rules.tp_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
             package=account.get('package_fees',{})
             per_contract=package.get('open')
             if per_contract is None and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
@@ -175,11 +176,11 @@ class MayinController(OriginalPanels):
 
     def _render_management_config(self, rules):
         """Full configuration stays in a readable panel opened from each title."""
-        unit='điểm' if rules.distance_unit=='POINTS' else '%'
+        unit='% PNL' if rules.distance_unit=='PNL_PERCENT' else 'điểm' if rules.distance_unit=='POINTS' else '% giá cũ'
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
-                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M → CHUNG hoặc VỊ THẾ.'
+                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M → MẶC ĐỊNH hoặc VỊ THẾ.'
                 continue
             policy=getattr(rules,prefix+'_policy')
             basis='gốc' if getattr(rules,prefix+'_basis')=='ORIGINAL' else 'còn lại'
@@ -213,7 +214,7 @@ class MayinController(OriginalPanels):
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
         self.preview_rule_source.configure(text='RULE RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG')
         self._render_management_config(rules)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)} · PNL trước phí\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

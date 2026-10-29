@@ -161,6 +161,7 @@ def _consolidated_scenario(scale):
     def reachable(body, footer):
         canvas = body._parent_canvas
         for widget in controls(body):
+            if not widget.winfo_ismapped():continue
             offset = widget.winfo_rooty()-body.winfo_rooty()
             canvas.yview_moveto(max(0, offset-4)/body.winfo_height())
             settle()
@@ -241,6 +242,8 @@ def _consolidated_scenario(scale):
             connection.select_page(page)
             settle()
             assert size == (connection.winfo_width(), connection.winfo_height())
+        reachable(connection.notification_body, connection.footer)
+        connection.calendar_form.schedule_button.invoke();settle()
         reachable(connection.notification_body, connection.footer)
         connection.select_page('DNSE');settle()
         reachable(connection.connection_body, connection.footer)

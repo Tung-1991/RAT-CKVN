@@ -357,31 +357,25 @@ def _rule_adapter_scenario():
         window=app.settings_dialog('E/M')
         app.update()
         assert not hasattr(window,'indicator_exit_policy') and not hasattr(window,'rsi_period')
-        assert window._exits()==asdict(exits)
+        assert not hasattr(window,'price_units')
+        assert window._migration_error and window.primary.cget('state')=='disabled'
+        from ckps.models import Quote
+        app.view.update(contract='VN30F1M',quotes={'VN30F1M':asdict(Quote('VN30F1M',2000))},
+            account={'margin_per_contract':40_000_000,'margin_reference_price':2000})
+        window.destroy()
+        window=app.settings_dialog('E/M');app.update()
+        expected={**asdict(exits),'distance_unit':'PNL_PERCENT'}
+        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
+            expected[key]=getattr(exits,key)/4
+        assert window._exits()==expected
         saved,sent=[],[]
         app.save_config=saved.append
         app.send=lambda *a,**kw:sent.append((a,kw))
-        window.price_units.set('% GIÁ')
-        window._units_changed('% GIÁ')
-        assert window.price_units.get()=='ĐIỂM' and 'Cần giá' in window.status.cget('text')
-        from ckps.models import Quote
-        app.view.update(contract='VN30F1M',quotes={'VN30F1M':asdict(Quote('VN30F1M',2000))})
-        window.price_units.set('% GIÁ')
-        window._units_changed('% GIÁ')
         window.save()
-        assert len(saved)==1
-        expected={**asdict(exits),'distance_unit':'PERCENT'}
-        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=getattr(exits,key)/20
-        assert saved[0].exit==expected
+        assert len(saved)==1 and saved[0].exit==expected
         assert saved[0].capital_limit==settings.capital_limit and saved[0].max_contracts==3
-        assert saved[0].signals==signals.to_dict()  # Hidden backend settings are not overwritten by MAIN.
-        assert not sent  # Rule/indicator controls cannot submit or close a trade.
-        window.price_units.set('ĐIỂM');window._units_changed('ĐIỂM')
-        assert window._exits()==asdict(exits)
-        app.view['quotes']['VN30F1M']['at']=0
-        window.price_units.set('% GIÁ');window._units_changed('% GIÁ')
-        assert window.price_units.get()=='ĐIỂM' and window._exits()==asdict(exits)
+        assert saved[0].signals==signals.to_dict()
+        assert not sent
     finally:
         app.close()
 
@@ -443,7 +437,7 @@ def _position_protection_scenario(scale):
         # A carried contract must use its own quote, even when MAIN shows another month.
         for side in ('LONG', 'SHORT'):
             position = Position.create('VN30F2611', side, 3, 1980, history_verified=True,
-                                       exit_overrides=original)
+                                       exit_overrides=original,margin_per_contract=40_000_000)
             app.view = {'contract': 'VN30F2612', 'positions': [asdict(position)], 'orders': [],
                 'quotes': {'VN30F2611': asdict(Quote('VN30F2611', 2000)),
                            'VN30F2612': asdict(Quote('VN30F2612', 2400))}}
@@ -453,7 +447,10 @@ def _position_protection_scenario(scale):
             app.update()
             settle()
             assert isinstance(editor, OriginalRuleForms) and editor.scope.get() == 'VỊ THẾ'
-            assert editor._exits() == original
+            expected={**original,'distance_unit':'PNL_PERCENT'}
+            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]/=4
+            assert editor._exits() == expected
+            assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
             assert editor.dynamic_settings_card.winfo_ismapped() and editor.below_arm_switch.winfo_ismapped()
             canvas = editor.exit_body._parent_canvas
@@ -467,13 +464,6 @@ def _position_protection_scenario(scale):
                 assert widget.winfo_rooty()+widget.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()+2
                 assert widget.winfo_rooty()+widget.winfo_height() <= editor.footer.winfo_rooty()
             canvas.yview_moveto(0)
-            app.view['quotes']['VN30F2611'] = asdict(Quote('VN30F2611', 2000))
-            editor.price_units.set('% GIÁ')
-            editor._units_changed('% GIÁ')
-            expected = {**original, 'distance_unit': 'PERCENT'}
-            for key in ('sl_distance', 'tp_distance', 'repeat_gap', 'arm_gain', 'trail_gap', 'retention_until'):
-                expected[key] /= 20
-            assert editor._exits() == expected
             assert app.settings.exit == common and not sent
             # Invalid distances stay in the editor and never reach execution.
             valid_sl = editor.initial_sl.get()
@@ -482,17 +472,13 @@ def _position_protection_scenario(scale):
                 editor.initial_sl.insert(0, invalid)
                 editor.primary.invoke()
                 assert not sent and editor.scope.get() == 'VỊ THẾ'
-                editor.price_units.set('ĐIỂM')
-                editor._units_changed('ĐIỂM')
-                assert editor.price_units.get() == '% GIÁ' and editor.initial_sl.get() == invalid
+                assert editor.initial_sl.get() == invalid
             editor.initial_sl.delete(0, 'end')
             editor.initial_sl.insert(0, valid_sl)
             # Old, absent or mismatched quotes cannot reinterpret the saved thresholds.
             for quote in ({}, asdict(Quote('VN30F2611', 2000, at=0)), asdict(Quote('VN30F2612', 2400))):
                 app.view['quotes']['VN30F2611'] = quote
-                editor.price_units.set('ĐIỂM')
-                editor._units_changed('ĐIỂM')
-                assert editor.price_units.get() == '% GIÁ' and editor._exits() == expected
+                assert editor._exits() == expected
             settle()
             assert editor.primary.winfo_rootx()+editor.primary.winfo_width() <= editor.winfo_rootx()+editor.winfo_width()
             editor.primary.invoke()
@@ -800,7 +786,7 @@ def _split_app_scenario(kind,scale):
             rule.initial_sl.delete(0,'end');rule.initial_sl.insert(0,'12')
             rule.save();settle()
             assert app.settings.exit['sl_distance']==12
-            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,988.0'
+            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,952.0'
             assert 'mẫu' in rule.status.cget('text')
             rule.destroy();settle()
             app.connection_button.invoke();settle()
@@ -811,9 +797,9 @@ def _split_app_scenario(kind,scale):
             connection.variables['capital.max_contracts'].set('3')
             connection.save_connection();assert app.settings.max_contracts==3
             assert app.settings.exit['sl_distance']==12
-            connection.variables['capital.risk_limit'].set('-1')
-            connection.save_connection();assert app.settings.risk_limit==0
-            connection.variables['capital.risk_limit'].set('0')
+            connection.variables['capital.risk_nav_pct'].set('-1')
+            connection.save_connection();assert app.settings.risk_nav_pct==0
+            connection.variables['capital.risk_nav_pct'].set('0')
             connection.select_page('TELEGRAM / LỊCH');settle()
             connection.primary.invoke()
             connection.backend_button.invoke()

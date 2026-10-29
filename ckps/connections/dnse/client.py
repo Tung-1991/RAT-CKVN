@@ -194,6 +194,11 @@ class DNSEBroker:
                 rate /= 100
             if 0 < rate < 1:
                 margin = px * 100_000 * rate
+        for position in positions:
+            matching = next((item for item in self.packages if str(item.get('id'))==position['loan_package_id']),None)
+            rate = amount(matching.get('initialRate')) if matching else None
+            if position['symbol']==contract and rate is not None and 0<rate<1:
+                position['margin_per_contract'] = position['entry'] * 100_000 * rate
         funds = balances(derivative)
         stock = balance.get("stock") if isinstance(balance, dict) else None
         total_money = amount(stock.get("totalCash")) if isinstance(stock, dict) else None

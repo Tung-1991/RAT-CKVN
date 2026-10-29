@@ -33,9 +33,12 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
         scope.grid(row=0, column=0, sticky='ew', padx=8, pady=4)
         scope.grid_columnconfigure(1, weight=1)
         self.scope = tk.StringVar(value='CHUNG')
-        self.scope_selector = ctk.CTkSegmentedButton(scope, values=['CHUNG', 'VỊ THẾ'], variable=self.scope,
-            font=('Segoe UI', 12, 'bold'), height=28, selected_color=self.BLUE, command=self.select_scope)
+        self.scope_display=tk.StringVar(value='MẶC ĐỊNH')
+        self.scope_selector = ctk.CTkSegmentedButton(scope, values=['MẶC ĐỊNH', 'VỊ THẾ'], variable=self.scope_display,
+            font=('Segoe UI', 12, 'bold'), height=28, selected_color=self.BLUE,
+            command=lambda value:self.select_scope('CHUNG' if value=='MẶC ĐỊNH' else 'VỊ THẾ'))
         self.scope_selector.grid(row=0, column=0, sticky='w')
+        self._hint_icon(scope,'MẶC ĐỊNH là bộ E/M chung cho các vị thế kế thừa. VỊ THẾ chỉnh riêng dòng đang chọn; có thể dùng lại mặc định hoặc nhận/bỏ quyền quản lý tại đây. TÍN HIỆU chỉ cấu hình phân tích, không tự vào lệnh.').grid(row=0,column=3,padx=5)
         self.scope_note = ctk.CTkLabel(scope, text='', font=('Segoe UI', 12), anchor='w', width=1)
         self.scope_note.grid(row=0, column=1, sticky='ew', padx=10)
         self.inherit_exit = tk.BooleanVar(value=False)
@@ -101,6 +104,7 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
             self.position_id = raw['id'] if raw else None
             self.protection_symbol = raw['symbol'] if raw else None
             self.scope.set(scope)
+            self.scope_display.set('VỊ THẾ' if raw else 'MẶC ĐỊNH')
             self.inherit_exit.set(bool(raw and raw.get('exit_overrides') is None))
             self._inherit_displayed = self.inherit_exit.get()
             self._custom_protection = deepcopy((raw.get('exit_overrides') or self.app.settings.exit) if raw else self.app.settings.exit)
@@ -108,13 +112,14 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
                 child.destroy()
             self._init_protection(self.protection_host,
                 (raw.get('exit_overrides') or self.app.settings.exit) if raw else self.app.settings.exit)
-            self.scope_note.configure(text=f"{raw['side']} · {raw['symbol']} · {raw['quantity']} HĐ" if raw else 'Áp dụng cho vị thế dùng RULE chung')
+            self.scope_note.configure(text=f"{raw['side']} · {raw['symbol']} · {raw['quantity']} HĐ" if raw else '')
             self.inherit_switch.grid() if raw else self.inherit_switch.grid_remove()
             self._inherit_changed()
             self.confirmation.grid_remove()
             self._page_changed()
         except ValueError as exc:
             self.scope.set('VỊ THẾ' if self.position_id else 'CHUNG')
+            self.scope_display.set('VỊ THẾ' if self.position_id else 'MẶC ĐỊNH')
             self.status.configure(text=str(exc), text_color='#EF4444')
 
     def _inherit_changed(self):
@@ -130,13 +135,16 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
                 child.destroy()
             self._init_protection(self.protection_host, values)
             self._inherit_displayed = inherited
-        self.set_protection_enabled(self.protection_host, not (self.position_id and self.inherit_exit.get()))
+        self.set_protection_enabled(self.protection_host, not self._migration_error and not (self.position_id and self.inherit_exit.get()))
+        if hasattr(self,'primary'):self._page_changed()
 
     def _page_changed(self):
         if not hasattr(self, 'primary'):
             return
         signal = self.tabs.get() == 'TÍN HIỆU'
-        self.primary.configure(text='LƯU TÍN HIỆU' if signal else 'LƯU E/M RIÊNG' if self.position_id else 'LƯU E/M CHUNG')
+        self.status.configure(text='' if signal else self._migration_error,text_color='#EF4444' if self._migration_error else self.TEXT)
+        self.primary.configure(state='normal' if signal or not self._migration_error else 'disabled')
+        self.primary.configure(text='LƯU TÍN HIỆU' if signal else 'LƯU VỊ THẾ' if self.position_id else 'LƯU MẶC ĐỊNH')
         self.manage_button.grid_remove()
         if not signal and self.position_id:
             try:
@@ -146,7 +154,6 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
             except ValueError:
                 pass
         self.confirmation.grid_remove()
-        self.status.configure(text='Chỉ phân tích / thông báo · Không tự vào lệnh' if signal else 'AUTO: tự đóng · ALERT: chỉ LOG trong app', text_color=self.TEXT)
 
     def request_management(self):
         try:
@@ -168,7 +175,7 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
 
     def _management_snapshot(self, raw):
         return deepcopy((raw['side'], raw['symbol'], raw['quantity'], raw['entry'],
-            raw.get('exit_overrides') or self.app.settings.exit, bool(self.app.view.get('armed'))))
+            raw.get('margin_per_contract'), raw.get('exit_overrides') or self.app.settings.exit, bool(self.app.view.get('armed'))))
 
     def confirm_management(self):
         self.confirmation.grid_remove()

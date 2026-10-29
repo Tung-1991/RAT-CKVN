@@ -32,7 +32,6 @@ class ConnectionFields(OriginalRuleForms):
                'connection.loan':'Gói ký quỹ DNSE. Nếu chỉ có một gói, app tự chọn.',
                'capital.capital_limit':'0: không đặt trần riêng; sức mở vẫn do DNSE xác nhận.',
                'capital.max_contracts':'0: không giới hạn HĐ riêng. Tính cả vị thế và lệnh đang chờ.',
-               'capital.risk_limit':'Trần rủi ro giá tới SL bằng tiền; 0 là không đặt riêng.',
                'capital.risk_nav_pct':'Trần rủi ro theo NAV phái sinh; thiếu NAV không tự tính.',
                'capital.estimated_fee_per_contract':'Phí ước tính cho một HĐ mỗi chiều; 0 hiện chờ phí.'}
         hint=hints.get(key,'')
@@ -125,7 +124,8 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             value=getattr(self.app,'connection_profile',self.app.credentials).get(key,'') or os.environ.get('CKPS_DNSE_API_'+key.upper(),'')
             self.form.field(api,'connection.'+key,label,value,secret=True,width=350)
         self.remember=tk.BooleanVar(value=getattr(self.app,'remember_connection',False))
-        ctk.CTkCheckBox(api,text='Ghi nhớ trên máy · Windows mã hóa',variable=self.remember,
+        self.form._hint_icon(api._viking_header,'Một cặp API dùng chung cho PAPER/REAL, dữ liệu và tín hiệu. Ghi nhớ sẽ mã hóa key/secret và phiên OTP còn hạn bằng Windows theo người dùng; bỏ ghi nhớ rồi LƯU để xóa.').pack(side='left',padx=5)
+        ctk.CTkCheckBox(api,text='Ghi nhớ kết nối',variable=self.remember,
             font=('Segoe UI',12),checkbox_width=16,checkbox_height=16).pack(fill='x',padx=10,pady=(4,8))
         self._build_account_preview(page)
         self.otp_card=self.form.card(page,'XÁC THỰC GIAO DỊCH REAL')
@@ -143,8 +143,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.otp_status=ctk.CTkLabel(self.otp_card,text='',font=('Segoe UI',12),text_color=WARN,
             anchor='w',justify='left',wraplength=315)
         self.otp_status.pack(fill='x',padx=10,pady=3)
-        ctk.CTkLabel(self.otp_card,text='Ghi nhớ phiên xác thực; không lưu mã OTP.',
-            font=('Segoe UI',11),text_color=MUTED,anchor='w').pack(fill='x',padx=10)
+        self.form._hint_icon(self.otp_card._viking_header,'PAPER không cần OTP. REAL chọn EMAIL để nhận mã qua email hoặc SMART lấy mã từ app DNSE. Chỉ lưu phiên xác thực khi bật Ghi nhớ kết nối, không lưu mã OTP dùng một lần.').pack(side='left',padx=5)
         buttons=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         buttons.pack(fill='x',padx=9,pady=4)
         self.otp_buttons=[ctk.CTkButton(buttons,text='GỬI EMAIL',width=120,height=30,command=self.send_otp),
@@ -155,9 +154,9 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         page.grid_columnconfigure((0,1),weight=1,uniform='capital')
         limits=self.form.card(page,'GIỚI HẠN TỰ ĐẶT',1)
         limits.grid_configure(row=1,column=1)
-        self.capital_keys=('capital_limit','max_contracts','risk_limit','risk_nav_pct')
+        self.capital_keys=('capital_limit','max_contracts','risk_nav_pct')
         for key,label in (('capital_limit','Trần ký quỹ (đ)'),('max_contracts','Tổng HĐ tối đa'),
-                ('risk_limit','Lỗ tới SL (đ)'),('risk_nav_pct','Lỗ / NAV (%)')):
+                ('risk_nav_pct','Rủi ro (% NAV)')):
             self.form.field(limits,'capital.'+key,label,getattr(self.app.settings,key),width=100)
         self._capital_cards=(limits,)
         self.paper_card=self.form.card(page,'TIỀN ẢO PAPER')
@@ -182,7 +181,8 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.backend_button=ctk.CTkButton(card._viking_header,text='CHẠY',width=100,height=26,
             font=('Segoe UI',12,'bold'),command=self.toggle_backend)
         self.backend_button.pack(side='right')
-        self.backend_state=ctk.CTkLabel(card,text='Chưa chạy · Dùng chung API DNSE ở tab DNSE / VỐN',font=('Segoe UI',12),text_color=MUTED,anchor='w')
+        self.form._hint_icon(card._viking_header,'Backend dùng API DNSE đã nhập ở DNSE / VỐN để phân tích riêng; không có quyền giao dịch. Telegram cần Bot token/Chat ID riêng. Tắt từng nhóm chỉ dừng thông báo, phân tích vẫn chạy.').pack(side='left',padx=5)
+        self.backend_state=ctk.CTkLabel(card,text='CHƯA CHẠY',font=('Segoe UI',12),text_color=MUTED,anchor='w')
         self.backend_state.pack(fill='x',padx=10,pady=(2,4))
         from .calendar_form import CalendarForm
         self.calendar_form=CalendarForm(self.notification_body,settings=getattr(self.app,'_demo_calendar',None),notice_toggle=False)
@@ -239,8 +239,15 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
     def capital_values(self):
-        return {key:quantity(self.variables['capital.'+key].get()) if key=='max_contracts'
+        values={key:quantity(self.variables['capital.'+key].get()) if key=='max_contracts'
             else float(self.variables['capital.'+key].get().replace(',','').strip()) for key in self.capital_keys}
+        if self.app.settings.risk_limit:
+            nav=self.app.view.get('account',{}).get('nav')
+            if not nav or nav<=0:raise ValueError('Cần NAV xác minh để quy đổi trần lỗ cũ sang % NAV.')
+            legacy=self.app.settings.risk_limit/nav*100
+            values['risk_nav_pct']=min(values['risk_nav_pct'],legacy) if values['risk_nav_pct'] else legacy
+            values['risk_limit']=0.
+        return values
 
     def remember_values(self, credentials):
         if getattr(self.app,'preview_only',False):
@@ -262,6 +269,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             credentials=self.api_credentials()
             self.remember_values(credentials)
             self.app.save_config(settings)
+            self.variables['capital.risk_nav_pct'].set(str(settings.risk_nav_pct))
             self.app.connection_profile=credentials
             if self.remember.get():self.app.send('remember_session')
             self.note.configure(text='Đã áp dụng vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
@@ -344,8 +352,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         page,mode=self.tabs.get(),self.variables['connection.mode'].get()
         self.primary.configure(text='KẾT NỐI DNSE' if page=='DNSE / VỐN' else 'LƯU THAY ĐỔI')
         self.save_button.grid() if page=='DNSE / VỐN' else self.save_button.grid_remove()
-        text='Mẫu: rà cấu hình DNSE/API; không kết nối thật.' if getattr(self.app,'preview_only',False) else ('PAPER chỉ đọc dữ liệu DNSE.' if mode=='PAPER' else 'Kết nối trước, xác thực OTP sau.')
-        if page=='TELEGRAM / LỊCH':text='Đáo hạn chỉ nhắc · EMA/RSI chỉnh tại RULE.'
+        text='MẪU OFFLINE' if getattr(self.app,'preview_only',False) else ''
         self.note.configure(text=text,text_color=MUTED)
     def connect(self):
         try:
@@ -365,6 +372,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
                 **self.capital_values(),
                 account_no=values['account'] if values['mode']=='REAL' else self.app.settings.account_no,
                 loan_package_id=values['loan'] if values['mode']=='REAL' else self.app.settings.loan_package_id).validate()
+            self.variables['capital.risk_nav_pct'].set(str(settings.risk_nav_pct))
             self.remember_values(credentials)
             session=getattr(self.app,'signal_session',None)
             signal_credentials=getattr(self.app,'signal_credentials',{})

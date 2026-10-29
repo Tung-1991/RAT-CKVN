@@ -76,8 +76,10 @@ class DashboardTablesMixin:
             roots.add(p.id)
             self.running_rows[p.id] = ("positions", raw)
             rule=load_record(ExitSettings,p.exit_overrides or self.settings.exit)
-            sl=price(p.entry-p.sign*rule.points(rule.sl_distance,p.entry)) if rule.sl_enabled else "OFF"
-            tp=price(p.entry+p.sign*rule.points(rule.tp_distance,p.entry)) if rule.tp_enabled else "OFF"
+            try:
+                sl=price(p.entry-p.sign*rule.points(rule.sl_distance,p.entry,p.margin_per_contract)) if rule.sl_enabled else 'OFF'
+                tp=price(p.entry+p.sign*rule.points(rule.tp_distance,p.entry,p.margin_per_contract)) if rule.tp_enabled else 'OFF'
+            except ValueError:sl=tp='CHỜ KÝ QUỸ'
             management,tone=preview_state(self.view,self.settings.max_quote_age,p,rule,
                 changing_book=bool(self.mode_requested or self.switch_pending))[1]
             tree.cell(p.id,"#0",detail='')

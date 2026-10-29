@@ -158,8 +158,8 @@ def test_ticket_preview_inherits_existing_ckps_em_before_applying_override():
     class Value:
         def __init__(self, value): self.value = value
         def get(self): return self.value
-    settings = SimpleNamespace(alias='VN30F1M', exit=asdict(ExitSettings(sl_enabled=True, sl_distance=1)))
-    wide = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    settings = SimpleNamespace(alias='VN30F1M', exit=asdict(ExitSettings(distance_unit='PNL_PERCENT',sl_enabled=True, sl_distance=1)))
+    wide = asdict(ExitSettings(distance_unit='PNL_PERCENT',sl_enabled=True, sl_distance=10))
     app = SimpleNamespace(settings=settings, ticket_sl=Value('RULE'), ticket_tp=Value('RULE'),
         view={'contract':'VN30F1M', 'positions':[{'symbol':'VN30F1M','exit_overrides':wide}]})
     rules, override = DashboardActionsMixin.ticket_rules(app, 2000)

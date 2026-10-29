@@ -8,8 +8,8 @@ from .window import App
 
 
 def demo_rules():
-    return ExitSettings(sl_enabled=True,sl_distance=10,tp_enabled=True,tp_distance=40,
-        arm_enabled=True,arm_gain=20,trail_gap=5,arm_close_pct=50,arm_repeat=True,repeat_gap=5,
+    return ExitSettings(distance_unit='PNL_PERCENT',sl_enabled=True,sl_distance=2.5,tp_enabled=True,tp_distance=10,
+        arm_enabled=True,arm_gain=5,trail_gap=1.25,arm_close_pct=50,arm_repeat=True,repeat_gap=1.25,
         dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,dynamic_repeat=True,
         atr_start_multiplier=.5,atr_trail_multiplier=.8,retention_pct=70,retention_until_enabled=False)
 
@@ -17,7 +17,7 @@ def demo_rules():
 def long_sample(stage):
     if stage not in {'DYNAMIC','LẶP','TSL / ARM'}:raise ValueError('Mốc mẫu không hợp lệ.')
     rules=demo_rules()
-    position=Position.create('VN30F1M','LONG',2,2000,managed=True,history_verified=True)
+    position=Position.create('VN30F1M','LONG',2,2000,managed=True,history_verified=True,margin_per_contract=40_000_000)
     position.id='DEMO-LONG'
     evaluate(position,2012,rules,1.)
     current=2010.
@@ -47,7 +47,7 @@ class DemoApp(App):
             'positions':[asdict(position)],'orders':[],'history':[],
             'account':{'nav':100_000_000+position.realized+position.pnl(current),'total_money':100_000_000,'collateral_total':100_000_000,
                 'qmax_long':1,'qmax_short':1,'used_margin':40_000_000,'pending_margin':0,'remaining_margin':50_000_000,
-                'margin_per_contract':40_000_000},'events':[],'LONG':{'maximum':0},'SHORT':{'maximum':0}}
+                'margin_per_contract':40_000_000,'margin_reference_price':2000},'events':[],'LONG':{'maximum':0},'SHORT':{'maximum':0}}
         self.render()
         self.positions_tree.selection_set(position.id)
         self._refresh_ticket_preview()

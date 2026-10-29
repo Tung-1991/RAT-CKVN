@@ -5,6 +5,7 @@ from math import floor, isfinite
 
 from ckps.models import Decision, ExitSettings, Position
 from ckps.rules.calculations import protect_level
+from ckps.rules.pnl import price_rules
 
 
 def close_quantity(remaining, original, pct, basis="REMAINING"):
@@ -22,6 +23,7 @@ def adverse_anchor(sign, *prices):
 
 def repeat_trigger(position: Position, settings: ExitSettings, stage, level):
     """Read-only effective hit price, shared by execution and E/M Preview."""
+    settings = price_rules(settings, position.entry, position.margin_per_contract)
     prefix = "arm" if stage == "ARM" else "dynamic"
     policy = getattr(settings, prefix + "_policy")
     state = position.metrics.get(stage + ":" + policy, {})
@@ -47,6 +49,7 @@ def levels(position: Position, settings: ExitSettings, atr_pct=0.0):
     not its reflected coordinate. Point distances remain constant on both sides.
     """
     entry, sign = position.entry, position.sign
+    settings = price_rules(settings, entry, position.margin_per_contract)
     best = position.best or entry
     mfe = max(0.0, sign * (best - entry))
     mirror_peak = entry + mfe
@@ -82,6 +85,7 @@ def levels(position: Position, settings: ExitSettings, atr_pct=0.0):
 
 def observe_repeat(position: Position, price: float, settings: ExitSettings):
     """Only new post-completion prices can establish the next ARM round."""
+    settings = price_rules(settings, position.entry, position.margin_per_contract)
     for policy in ("AUTO", "ALERT"):
         state = position.metrics.get("ARM:" + policy, {})
         anchor = state.get("anchor", 0.0)
@@ -97,6 +101,7 @@ def observe_repeat(position: Position, price: float, settings: ExitSettings):
 def evaluate(position: Position, price: float, settings: ExitSettings, atr_pct=0.0):
     if price <= 0 or position.entry <= 0 or position.quantity <= 0:
         return None
+    settings = price_rules(settings, position.entry, position.margin_per_contract)
     sign = position.sign
     position.best = max(position.best or position.entry, price) if sign > 0 else min(position.best or position.entry, price)
     position.worst = min(position.worst or position.entry, price) if sign > 0 else max(position.worst or position.entry, price)
