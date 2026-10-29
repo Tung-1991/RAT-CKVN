@@ -10,7 +10,7 @@ from ckps.rules.protection import close_quantity, evaluate, levels
 @pytest.mark.parametrize("side,stop,hit", [("LONG", 1990, 1989), ("SHORT", 2010, 2011)])
 def test_stop_loss_symmetric(side, stop, hit):
     p = Position.create("VN30F1M", side, 3, 2000, history_verified=True)
-    rule = ExitSettings(sl_enabled=True, sl_distance=10)
+    rule = ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10)
     assert levels(p, rule)["sl"] == stop
     decision = evaluate(p, hit, rule)
     assert (decision.reason, decision.quantity) == ("SL", 3)
@@ -19,14 +19,14 @@ def test_stop_loss_symmetric(side, stop, hit):
 @pytest.mark.parametrize("side,target", [("LONG", 2020), ("SHORT", 1980)])
 def test_take_profit_symmetric(side, target):
     p = Position.create("VN30F1M", side, 2, 2000, history_verified=True)
-    rule = ExitSettings(tp_enabled=True, tp_distance=20)
+    rule = ExitSettings(distance_unit='POINTS', tp_enabled=True, tp_distance=20)
     assert evaluate(p, target, rule).reason == "TP"
 
 
 @pytest.mark.parametrize("side,best,hit,expected", [("LONG", 2020, 2015, 2015), ("SHORT", 1980, 1985, 1985)])
 def test_point_trailing_and_monotonic_floor(side, best, hit, expected):
     p = Position.create("VN30F1M", side, 3, 2000, history_verified=True)
-    rule = ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5)
     assert evaluate(p, best, rule) is None
     assert p.floor == pytest.approx(expected)
     decision = evaluate(p, hit, rule)
@@ -58,7 +58,7 @@ def test_short_percent_trail_uses_entry_cost():
 @pytest.mark.parametrize("side,best,loss", [("LONG", 2020, 1990), ("SHORT", 1980, 2010)])
 def test_protect_never_closes_at_price_loss(side, best, loss):
     p = Position.create("VN30F1M", side, 2, 2000, history_verified=True)
-    rule = ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5)
     evaluate(p, best, rule)
     assert evaluate(p, loss, rule) is None
 
@@ -66,7 +66,7 @@ def test_protect_never_closes_at_price_loss(side, best, loss):
 @pytest.mark.parametrize("side,best,hit,second", [("LONG", 2020, 2015, 2010), ("SHORT", 1980, 1985, 1990)])
 def test_repeat_requires_full_adverse_step(side, best, hit, second):
     p = Position.create("VN30F1M", side, 5, 2000, history_verified=True)
-    rule = ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
     evaluate(p, best, rule)
     assert evaluate(p, hit, rule)
     p.metrics["ARM:AUTO"] = {"count": 1, "anchor": hit}
@@ -82,14 +82,14 @@ def test_integer_contract_fraction(qty, pct, basis, expected):
 
 def test_dynamic_no_atr_does_not_invent_start():
     p = Position.create("VN30F1M", "LONG", 1, 2000, history_verified=True)
-    rule = ExitSettings(dynamic_enabled=True)
+    rule = ExitSettings(distance_unit='POINTS', dynamic_enabled=True)
     evaluate(p, 2020, rule, 0)
     assert p.floor == 0
 
 
 def test_dynamic_retention_without_atr_start_is_supported():
     p = Position.create("VN30F1M", "LONG", 1, 2000, history_verified=True)
-    rule = ExitSettings(dynamic_enabled=True, atr_start_enabled=False,
+    rule = ExitSettings(distance_unit='POINTS', dynamic_enabled=True, atr_start_enabled=False,
                         atr_trail_enabled=False, retention_until_enabled=False)
     evaluate(p, 2020, rule)
     assert p.floor == pytest.approx(2014.4)
@@ -98,7 +98,7 @@ def test_dynamic_retention_without_atr_start_is_supported():
 
 def test_unverified_history_disables_trailing_but_not_sl():
     p = Position.create("VN30F1M", "LONG", 1, 2000)
-    rule = ExitSettings(sl_enabled=True, sl_distance=10, arm_enabled=True, arm_gain=10, trail_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10, arm_enabled=True, arm_gain=10, trail_gap=5)
     evaluate(p, 2020, rule)
     assert evaluate(p, 2015, rule) is None
     assert evaluate(p, 1990, rule).reason == "SL"
@@ -108,7 +108,7 @@ def test_unverified_history_disables_trailing_but_not_sl():
 @pytest.mark.parametrize("anchor", [0, float("nan"), float("inf")])
 def test_repeat_without_finite_anchor_never_unblocks(side, best, hit, anchor):
     p = Position.create("VN30F1M", side, 3, 2000, history_verified=True)
-    rule = ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
     evaluate(p, best, rule)
     p.metrics["ARM:AUTO"] = {"count": 1, "anchor": anchor}
     assert evaluate(p, hit, rule) is None

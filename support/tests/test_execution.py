@@ -31,7 +31,7 @@ def test_manual_round_trip_and_no_automatic_entry(system, side, exit_price):
 @pytest.mark.parametrize("side,hit", [("LONG", 1980), ("SHORT", 2020)])
 def test_bot_off_preserves_manual_open_and_blocks_automatic_stop(system, side, hit):
     engine, broker, store = system
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10))
     engine.open_manual(side, 1, "MOK")
     engine.poll()
     broker.set_price(hit)
@@ -198,7 +198,7 @@ def test_repeat_keeps_gap_and_handoff_anchor_through_rebound_partial_fills_and_r
     from ckps.rules.protection import evaluate
     engine, broker, store = system
     engine.settings.paper_margin_rate = .05
-    engine.settings.exit = asdict(ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5,
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5,
         arm_repeat=True, arm_repeat_below_arm=True, repeat_gap=5, arm_close_pct=50))
     engine.open_manual(side, 6, "MOK")
     engine.poll()

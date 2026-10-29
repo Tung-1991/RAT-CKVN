@@ -23,7 +23,7 @@ def test_bad_broker_money_is_unknown_and_stock_is_never_used():
 def test_ticket_price_changes_margin_and_caps():
     snapshot = Snapshot('VN30F1M', [], [], {}, 80_000_000, 20_000_000, 40_000_000, 2, 2,
                         pending_margin=0, margin_reference_price=2000)
-    result = capacity(Settings(), snapshot, [], [], 'SHORT', 2100, ExitSettings())
+    result = capacity(Settings(), snapshot, [], [], 'SHORT', 2100, ExitSettings(distance_unit='POINTS'))
     assert result.maximum == 1 and result.margin_per_contract == 42_000_000
 
 
@@ -70,7 +70,7 @@ def test_filled_must_have_evidence_for_all_contracts(system):
 @pytest.mark.parametrize('side,limit,stop', [('LONG', 1990, 1995), ('SHORT', 2010, 2005)])
 def test_full_exit_cancels_pending_additions(system, side, limit, stop):
     engine, broker, store = system
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=5))
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=5))
     pending = engine.open_manual(side, 1, 'LO', price=limit)
     engine.open_manual(side, 1, 'MOK')
     engine.arm(True)
@@ -107,7 +107,7 @@ def test_repeat_uses_new_round_and_arm_guard(side, sign):
     p = Position.create('VN30F1M', side, 4, 2000, history_verified=True)
     p.best = 2000 + sign * 100
     p.metrics['ARM:AUTO'] = {'count': 1, 'anchor': 2000 + sign * 40}
-    rules = ExitSettings(arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rules = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
     evaluate(p, 2000 + sign * 60, rules)
     assert repeat_trigger(p, rules, 'ARM', levels(p, rules)['protect']) == 2000 + sign * 55
     assert evaluate(p, 2000 + sign * 55, rules).reason == 'ARM'
@@ -170,7 +170,7 @@ def test_confirm_rejects_changed_risk_before_queue():
     class Value:
         def __init__(self, value): self.value = value
         def get(self): return self.value
-    rule = ExitSettings(sl_enabled=True, sl_distance=10)
+    rule = ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10)
     captured, sent = [], []
     app = SimpleNamespace(mode_requested=None, switch_pending=None, qty=Value('1'), limit=Value('2000'),
         kind=Value('LO'), ticket_sl=Value('RULE'), ticket_tp=Value('RULE'),

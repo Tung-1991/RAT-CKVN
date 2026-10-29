@@ -52,17 +52,13 @@ def ticket_milestones(entry: float, rules: ExitSettings, atr_pct=None, *, margin
 def position_milestones(position: Position, rules: ExitSettings, current_price=None,
                         atr_pct=None, *, ready=True, pending=()):
     """Describe the same effective trigger used by evaluate(), including LẶP."""
-    unit = rules.distance_unit
     try:converted=price_rules(rules,position.entry,position.margin_per_contract)
     except ValueError:
-        waiting='CHỜ KÝ QUỸ' if unit=='PNL_PERCENT' else 'CHỜ GIÁ VỐN'
-        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · '+waiting,'Chưa xác minh cơ sở cấu hình cũ' if unit=='PNL_PERCENT' else 'Chưa xác minh giá vốn')
+        return tuple(BranchPreview(getattr(rules,prefix+'_policy')+' · CHỜ DỮ LIỆU','Chưa đủ dữ liệu quy đổi sang % giá vốn')
             if getattr(rules,prefix+'_enabled') else BranchPreview('OFF') for prefix in ('arm','dynamic'))
     rules=converted
     def distance_text(value):
-        if unit=='PRICE_PERCENT':return f'{value/position.entry*100:g}% giá'
-        if unit=='PNL_PERCENT':return f'{value*100_000/position.margin_per_contract*100:g}% PNL cũ'
-        return f'{value:g} điểm cũ'
+        return f'{value/position.entry*100:g}% giá'
     view = levels(position, rules, _atr(atr_pct) or 0.0)
     armed = rules.arm_enabled and view["mfe_points"] + 1e-9 >= rules.points(rules.arm_gain, position.entry)
 

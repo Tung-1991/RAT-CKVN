@@ -130,7 +130,7 @@ def test_real_capacity_uses_api_fee_for_sl_estimate_without_limiting_broker_powe
     from ckps.trading.portfolio import capacity
     engine,broker,store=system
     settings=replace(engine.settings,mode='REAL',estimated_fee_per_contract=900_000)
-    rules=ExitSettings(sl_enabled=True,sl_distance=10)
+    rules=ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10)
     snapshot=replace(engine.latest,package_fees=package_fees(PACKAGE))
     result=capacity(settings,snapshot,[],[],'LONG',2000,rules)
     assert result.risk_per_contract==1_004_000 and result.maximum==2

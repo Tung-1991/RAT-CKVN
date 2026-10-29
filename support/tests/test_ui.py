@@ -164,7 +164,7 @@ def _layout_scenario(scale):
         from dataclasses import asdict
         from ckps.models import ExitSettings, Position, Quote
         from ckps.rules.protection import evaluate
-        rules=ExitSettings(arm_enabled=True,arm_gain=20,trail_gap=5,arm_repeat=True,repeat_gap=5,
+        rules=ExitSettings(distance_unit='POINTS', arm_enabled=True,arm_gain=20,trail_gap=5,arm_repeat=True,repeat_gap=5,
             dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,dynamic_repeat=True,
             atr_start_multiplier=.5,retention_pct=70,retention_until_enabled=False)
         position=Position.create('VN30F1M','LONG',2,2000,history_verified=True,exit_overrides=asdict(rules))
@@ -335,7 +335,7 @@ def _rule_adapter_scenario():
     from dataclasses import asdict
     from ckps.models import Settings, ExitSettings
     from ckps.rules.signal_settings import SignalSettings
-    exits=ExitSettings(sl_enabled=True,sl_distance=8.5,tp_enabled=True,tp_distance=19,
+    exits=ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=8.5,tp_enabled=True,tp_distance=19,
         arm_enabled=True,arm_gain=12,trail_gap=4,arm_policy='ALERT',arm_close_pct=33,
         arm_basis='ORIGINAL',arm_repeat=True,repeat_gap=2.5,dynamic_enabled=True,
         dynamic_policy='AUTO',dynamic_close_pct=67,dynamic_basis='ORIGINAL',dynamic_repeat=True,
@@ -444,7 +444,7 @@ def _position_protection_scenario(scale):
                 yield from controls(child)
     try:
         settle(500)
-        original = asdict(ExitSettings(sl_enabled=True, sl_distance=12, tp_enabled=True, tp_distance=42,
+        original = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=12, tp_enabled=True, tp_distance=42,
             arm_enabled=True, arm_gain=20, trail_gap=5, arm_policy='ALERT', arm_close_pct=33,
             arm_basis='ORIGINAL', arm_repeat=True, repeat_gap=4, arm_repeat_below_arm=True,
             dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=67,
@@ -551,7 +551,7 @@ def test_read_only_em_milestones_follow_dynamic_arm_repeat_and_missing_data():
     from ckps.dashboard.mayin.management_preview import position_milestones, ticket_milestones
     from ckps.models import ExitSettings, Position
     from ckps.rules.protection import evaluate
-    rules=ExitSettings(arm_enabled=True,arm_gain=20,trail_gap=5,repeat_gap=5,
+    rules=ExitSettings(distance_unit='POINTS', arm_enabled=True,arm_gain=20,trail_gap=5,repeat_gap=5,
         arm_close_pct=50,dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,
         dynamic_repeat=True,atr_start_multiplier=.5,retention_pct=70,retention_until_enabled=False)
     draft_arm,draft_dyn=ticket_milestones(2000,rules,1)
@@ -597,7 +597,7 @@ def _table_review_scenario(interactive=False):
     from ckps.models import ExitSettings, Order, Position, Quote, Settings
     from ckps.rules.protection import evaluate
     ctk.set_appearance_mode('Dark')
-    rules=ExitSettings(sl_enabled=True,sl_distance=10,tp_enabled=True,tp_distance=40,
+    rules=ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10,tp_enabled=True,tp_distance=40,
         arm_enabled=True,arm_gain=20,trail_gap=5,arm_close_pct=33,arm_repeat=True,repeat_gap=5,
         dynamic_enabled=True,dynamic_close_pct=50,atr_start_multiplier=.5,
         retention_pct=70,retention_until_enabled=False)

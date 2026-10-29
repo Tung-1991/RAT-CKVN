@@ -36,6 +36,6 @@ def price_percent_rules(values, entry=None, margin=None):
         if not reference_margin(entry,entry,entry):
             raise ValueError('Cần giá vốn/giá hợp đồng xác minh để quy đổi cấu hình cũ sang % giá.')
         if rules.distance_unit=='PNL_PERCENT' and not reference_margin(margin,entry,entry):
-            raise ValueError('Cần ký quỹ cơ sở đã lưu để quy đổi % PNL cũ sang % giá; giữ nguyên cấu hình cũ.')
+            raise ValueError('Cần ký quỹ cơ sở đã lưu để quy đổi cấu hình cũ sang % giá vốn; giữ nguyên các mốc đang chạy.')
         converted[key] = rules.points(value,entry,margin) / entry * 100
     return asdict(replace(rules, distance_unit='PRICE_PERCENT', **converted))

@@ -35,7 +35,7 @@ def test_phase_exclusions_can_be_disabled_without_changing_date_rules(hour,minut
 @pytest.mark.parametrize('side,bad_price',[('LONG',1990),('SHORT',2010)])
 def test_calendar_blocks_new_exposure_but_preserves_automatic_sl_and_manual_close(system,side,bad_price):
     engine,broker,store=system
-    engine.settings.exit=replace(ExitSettings(),sl_enabled=True,sl_distance=10).__dict__
+    engine.settings.exit=replace(ExitSettings(distance_unit='POINTS'),sl_enabled=True,sl_distance=10).__dict__
     engine.open_manual(side,2,'MOK')
     position=store.positions()[0]
     calendar.write_settings(CalendarSettings(manual_closed_dates=['2026-10-27']))

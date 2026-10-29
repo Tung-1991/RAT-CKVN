@@ -76,7 +76,7 @@ class ProtectionFormMixin(OriginalRuleForms):
             variable=tk.BooleanVar(value=getattr(exits,key))
             setattr(self,key,variable)
             ctk.CTkSwitch(row,text=label,variable=variable,width=105,font=('Segoe UI',12),progress_color=self.GREEN).pack(side='left',padx=(0,12))
-        self._hint_icon(row,'Mọi khoảng SL/TP/ARM/Lùi/LẶP tính trên giá vốn bình quân của hợp đồng, không trên tiền ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5: Long tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. 2,5% là khoảng giá 50. TSL bám đỉnh Long/đáy Short với khoảng lùi quy ra từ % giá vốn. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR là hệ số riêng. Cấu hình điểm/% PNL cũ chỉ quy đổi bản nháp; LƯU mới áp dụng.').pack(side='right',padx=3)
+        self._hint_icon(row,'Mọi khoảng SL/TP/ARM/Lùi/LẶP tính trên giá vốn bình quân của hợp đồng. Giá vốn 2.000, SL 0,25% là khoảng giá 5: Long tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. 2,5% là khoảng giá 50. TSL bám đỉnh Long/đáy Short với khoảng lùi quy ra từ % giá vốn. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR là hệ số riêng. Cấu hình đã lưu được quy đổi để xem theo cùng đơn vị; LƯU mới áp dụng.').pack(side='right',padx=3)
         ctk.CTkLabel(row,text='% GIÁ VỐN',font=('Segoe UI',12,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
 
     def _update_units(self):

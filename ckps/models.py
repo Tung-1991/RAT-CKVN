@@ -51,7 +51,12 @@ def is_vn30(symbol):
 
 def load_record(cls, raw):
     allowed = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in raw.items() if k in allowed})
+    values = {k: v for k, v in raw.items() if k in allowed}
+    # Untagged saved rules predate price-percent input. Only the decoder keeps
+    # their point semantics; every newly constructed rule uses price percent.
+    if cls is ExitSettings and 'distance_unit' not in values:
+        values['distance_unit'] = 'POINTS'
+    return cls(**values)
 
 
 @dataclass
@@ -61,7 +66,7 @@ class ExitSettings:
     sl_distance: float = 0.0
     tp_enabled: bool = False
     tp_distance: float = 0.0
-    distance_unit: str = "POINTS"
+    distance_unit: str = "PRICE_PERCENT"
     arm_enabled: bool = False
     arm_gain: float = 0.0
     trail_gap: float = 0.0
@@ -132,7 +137,7 @@ class Settings:
     estimated_fee_per_contract: float = 0.0
     poll_seconds: float = 2.0
     max_quote_age: float = 10.0
-    exit: dict = field(default_factory=lambda: asdict(ExitSettings(distance_unit='PRICE_PERCENT')))
+    exit: dict = field(default_factory=lambda: asdict(ExitSettings()))
     telegram_enabled: bool = False
     telegram_chat: str = ""
     signals: dict = field(default_factory=dict)

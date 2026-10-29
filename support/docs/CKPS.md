@@ -24,6 +24,8 @@ Giữ lãi (%) vẫn là phần trăm lãi đỉnh; tỷ lệ đóng (%) vẫn t
 
 Không có nút chọn đơn vị. POINTS/PERCENT/PNL_PERCENT cũ vẫn được backend đọc đúng đơn vị cũ cho đến khi lưu chuyển đổi. RULE dựng bản nháp PRICE_PERCENT: cấu hình điểm cần giá vốn/giá hợp đồng xác minh; % PNL cần thêm ký quỹ cơ sở cũ đúng vị thế. Thiếu cơ sở thì CHỜ và khóa lưu, không đổi nhãn hoặc thay số bằng 0. Không có quy đổi ngầm khi mở app. Khi khởi động bằng RULE cũ, các vị thế/lệnh mở đang chờ kế thừa được giữ E/M cũ riêng để đổi RULE mặc định không thay giá bảo vệ của chúng; muốn chuyển vị thế thì LƯU tại VỊ THẾ. Ngưỡng, sàn bảo vệ và trạng thái LẶP đã ghi nhận vẫn giữ nguyên khi chuyển đổi tương đương.
 
+Đơn vị của dữ liệu cũ chỉ là tương thích nội bộ. RULE tạo mới luôn mặc định % giá vốn; bản ghi cũ thiếu nhãn đơn vị vẫn được đọc theo nghĩa cũ để không làm đổi giá SL/TP. Preview, khoảng cách tới mốc và hint cấu hình đều trình bày bằng % giá vốn, không hiện thêm lựa chọn hoặc nhãn mode PNL/điểm. Thiếu dữ liệu quy đổi thì hiện CHỜ DỮ LIỆU; việc trình bày không sửa vị thế, sàn bảo vệ hoặc lượt LẶP.
+
 SL này do app theo dõi và gửi, không phải SL đã xác nhận tại DNSE. BOT OFF, app ngừng, OTP hết hạn hoặc dữ liệu lỗi có thể làm app không gửi đóng. Chưa tích hợp API SL tại broker; chưa nghiệm thu REAL. Nến REAL tải trên worker riêng, không chặn worker xử lý E/M.
 
 ## Giao diện

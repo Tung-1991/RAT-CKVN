@@ -3,11 +3,13 @@
 Presentation lives in panels.py. This module never submits an order implicitly.
 """
 from datetime import datetime
+from dataclasses import asdict
 import time
 import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import FINAL, ExitSettings, Position, Quote, load_record, quantity
+from ckps.rules.distances import price_percent_rules
 from ..formatting import money, price, clock
 from .panels import OriginalPanels, INFO_PANEL_HEIGHT
 from .management_preview import position_milestones
@@ -174,9 +176,15 @@ class MayinController(OriginalPanels):
             detail.configure(text=milestone.detail)
             value.configure(text_color=COL_MUTED if milestone.value=='OFF' else COL_TEXT)
 
-    def _render_management_config(self, rules):
+    def _render_management_config(self, rules, entry=None, margin=None):
         """Full configuration stays in a readable panel opened from each title."""
-        unit={'PRICE_PERCENT':'% giá vốn','PNL_PERCENT':'% PNL cũ','POINTS':'điểm cũ','PERCENT':'% giá cũ'}[rules.distance_unit]
+        try:
+            rules=load_record(ExitSettings,price_percent_rules(asdict(rules),entry,margin))
+        except ValueError:
+            for prefix in ('arm','dynamic'):
+                self._preview_help[prefix]='Chờ dữ liệu xác minh để hiển thị % giá vốn. Các mốc đang chạy được giữ nguyên.'
+            return
+        unit='% giá vốn'
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
@@ -213,8 +221,8 @@ class MayinController(OriginalPanels):
         self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ')
         source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
         self.preview_rule_source.configure(text='RULE RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG')
-        self._render_management_config(rules)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nE/M theo '+{'PRICE_PERCENT':'% giá vốn','PNL_PERCENT':'% PNL cũ','POINTS':'điểm cũ','PERCENT':'% giá cũ'}[rules.distance_unit]+f'\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._render_management_config(rules,position.entry,position.margin_per_contract)
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nĐơn vị hiển thị: % giá vốn\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

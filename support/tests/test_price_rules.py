@@ -5,13 +5,47 @@ from types import SimpleNamespace
 
 import pytest
 
-from ckps.models import ExitSettings, Order, Position, Settings
+from ckps.models import ExitSettings, Order, Position, Settings, load_record
 from ckps.rules.distances import price_percent_rules, price_rules
 from ckps.rules.protection import evaluate, levels, repeat_trigger
 
 
 def rules(**values):
     return ExitSettings(distance_unit='PRICE_PERCENT', **values)
+
+
+def test_new_rules_have_one_price_percent_default_and_old_untagged_data_keeps_its_prices():
+    modern=ExitSettings(sl_enabled=True,sl_distance=.25)
+    assert modern.distance_unit=='PRICE_PERCENT'
+    position=Position.create('VN30F1M','LONG',1,2000)
+    assert levels(position,modern)['sl']==1995
+    old=load_record(ExitSettings,{'sl_enabled':True,'sl_distance':10})
+    assert levels(position,old)['sl']==1990
+    converted=price_percent_rules(asdict(old),2000)
+    assert converted['sl_distance']==.5 and converted['distance_unit']==modern.distance_unit
+    assert Settings().exit['distance_unit']==modern.distance_unit
+
+
+@pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
+def test_preview_only_shows_price_percent_even_for_old_rules_without_mutating_them(side,sign):
+    from ckps.dashboard.mayin.management_preview import position_milestones
+    from ckps.dashboard.mayin.controller import MayinController
+    old=ExitSettings(distance_unit='PNL_PERCENT',arm_enabled=True,arm_gain=5,trail_gap=1.25,
+        arm_repeat=True,repeat_gap=1.25,dynamic_enabled=True,dynamic_repeat=True)
+    position=Position.create('VN30F1M',side,2,2000,margin_per_contract=40_000_000,history_verified=True)
+    before=deepcopy((asdict(position),asdict(old)))
+    modern=load_record(ExitSettings,price_percent_rules(asdict(old),position.entry,position.margin_per_contract))
+    old_preview=position_milestones(position,old,2000+sign*10,1)
+    assert old_preview==position_milestones(position,modern,2000+sign*10,1)
+    assert '% giá' in old_preview[0].detail
+    help_view=SimpleNamespace(_preview_help={})
+    MayinController._render_management_config(help_view,old,position.entry,position.margin_per_contract)
+    assert 'ARM 1 % giá vốn' in help_view._preview_help['arm']
+    assert 'Lùi 0.25 % giá vốn' in help_view._preview_help['arm']
+    assert 'PNL' not in str(help_view._preview_help)
+    assert (asdict(position),asdict(old))==before
+    MayinController._render_management_config(help_view,old,position.entry,None)
+    assert 'Chờ dữ liệu' in help_view._preview_help['arm'] and 'PNL' not in str(help_view._preview_help)
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])

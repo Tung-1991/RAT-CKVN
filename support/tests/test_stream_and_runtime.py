@@ -135,7 +135,7 @@ def test_slow_paper_market_history_does_not_block_sl_or_local_fills(system):
     market=PaperMarket(client)
     try:
         assert entered.wait(2)
-        engine.settings.exit=asdict(ExitSettings(sl_enabled=True,sl_distance=10))
+        engine.settings.exit=asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10))
         live=Engine(store,PaperBroker(store,engine.settings,market=market),engine.settings)
         started=time.monotonic()
         live.open_manual('LONG',1,'MOK');live.poll();live.arm(True)

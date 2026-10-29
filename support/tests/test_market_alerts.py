@@ -189,7 +189,7 @@ def test_slow_telegram_does_not_delay_automatic_sl(monkeypatch):
         return SimpleNamespace(ok=True,json=lambda:{'ok':True})
     monkeypatch.setattr('ckps.services.signal_notifications.requests.post',blocked_send)
     settings = Settings(telegram_enabled=True,telegram_chat='offline-chat',
-        exit=asdict(ExitSettings(sl_enabled=True,sl_distance=10)))
+        exit=asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10)))
     runtime = Runtime(settings,offline=True)
     signals_runtime=SignalRuntime(settings)
     try:

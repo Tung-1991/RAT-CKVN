@@ -14,6 +14,8 @@
   E/M mới dùng duy nhất % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa
   ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5; TP mặc định OFF.
   TSL/LẶP bám đỉnh Long/đáy Short, khoảng lùi quy ra từ cùng % giá vốn.
+  RULE tạo mới trong code cũng mặc định PRICE_PERCENT. Preview/hint chỉ hiện
+  % giá vốn; đơn vị dữ liệu cũ chỉ xử lý nội bộ, không trình bày thành mode.
   Không chọn đơn vị. Điểm/% PNL cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
   giữ nguyên và báo CHỜ. Vị thế/lệnh đang chờ giữ E/M cũ riêng khi đổi RULE chung.
   Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.

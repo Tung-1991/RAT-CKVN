@@ -95,7 +95,7 @@ def test_accepted_pending_margin_is_not_subtracted_twice(system):
 
 def test_sl_loss_is_an_estimate_and_does_not_add_a_second_opening_limit(system):
     engine, broker, store = system
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=1000))
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=1000))
     engine.open_manual("LONG", 1, "MOK")
     engine.poll()
     assert engine.preview("LONG").risk_per_contract == 100_000_000
@@ -122,7 +122,7 @@ def test_broker_power_reserves_only_unaccepted_open_remainders(side,expected):
     closing=Order.create('VN30F1M',side,4,action='CLOSE')
     filled=Order.create('VN30F1M',side,5,status='FILLED',filled=5)
     positions=[Position.create('VN30F1M',side,7,2000,managed=False)]
-    result=capacity(Settings(),snapshot,positions,[local,accepted,closing,filled],side,2000,ExitSettings())
+    result=capacity(Settings(),snapshot,positions,[local,accepted,closing,filled],side,2000,ExitSettings(distance_unit='POINTS'))
     assert result.maximum==expected and result.available_budget==120_000_000
     assert result.risk_per_contract is None  # No SL is required for a manual entry.
 
@@ -133,7 +133,7 @@ def test_broker_power_reserves_only_unaccepted_open_remainders(side,expected):
 def test_missing_broker_buying_power_or_margin_never_becomes_one_contract(side,qmax_long,qmax_short,margin):
     from ckps.trading.portfolio import capacity
     snapshot=Snapshot('VN30F1M',[],[],{},100_000_000,0,margin,qmax_long,qmax_short)
-    result=capacity(Settings(),snapshot,[],[],side,2000,ExitSettings())
+    result=capacity(Settings(),snapshot,[],[],side,2000,ExitSettings(distance_unit='POINTS'))
     assert result.maximum==0 and result.reason
 
 
@@ -157,8 +157,8 @@ def test_manual_submit_refreshes_broker_power_before_creating_an_order(system,mo
 @pytest.mark.parametrize("pending", [False, True])
 def test_scale_in_uses_existing_sl_estimate_and_rejects_conflicting_ticket(system, side, pending):
     engine, broker, store = system
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=1))
-    wide = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=1))
+    wide = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10))
     engine.open_manual(side, 1, "LO" if pending else "MOK", price=1990 if side == "LONG" else 2010,
                        exit_settings=wide)
     engine.poll()
@@ -176,12 +176,12 @@ def test_scale_in_uses_existing_sl_estimate_and_rejects_conflicting_ticket(syste
 @pytest.mark.parametrize("side", ["LONG", "SHORT"])
 def test_scale_in_inherits_pinned_policy_and_keeps_pending_risk_on_rule_change(system, side):
     engine, broker, store = system
-    wide = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    wide = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10))
     engine.open_manual(side, 1, "MOK", exit_settings=wide)
     engine.poll()
     order = engine.open_manual(side, 1, "LO", price=1990 if side == "LONG" else 2010)
     assert order.exit_settings == wide
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=1))
+    engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=1))
     assert engine.preview(side).risk_per_contract == 1_000_000
     engine.cancel(order.id)
     engine.poll()

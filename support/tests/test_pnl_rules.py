@@ -43,7 +43,7 @@ def test_pnl_trail_repeat_and_dynamic_share_the_same_fixed_margin_basis(side,sig
 
 
 def test_old_points_and_price_percent_are_converted_explicitly_without_mutating_source():
-    old=ExitSettings(sl_enabled=True,sl_distance=10,tp_distance=40,arm_gain=20,trail_gap=5,repeat_gap=5)
+    old=ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10,tp_distance=40,arm_gain=20,trail_gap=5,repeat_gap=5)
     before=asdict(old)
     converted=price_percent_rules(before,2000)
     assert converted['distance_unit']=='PRICE_PERCENT' and converted['sl_distance']==.5
@@ -172,7 +172,7 @@ def test_manual_ticket_cannot_reinterpret_legacy_units_as_price_percent():
     class Value:
         def __init__(self,value):self.value=value
         def get(self):return self.value
-    app=SimpleNamespace(settings=Settings(exit=asdict(ExitSettings(sl_enabled=True,sl_distance=10))),
+    app=SimpleNamespace(settings=Settings(exit=asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10))),
         ticket_sl=Value('5%'),ticket_tp=Value('RULE'),view={'contract':'VN30F1M'})
     with pytest.raises(ValueError,match='% giá'):DashboardActionsMixin.ticket_rules(app,2000)
     app.settings.exit=price_percent_rules(app.settings.exit,2000)
