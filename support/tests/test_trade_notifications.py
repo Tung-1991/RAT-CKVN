@@ -14,7 +14,7 @@ from ckps.services.signal_process import snapshot_status
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
-@pytest.mark.parametrize('reason,label', [('SL', 'SL'), ('TP', 'TP'), ('ARM', 'TSL / ARM'), ('DYN', 'DYNAMIC')])
+@pytest.mark.parametrize('reason,label', [('SL', 'SL'), ('ARM', 'TSL / ARM'), ('DYN', 'DYNAMIC')])
 def test_actual_automatic_closes_reach_the_existing_trade_group(system, monkeypatch, side, sign, reason, label):
     engine, broker, store = system
     engine.settings.exit = asdict(ExitSettings(sl_enabled=reason == 'SL', sl_distance=.5,

@@ -41,7 +41,7 @@ class DashboardActionsMixin:
             if qty == 0:
                 raise ValueError("Khối lượng phải lớn hơn 0.")
             entry = px or self.view.get("quotes", {}).get(self.view.get("contract", "VN30F1M"), {}).get("last", 0)
-            rules, overrides = self.ticket_rules(entry)
+            rules, _ = self.ticket_rules(entry)
             limit = self.ticket_capacity(side, entry, rules)
             qty = limit.maximum if qty is None else qty
             if not 0 < qty <= limit.maximum:
@@ -69,7 +69,7 @@ class DashboardActionsMixin:
             self.order_busy = True
             for button in self.open_buttons:
                 button.configure(state="disabled")
-            self.send("open_manual", side, qty, kind, px, exit_settings=overrides)
+            self.send("open_manual", side, qty, kind, px)
         from .formatting import money
         margin = money(limit.margin_per_contract * qty) if limit.margin_per_contract else 'chờ xác minh'
         loss = money(limit.risk_per_contract * qty) if limit.risk_per_contract is not None else 'chờ phí DNSE' if rules.sl_enabled else 'chưa có SL'
@@ -78,7 +78,7 @@ class DashboardActionsMixin:
                      + (' · Phí gói DNSE; thuế/phí Sở chờ đối chiếu' if self.settings.mode=='REAL' else ' · Phí mô phỏng'), submit)
 
     def manage_position(self):
-        return self.settings_dialog('E/M', scope='VỊ THẾ')
+        return self.settings_dialog('E/M')
 
     def cancel_order(self):
         raw = self.selected(self.orders_tree, "orders")
@@ -90,7 +90,7 @@ class DashboardActionsMixin:
         from .history import HistoryWindow
         return self.popup("history", lambda: HistoryWindow(self))
 
-    def settings_dialog(self,page="RULE", *, scope=None):
+    def settings_dialog(self,page="RULE"):
         if page in {"KẾT NỐI","Kết nối","Hệ thống"}:
             window=self.connection()
             window.select_page("DNSE")
@@ -98,8 +98,7 @@ class DashboardActionsMixin:
         from .mayin.rule_window import RuleWindow
         window=self.popup("rule",lambda:RuleWindow(self,page))
         window.select(page)
-        if scope:
-            window.select_scope(scope)
+        window.refresh_selection()
         return window
 
     def connection(self,requested_mode=None):
@@ -160,34 +159,8 @@ class DashboardActionsMixin:
         self.send("settings", asdict(settings))
 
     def ticket_rules(self, entry):
-        """Preview and submit share the same per-ticket SL/TP interpretation."""
-        contract = self.view.get("contract", self.settings.alias)
-        position = next((p for p in self.view.get("positions", []) if p["symbol"] == contract), None)
-        pending = next((o for o in self.view.get("orders", []) if o["symbol"] == contract
-                        and o["action"] == "OPEN" and o["status"] not in FINAL), None)
-        inherited = (position.get("exit_overrides") or self.settings.exit) if position else (
-            (pending or {}).get("exit_settings") or self.settings.exit)
-        values = dict(inherited)
-        changed = False
-        for prefix, variable in (("sl", self.ticket_sl), ("tp", self.ticket_tp)):
-            text = variable.get().strip().upper()
-            if not text or text in {"AUTO", "RULE"}:
-                continue
-            if values.get('distance_unit','POINTS')!='PRICE_PERCENT' and text!='OFF':
-                raise ValueError('Lưu RULE sang % giá trước khi ghi đè SL/TP trên vé.')
-            changed = True
-            if text == "OFF":
-                values[prefix + "_enabled"] = False
-                continue
-            distance = abs(float(text.removesuffix("%").replace(',','.')))
-            if distance <= 0:
-                raise ValueError("Khoảng SL/TP phải lớn hơn 0, hoặc nhập OFF.")
-            if entry <= 0:
-                raise ValueError("Chờ giá hợp lệ để tính SL/TP.")
-            values[prefix + "_enabled"] = True
-            values[prefix + "_distance"] = distance
-        rules = load_record(ExitSettings, values).validate()
-        return rules, asdict(rules) if changed else None
+        """The ticket cannot override the shared protection settings."""
+        return load_record(ExitSettings, self.settings.exit).validate(), None
 
 
     def export_history(self):

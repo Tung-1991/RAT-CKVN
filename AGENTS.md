@@ -13,12 +13,13 @@
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
   E/M mới dùng duy nhất % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa
-  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5; TP mặc định OFF.
+  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5; TP cố định OFF.
   TSL/LẶP bám đỉnh Long/đáy Short, khoảng lùi quy ra từ cùng % giá vốn.
   RULE tạo mới trong code cũng mặc định PRICE_PERCENT. Preview/hint chỉ hiện
   % giá vốn; đơn vị dữ liệu cũ chỉ xử lý nội bộ, không trình bày thành mode.
   Không chọn đơn vị. Điểm/% PNL cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
-  giữ nguyên và báo CHỜ. Vị thế/lệnh đang chờ giữ E/M cũ riêng khi đổi RULE chung.
+  giữ nguyên và báo CHỜ. Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
+  lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
   Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
   ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
@@ -38,7 +39,8 @@
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
 - Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
   cùng kích thước/DPI; ít tab, không mở cửa sổ cài đặt backend riêng. Lịch sử ở góc bảng.
-  RULE E/M chọn CHUNG / VỊ THẾ; cấu hình riêng, kế thừa và nhận/bỏ quản lý đều ở đó.
+  RULE E/M chỉ một form, nút LƯU RULE; không MẶC ĐỊNH / VỊ THẾ hoặc ô kế thừa.
+  Chọn dòng hợp đồng chỉ để nhận/bỏ quyền BOT tại RULE; không đổi bộ tham số.
   Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và Tín hiệu / Lệnh.
   Không danh mục CKCS, không tab BOT, không tooltip/legend/preview trùng lặp.
 - DNSE dùng chung một cặp API key/secret; ĐỌC API hiển thị tài khoản CKPS/gói/phí,
@@ -59,7 +61,7 @@
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
   Trạng thái bảng xét cả BOT chung và dữ liệu; bỏ nút BẢO VỆ LỆNH/NHẬN/BỎ QUẢN LÝ khỏi bảng,
-  dùng RULE → E/M → VỊ THẾ. Backend chỉ nhận tham số tín hiệu qua pipe, không nhận tài khoản/OTP.
+  chọn dòng rồi mở RULE → E/M để nhận/bỏ quyền BOT. Backend chỉ nhận tham số tín hiệu qua pipe, không nhận tài khoản/OTP.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

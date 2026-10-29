@@ -75,7 +75,7 @@ class DashboardTablesMixin:
                 "profit" if pnl and pnl > 0 else "loss" if pnl and pnl < 0 else "flat")
             roots.add(p.id)
             self.running_rows[p.id] = ("positions", raw)
-            rule=load_record(ExitSettings,p.exit_overrides or self.settings.exit)
+            rule=load_record(ExitSettings,self.settings.exit)
             try:
                 sl=price(p.entry-p.sign*rule.points(rule.sl_distance,p.entry,p.margin_per_contract)) if rule.sl_enabled else 'OFF'
                 tp=price(p.entry+p.sign*rule.points(rule.tp_distance,p.entry,p.margin_per_contract)) if rule.tp_enabled else 'OFF'

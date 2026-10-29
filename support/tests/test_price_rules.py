@@ -116,7 +116,7 @@ def test_missing_old_basis_keeps_old_policy_but_new_price_rules_need_no_margin()
 
 
 @pytest.mark.parametrize('text',['-.25','-0,25%','0.25','0,25%'])
-def test_ticket_accepts_point_or_comma_and_uses_negative_sl_as_distance(text):
+def test_ticket_text_cannot_override_shared_price_rules(text):
     from ckps.dashboard.actions import DashboardActionsMixin
     class Value:
         def __init__(self,value):self.value=value
@@ -124,8 +124,8 @@ def test_ticket_accepts_point_or_comma_and_uses_negative_sl_as_distance(text):
     app=SimpleNamespace(settings=Settings(),ticket_sl=Value(text),ticket_tp=Value('RULE'),
                         view={'contract':'VN30F1M'})
     policy,override=DashboardActionsMixin.ticket_rules(app,2000)
-    assert policy.distance_unit=='PRICE_PERCENT' and policy.sl_distance==.25
-    assert policy.points(policy.sl_distance,2000)==5 and override['sl_enabled']
+    assert policy.distance_unit=='PRICE_PERCENT' and policy.sl_distance==.5
+    assert policy.points(policy.sl_distance,2000)==10 and override is None
 
 
 def test_modern_position_can_be_adopted_and_protected_without_margin_basis(system):
@@ -144,21 +144,24 @@ def test_modern_position_can_be_adopted_and_protected_without_margin_basis(syste
     assert store.positions(closed=True)[0].realized==-500_000
 
 
-def test_legacy_inheriting_positions_and_pending_orders_keep_their_own_policy_on_restart(system):
+def test_legacy_private_policies_do_not_override_shared_rule_after_restart(system):
     from ckps.trading.execution import Engine
     engine,broker,store=system
     old=asdict(ExitSettings(distance_unit='PNL_PERCENT',sl_enabled=True,sl_distance=2.5))
     legacy_settings=replace(engine.settings,exit=old)
     positions=[Position.create('VN30F2611','LONG',1,2000,margin_per_contract=40_000_000),
                Position.create('VN30F2612','SHORT',2,2000,margin_per_contract=20_000_000)]
-    for position in positions:store.save_position(position)
-    order=Order.create('VN30F2611','LONG',1,status='WORKING',broker_id='existing')
+    for position in positions:
+        position.exit_overrides=dict(old)
+        store.save_position(position)
+    order=Order.create('VN30F2611','LONG',1,status='WORKING',broker_id='existing',exit_settings=old)
     store.save_order(order)
     restarted=Engine(store,broker,legacy_settings)
     restarted.settings=Settings(exit=asdict(rules(sl_enabled=True,sl_distance=.25)))
-    assert levels(store.position(positions[0].id),restarted.exits(store.position(positions[0].id)))['sl']==1990
+    assert levels(store.position(positions[0].id),restarted.exits(store.position(positions[0].id)))['sl']==1995
     assert levels(store.position(positions[1].id),restarted.exits(store.position(positions[1].id)))['sl']==2005
     assert store.order(order.id).exit_settings==old
+    assert all(store.position(p.id).exit_overrides==old for p in positions)  # History kept, policy ignored.
     assert not restarted.enabled.is_set() and len(store.orders())==1
 
 

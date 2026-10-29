@@ -114,7 +114,7 @@ class Runtime:
                     elif name == "refresh":
                         pass
                     else:
-                        allowed = {"arm", "open_manual", "close_position", "set_managed", "configure_position", "cancel", "replace", "bind_unknown"}
+                        allowed = {"arm", "open_manual", "close_position", "set_managed", "cancel", "replace", "bind_unknown"}
                         if name not in allowed:
                             raise ValueError("Thao tác không hỗ trợ.")
                         if name != "arm" or not args[0] or self.desired_arm:

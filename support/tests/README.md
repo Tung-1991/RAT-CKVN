@@ -6,7 +6,8 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 | File | Phạm vi |
 | --- | --- |
 | `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; bản mẫu dùng chung preset; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
-| `test_trade_notifications.py` | Biên nhận Long/Short SL/TP/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
+| `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL tác động đúng Long/Short, fill muộn dùng RULE mới, restart giữ mốc/LẶP, TP luôn OFF |
+| `test_trade_notifications.py` | Biên nhận Long/Short SL/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
 | `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; thiếu sức mở không dựng phí hoặc lỗ SL bằng 0 |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |
 | `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; mốc LẶP qua gap/hồi giá, handoff, khớp từng phần và restart |
@@ -14,12 +15,12 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 | `test_broker_contract.py` | Chuẩn DNSE, native close, kiểm tra quyền trước POST |
 | `test_stream_and_runtime.py` | Tick, ATR, restart, một kênh Telegram; PAPER giá DNSE/tiền ảo, áp dụng/lưu vốn, chặn giá thiếu/cũ/sai mã và API tài khoản/giao dịch, tải nến không chặn SL |
 | `test_signals.py` | MA200, VA/X phiên, fill/restart, nhịp phút, bộ lọc, GET-only và lịch sử tín hiệu |
-| `test_ui.py` | Hai tab Preview/Log, mốc E/M chỉ đọc, RULE và bảo vệ riêng dùng chung form/hint MayinTien; quy đổi cấu hình cũ sang % giá theo đúng giá vốn/ký quỹ cũ của vị thế, nhập SL âm/thập phân, chặn thiếu cơ sở và ngưỡng lỗi; KẾT NỐI DNSE/VỐN/Telegram/LỊCH, backend ba công tắc, Long mẫu, DPI 100–200% và khung 1080×700; cột/màu Long/Short/PnL, chọn dòng bằng chuột/phím, lịch sử và cuộn nhiều dòng |
+| `test_ui.py` | Hai tab Preview/Log, mốc E/M chỉ đọc, một form RULE chung MayinTien, không scope/kế thừa/ghi đè trên vé; TP OFF, quy đổi RULE chung cũ sang % giá từ dữ liệu đã xác minh, nhập SL âm/thập phân, chặn thiếu cơ sở/ngưỡng lỗi; DNSE/VỐN/Telegram/LỊCH, ba nhóm thông báo, DPI 100–200%, bảng/lịch sử |
 | `test_account_preview.py` | GET-only đọc tài khoản CKPS ACTIVE, chọn gói đúng tài khoản, không chọn bừa khi nhiều kết quả, chặn gói CKCS/trùng ID; phí cố định 0 khác thiếu/bậc thang; worker bỏ phản hồi cũ; REAL dùng phí API, PAPER chỉ đổi tiền mô phỏng |
-| `test_price_rules.py` | RULE tạo mới chỉ mặc định % giá vốn; Preview/hint quy đổi cùng đơn vị mà không sửa vị thế; bản ghi cũ thiếu nhãn vẫn giữ giá. SL/TP/ARM/TSL/DYNAMIC/LẶP Long/Short, 0,25% khác 2,5%, độc lập ký quỹ; nhập SL âm/dấu phẩy; đổi từ PNL giữ giá và mốc lặp; giữ policy cũ cho vị thế/lệnh đang chờ; vào thêm/giảm/restart |
+| `test_price_rules.py` | RULE mới dùng % giá vốn; Preview/hint cùng đơn vị; tương thích bản ghi cũ. Công thức Long/Short, 0,25% khác 2,5%, độc lập ký quỹ; bỏ qua policy riêng/vé cũ, đổi từ PNL giữ mốc lặp; vào thêm/giảm/restart |
 | `test_pnl_rules.py` | Tương thích cấu hình % PNL cũ trên ký quỹ cơ sở, Long/Short SL/TP/ARM/DYNAMIC/LẶP; giảm lệnh không đổi tỷ lệ, vào thêm bình quân theo fill, restart không đổi cơ sở; thiếu ký quỹ không dựng ngưỡng, đóng tay vẫn được; quy đổi E/M cũ, bỏ hạn mức tài khoản cũ khi nạp/lưu |
 | `test_connection_state.py` | DPAPI thực trên Windows, không lưu passcode, phiên ràng buộc API/tài khoản/hạn dùng; từ chối auth xóa phiên; khôi phục vẫn BOT OFF; snapshot không có secrets; cache giá chỉ xem, không tạo tín hiệu |
-| `test_settings.py` | RULE hai tab, KẾT NỐI hai tab DNSE / VỐN và TELEGRAM / LỊCH cùng kích thước, phạm vi chung/vị thế, xác nhận quyền quản lý, lưu EMA/RSI và Telegram/lịch độc lập; pipe backend không nhận tài khoản/OTP/lệnh; token ngoài argv; cổng Vào lệnh OFF vẫn theo dõi, không phát lại; DPI và mọi trường cuộn tới được |
+| `test_settings.py` | RULE hai tab, một E/M chung, KẾT NỐI hai tab cùng kích thước; xác nhận quyền BOT độc lập thông số, lưu EMA/RSI và Telegram/lịch; pipe backend không nhận tài khoản/OTP/lệnh; token ngoài argv; tắt thông báo không phát lại; DPI và trường cuộn tới được |
 | `test_app_separation.py` | Backend không có quyền giao dịch; hai app chạy cùng lúc với sổ/cấu hình riêng; chống phát lại qua restart; Long mẫu không ghi sổ |
 | `test_market_alerts.py` | MA200, biến động VN30, thông báo độc lập, chống trùng và Telegram không chặn E/M |
 | `test_semi_auto.py` | Số tiền lỗi, sức mở theo giá vé, fill mâu thuẫn, hủy lệnh mở dư, ARM/LẶP Long/Short, nhắc đáo hạn và biên nhận Telegram |

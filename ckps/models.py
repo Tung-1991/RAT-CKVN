@@ -163,6 +163,7 @@ class Settings:
             raise ValueError("Vốn/ký quỹ PAPER không hợp lệ.")
         if not 1 <= self.poll_seconds <= 60 or not 1 <= self.max_quote_age <= 120:
             raise ValueError("Chu kỳ cập nhật không hợp lệ.")
+        self.exit = {**self.exit, 'tp_enabled': False, 'tp_distance': 0.0}
         load_record(ExitSettings, self.exit).validate()
         from ckps.rules.signal_settings import SignalSettings
         self.signals = SignalSettings.from_dict(self.signals).to_dict()
@@ -202,7 +203,7 @@ class Position:
     worst: float = 0.0
     floor: float = 0.0
     metrics: dict = field(default_factory=dict)
-    exit_overrides: dict | None = None
+    exit_overrides: dict | None = None  # Legacy ledger data; execution uses only Settings.exit.
     opened_at: float = field(default_factory=time.time)
     closed_at: float = 0.0
     realized: float = 0.0
@@ -258,7 +259,7 @@ class Order:
     message: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    exit_settings: dict | None = None
+    exit_settings: dict | None = None  # Legacy receipt data, never an active per-order rule.
     replacement: dict | None = None
     protection_anchor: float = 0.0
     parent_position_id: str = ""

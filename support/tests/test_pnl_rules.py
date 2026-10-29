@@ -174,7 +174,8 @@ def test_manual_ticket_cannot_reinterpret_legacy_units_as_price_percent():
         def get(self):return self.value
     app=SimpleNamespace(settings=Settings(exit=asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True,sl_distance=10))),
         ticket_sl=Value('5%'),ticket_tp=Value('RULE'),view={'contract':'VN30F1M'})
-    with pytest.raises(ValueError,match='% giá'):DashboardActionsMixin.ticket_rules(app,2000)
+    configured,override=DashboardActionsMixin.ticket_rules(app,2000)
+    assert configured.distance_unit=='POINTS' and configured.sl_distance==10 and override is None
     app.settings.exit=price_percent_rules(app.settings.exit,2000)
     configured,_=DashboardActionsMixin.ticket_rules(app,2000)
-    assert configured.distance_unit=='PRICE_PERCENT' and configured.sl_distance==5
+    assert configured.distance_unit=='PRICE_PERCENT' and configured.sl_distance==.5

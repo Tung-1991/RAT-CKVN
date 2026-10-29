@@ -91,11 +91,6 @@ class DemoApp(App):
             self.bot_requested=self.view['armed']
             self.render()
             return
-        if name=='configure_position':
-            position=next(row for row in self.view['positions'] if row['id']==args[0])
-            position['exit_overrides']=args[1]
-            self.render()
-            return
         if name=='set_managed':
             position=next(row for row in self.view['positions'] if row['id']==args[0])
             position['managed']=bool(args[1])

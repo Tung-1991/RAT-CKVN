@@ -155,44 +155,59 @@ def test_manual_submit_refreshes_broker_power_before_creating_an_order(system,mo
 
 @pytest.mark.parametrize("side", ["LONG", "SHORT"])
 @pytest.mark.parametrize("pending", [False, True])
-def test_scale_in_uses_existing_sl_estimate_and_rejects_conflicting_ticket(system, side, pending):
+def test_scale_in_uses_shared_sl_and_rejects_private_ticket_rules(system, side, pending):
     engine, broker, store = system
     engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=1))
     wide = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10))
-    engine.open_manual(side, 1, "LO" if pending else "MOK", price=1990 if side == "LONG" else 2010,
-                       exit_settings=wide)
+    with pytest.raises(ValueError, match='RULE chung'):
+        engine.open_manual(side, 1, 'MOK', exit_settings=wide)
+    assert not store.orders()
+    order=engine.open_manual(side, 1, "LO" if pending else "MOK", price=1990 if side == "LONG" else 2010)
     engine.poll()
-    assert engine.preview(side).risk_per_contract == 1_000_000
+    if pending:
+        order.exit_settings=wide
+        store.save_order(order)
+    else:
+        position=store.positions()[0]
+        position.exit_overrides=wide
+        store.save_position(position)
+    assert engine.preview(side).risk_per_contract == 100_000
     assert engine.preview(side).maximum == 1
     before = len(store.orders())
-    with pytest.raises(ValueError, match="cùng E/M"):
+    with pytest.raises(ValueError, match="RULE chung"):
         engine.open_manual(side, 1, "MOK", exit_settings=engine.settings.exit)
     assert len(store.orders()) == before
     inherited = engine.open_manual(side, 1, "MOK")
-    assert inherited.exit_settings == wide
+    assert inherited.exit_settings is None
     assert len(store.orders()) == before + 1
 
 
 @pytest.mark.parametrize("side", ["LONG", "SHORT"])
-def test_scale_in_inherits_pinned_policy_and_keeps_pending_risk_on_rule_change(system, side):
+def test_shared_rule_change_applies_to_holding_pending_order_and_scale_in(system, side):
     engine, broker, store = system
     wide = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=10))
-    engine.open_manual(side, 1, "MOK", exit_settings=wide)
+    engine.settings.exit=wide
+    engine.open_manual(side, 1, "MOK")
     engine.poll()
     order = engine.open_manual(side, 1, "LO", price=1990 if side == "LONG" else 2010)
-    assert order.exit_settings == wide
+    assert order.exit_settings is None
+    order.exit_settings=wide
+    store.save_order(order)
+    position=store.positions()[0]
+    position.exit_overrides=wide
+    store.save_position(position)
     engine.settings.exit = asdict(ExitSettings(distance_unit='POINTS', sl_enabled=True, sl_distance=1))
-    assert engine.preview(side).risk_per_contract == 1_000_000
+    assert engine.preview(side).risk_per_contract == 100_000
     engine.cancel(order.id)
     engine.poll()
     filled = engine.open_manual(side, 1, "MOK")
     engine.poll()
     position = store.positions()[0]
-    assert filled.exit_settings == wide and position.exit_overrides == wide
+    assert filled.exit_settings is None and engine.exits(position).sl_distance == 1
     assert position.quantity == 2
 
 
-def test_ticket_preview_inherits_existing_ckps_em_before_applying_override():
+def test_ticket_preview_uses_only_shared_rules_and_ignores_old_private_values():
     from types import SimpleNamespace
     from ckps.dashboard.actions import DashboardActionsMixin
     class Value:
@@ -203,10 +218,10 @@ def test_ticket_preview_inherits_existing_ckps_em_before_applying_override():
     app = SimpleNamespace(settings=settings, ticket_sl=Value('RULE'), ticket_tp=Value('RULE'),
         view={'contract':'VN30F1M', 'positions':[{'symbol':'VN30F1M','exit_overrides':wide}]})
     rules, override = DashboardActionsMixin.ticket_rules(app, 2000)
-    assert asdict(rules) == wide and override is None
+    assert asdict(rules) == settings.exit and override is None
     app.ticket_tp = Value('20')
     rules, override = DashboardActionsMixin.ticket_rules(app, 2000)
-    assert rules.sl_distance == 10 and override['tp_distance'] == 20
+    assert rules.sl_distance == 1 and not rules.tp_enabled and override is None
     app.ticket_tp = Value('RULE')
     app.view['positions'][0]['exit_overrides'] = None
     app.view['orders'] = [{'symbol':'VN30F1M','action':'OPEN','status':'WORKING','exit_settings':wide}]

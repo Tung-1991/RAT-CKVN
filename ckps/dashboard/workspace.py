@@ -100,7 +100,7 @@ class WorkspaceMixin:
         return raw
 
     def position_exit(self):
-        return self.settings_dialog('E/M', scope='VỊ THẾ')
+        return self.settings_dialog('E/M')
 
     def close_position(self):
         raw = self.selected(self.positions_tree, "positions")

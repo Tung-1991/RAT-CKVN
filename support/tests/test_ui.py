@@ -167,10 +167,11 @@ def _layout_scenario(scale):
         from dataclasses import asdict
         from ckps.models import ExitSettings, Position, Quote
         from ckps.rules.protection import evaluate
-        rules=ExitSettings(distance_unit='POINTS', arm_enabled=True,arm_gain=20,trail_gap=5,arm_repeat=True,repeat_gap=5,
+        rules=ExitSettings(distance_unit='PRICE_PERCENT', arm_enabled=True,arm_gain=1,trail_gap=.25,arm_repeat=True,repeat_gap=.25,
             dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,dynamic_repeat=True,
             atr_start_multiplier=.5,retention_pct=70,retention_until_enabled=False)
-        position=Position.create('VN30F1M','LONG',2,2000,history_verified=True,exit_overrides=asdict(rules))
+        app.settings.exit=asdict(rules)
+        position=Position.create('VN30F1M','LONG',2,2000,history_verified=True)
         evaluate(position,2012,rules,1)
         position.metrics['DYN:AUTO']={'count':1,'anchor':2008.4}
         app.view.update(positions=[asdict(position)],orders=[],healthy=True,consistent=True,
@@ -271,25 +272,21 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         app._sync_selection()
         rule = app.position_exit()
         app.update()
-        assert app.info_panel.winfo_ismapped() and rule.scope.get() == 'VỊ THẾ'
+        assert app.info_panel.winfo_ismapped() and not hasattr(rule, 'scope_selector')
+        assert not hasattr(rule, 'inherit_switch') and rule.primary.cget('text') == 'LƯU RULE'
         def controls(widget):
             for child in widget.winfo_children():
                 if isinstance(child, (ctk.CTkEntry, ctk.CTkSwitch, ctk.CTkOptionMenu, ctk.CTkSegmentedButton)):
                     yield child
                 else:
                     yield from controls(child)
-        for widget in controls(rule.protection_host):
-            if isinstance(widget, ctk.CTkSegmentedButton):
-                assert all(child.cget('state') == 'disabled' for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
-            else:
-                assert widget.cget('state') == 'disabled'
-        rule.inherit_exit.set(False)
-        rule._inherit_changed()
+        assert rule.initial_sl.cget('state') == 'normal'
+        assert rule.take_profit.cget('state') == 'disabled'
         rule.sl_enabled.set(True)
         rule.initial_sl.delete(0, 'end')
         rule.initial_sl.insert(0, '10')
         rule.save()
-        assert sent[-1][0][0] == 'configure_position' and sent[-1][0][2]['sl_distance'] == 10
+        assert sent[-1][0][0] == 'settings' and sent[-1][0][1]['exit']['sl_distance'] == 10
         rule.destroy()
         app.update()
         app.close_position()
@@ -366,9 +363,9 @@ def _rule_adapter_scenario():
             account={'margin_per_contract':40_000_000,'margin_reference_price':2000})
         window.destroy()
         window=app.settings_dialog('E/M');app.update()
-        expected={**asdict(exits),'distance_unit':'PRICE_PERCENT'}
+        expected={**asdict(exits),'distance_unit':'PRICE_PERCENT','tp_enabled':False,'tp_distance':0.0}
         for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=getattr(exits,key)/2000*100
+            expected[key]=0.0 if key=='tp_distance' else getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
             window.initial_sl.delete(0,'end');window.initial_sl.insert(0,signed)
@@ -453,9 +450,12 @@ def _position_protection_scenario(scale):
             dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=67,
             dynamic_basis='ORIGINAL', dynamic_repeat=True, atr_start_multiplier=.6,
             atr_trail_multiplier=.9, retention_pct=81, retention_until=18))
-        common = dict(app.settings.exit)
-        # A carried contract must use its own quote, even when MAIN shows another month.
+        common = {**original, 'tp_enabled':False, 'tp_distance':0.0}
+        saved=[]
+        app.save_config=saved.append
+        # Opening RULE from either direction always edits the same global form.
         for side in ('LONG', 'SHORT'):
+            app.settings=Settings(exit=dict(common)).validate()
             position = Position.create('VN30F2611', side, 3, 1980, history_verified=True,
                                        exit_overrides=original,margin_per_contract=40_000_000)
             app.view = {'contract': 'VN30F2612', 'positions': [asdict(position)], 'orders': [],
@@ -466,9 +466,10 @@ def _position_protection_scenario(scale):
             editor = app.position_exit()
             app.update()
             settle()
-            assert isinstance(editor, OriginalRuleForms) and editor.scope.get() == 'VỊ THẾ'
-            expected={**original,'distance_unit':'PRICE_PERCENT'}
-            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]=expected[key]/1980*100
+            assert isinstance(editor, OriginalRuleForms) and not hasattr(editor,'scope_selector')
+            assert not hasattr(editor,'inherit_switch') and editor.primary.cget('text')=='LƯU RULE'
+            expected={**common,'distance_unit':'PRICE_PERCENT'}
+            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]=expected[key]/2400*100
             assert editor._exits() == expected
             assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
@@ -484,14 +485,14 @@ def _position_protection_scenario(scale):
                 assert widget.winfo_rooty()+widget.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()+2
                 assert widget.winfo_rooty()+widget.winfo_height() <= editor.footer.winfo_rooty()
             canvas.yview_moveto(0)
-            assert app.settings.exit == common and not sent
+            assert app.settings.exit == common and not sent and not saved
             # Invalid distances stay in the editor and never reach execution.
             valid_sl = editor.initial_sl.get()
             for invalid in ('0', 'nan', 'inf'):
                 editor.initial_sl.delete(0, 'end')
                 editor.initial_sl.insert(0, invalid)
                 editor.primary.invoke()
-                assert not sent and editor.scope.get() == 'VỊ THẾ'
+                assert not sent and not saved and not hasattr(editor,'scope_selector')
                 assert editor.initial_sl.get() == invalid
             editor.initial_sl.delete(0, 'end')
             editor.initial_sl.insert(0, valid_sl)
@@ -502,27 +503,22 @@ def _position_protection_scenario(scale):
             settle()
             assert editor.primary.winfo_rootx()+editor.primary.winfo_width() <= editor.winfo_rootx()+editor.winfo_width()
             editor.primary.invoke()
-            assert sent[-1] == (('configure_position', position.id, expected), {})
-            app.view['positions'][0]['exit_overrides'] = expected
+            assert saved[-1].exit == expected and not sent
+            app.settings=saved[-1]
+            # Legacy private fields cannot select a second configuration.
+            app.view['positions'][0]['exit_overrides'] = {'sl_enabled':True,'sl_distance':999}
             app.position_exit()
-            editor.inherit_exit.set(True)
-            editor._inherit_changed()
-            for widget in controls(editor.protection_host):
-                if isinstance(widget, ctk.CTkSegmentedButton):
-                    assert all(child.cget('state') == 'disabled' for child in widget.winfo_children() if isinstance(child, ctk.CTkButton))
-                else:
-                    assert widget.cget('state') == 'disabled'
-            editor.primary.invoke()
-            assert sent[-1] == (('configure_position', position.id, None), {})
-            assert app.settings.exit == common
-            sent.clear()
+            assert editor._exits() == expected and editor.initial_sl.cget('state')=='normal'
+            assert editor.take_profit.cget('state')=='disabled'
+            editor.destroy();app.update()
+            saved.clear()
         assert not errors, errors
     finally:
         app.close()
 
 
 @pytest.mark.parametrize('scale', [1., 1.25, 1.5, 2.])
-def test_position_protection_native_form_and_contract_unit_conversion(scale):
+def test_shared_protection_native_form_and_legacy_global_unit_conversion(scale):
     result = subprocess.run([sys.executable, '-X', 'utf8', '-c',
         inspect.getsource(_position_protection_scenario)+f'\n_position_protection_scenario({scale!r})'],
         cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=45)

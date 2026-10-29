@@ -32,21 +32,6 @@ class Engine:
                 order.status = "UNKNOWN"
                 order.message = "Khởi động lại: chờ đối soát, không gửi lại."
                 store.save_order(order)
-        self._pin_legacy_rules()
-
-    def _pin_legacy_rules(self):
-        """Keep existing exposure on its old policy before a global unit migration."""
-        legacy = asdict(self.exits())
-        if legacy['distance_unit']=='PRICE_PERCENT':return
-        with self.store.transaction():
-            for position in self.store.positions():
-                if position.exit_overrides is None:
-                    position.exit_overrides=dict(legacy)
-                    self.store.save_position(position)
-            for order in self.store.orders(pending=True):
-                if order.action=='OPEN' and order.exit_settings is None:
-                    order.exit_settings=dict(legacy)
-                    self.store.save_order(order)
 
     def disarm(self):
         # May be called directly by the Tk thread, including during broker I/O.
@@ -65,8 +50,8 @@ class Engine:
         self.store.event("BOT", "Bật quản lý tự động" if enabled else "Tắt quản lý tự động")
 
     def exits(self, position=None):
-        raw = position.exit_overrides if position and position.exit_overrides is not None else self.settings.exit
-        return load_record(ExitSettings, raw).validate()
+        """Every holding and pending/new order uses the one shared RULE."""
+        return load_record(ExitSettings, {**self.settings.exit, 'tp_enabled': False, 'tp_distance': 0.0}).validate()
 
     def paper_capital(self, value):
         if self.broker.mode!='PAPER':
@@ -221,7 +206,7 @@ class Engine:
                 raise BrokerError("Khớp mở ngược chiều với vị thế đang giữ; cần đối soát.")
             if not position:
                 position = Position.create(order.symbol, order.side, 0, price, source="APP", managed=True,
-                                           history_verified=True, exit_overrides=order.exit_settings)
+                                           history_verified=True)
                 position.original_quantity = 0
                 feed = getattr(self.broker, "feed", None)
                 if feed:
@@ -370,8 +355,6 @@ class Engine:
                 position.managed, position.history_verified, position.pnl_verified = False, False, False
                 position.source = "MIXED"
                 position.note = "Khối lượng/giá vốn thay đổi ngoài app; cần nhận quản lý lại."
-            if position.exit_overrides is None and self.exits().distance_unit!='PRICE_PERCENT':
-                position.exit_overrides=asdict(self.exits())
             self.store.save_position(position)
             self.store.event("EXTERNAL", f"{position.side} {symbol} · {position.quantity} HĐ · {position.note}")
             self._notify(f"{position.side} {symbol} · {position.quantity} HĐ\n{position.note}",
@@ -448,30 +431,24 @@ class Engine:
                         side, price or quote.last, exits)
 
     def _entry_exits(self, side, requested=None):
-        """One net position has one E/M policy, including its pending additions."""
+        """Direction checks remain; saved per-order policies are no longer used."""
         positions = [p for p in self.store.positions() if p.symbol == self.latest.contract]
         orders = [o for o in self.store.orders(pending=True)
                   if o.symbol == self.latest.contract and o.action == "OPEN"]
         if any(p.side != side for p in positions) or any(o.side != side for o in orders):
             raise ValueError("Có vị thế/lệnh mở chiều ngược; đóng hoặc hủy trước khi mở chiều mới.")
-        policies = [self.exits(p) for p in positions]
-        policies.extend(load_record(ExitSettings, o.exit_settings or self.settings.exit).validate() for o in orders)
-        existing = policies[0] if policies else self.exits()
-        if any(rule != existing for rule in policies[1:]):
-            raise ValueError("E/M vị thế và lệnh mở đang chờ khác nhau; cần đối soát trước khi vào thêm.")
-        if requested is not None:
-            requested.validate()
-            if policies and requested != existing:
-                raise ValueError("Vào thêm phải dùng cùng E/M với vị thế/lệnh đang chờ; sửa E/M trước.")
-            return requested
-        return existing
+        common = self.exits()
+        if requested is not None and requested.validate() != common:
+            raise ValueError('Chỉ dùng RULE chung cho tất cả lệnh.')
+        return common
 
     def open_manual(self, side, qty, kind="LO", price=0.0, exit_settings=None):
         direction(side)
+        if exit_settings is not None:
+            raise ValueError('Chỉ dùng RULE chung; không đặt E/M riêng trên vé lệnh.')
         self.poll(manage=False)
         self._ready()
         quote = self._quote(self.latest.contract)
-        requested = load_record(ExitSettings, exit_settings).validate() if exit_settings is not None else None
         if kind not in {"LO", "MOK", "MTL"}:
             raise ValueError("Loại lệnh không hỗ trợ.")
         if kind == "LO" and (price <= 0 or abs(price * 10 - round(price * 10)) > 1e-6):
@@ -488,17 +465,13 @@ class Engine:
                 raise ValueError("Có lệnh đóng đang chờ; không mở thêm.")
         if any(o.pending and o.action == "OPEN" and o.symbol == self.latest.contract and o.side != side for o in self.store.orders()):
             raise ValueError("Có lệnh mở chiều ngược đang chờ.")
-        exits = self._entry_exits(side, requested)
+        exits = self._entry_exits(side)
         limit = self.preview(side, price if kind == "LO" else quote.last, exits, refresh=True)
         qty = limit.maximum if qty is None else quantity(qty)
         if qty <= 0 or qty > limit.maximum:
             raise ValueError(limit.reason or f"Tối đa {limit.maximum} HĐ theo sức mở DNSE.")
-        pinned = exit_settings is not None or exits.distance_unit!='PRICE_PERCENT' or any(p.exit_overrides is not None for p in current) or any(
-            o.exit_settings is not None for o in self.store.orders(pending=True)
-            if o.symbol == self.latest.contract and o.action == "OPEN")
         order = Order.create(self.latest.contract, side, qty, kind=kind, price=price if kind == "LO" else 0,
                              margin_per_contract=limit.margin_per_contract, margin_reference_price=price if kind=='LO' else quote.last,
-                             exit_settings=asdict(exits) if pinned else None,
                              parent_position_id=current[0].id if current else "")
         self._send(order)
         return order
@@ -597,7 +570,7 @@ class Engine:
                 if any(row.id!=order.id and row.status in {'UNKNOWN','SUBMITTING','REPLACE_PENDING'} for row in self.store.orders(pending=True)):return False
                 self._quote(order.symbol)
                 own = [row for row in self.store.orders(pending=True) if row.id != order.id]
-                exits = load_record(ExitSettings, order.exit_settings or self.settings.exit)
+                exits = self.exits()
                 limit = capacity(self.settings, self.latest, self.store.positions(), own, order.side,
                                  order.price or self._quote(order.symbol).last, exits)
                 if order.quantity > limit.maximum:
@@ -651,14 +624,6 @@ class Engine:
         else:
             self.suspend_position(position_id)
         self.store.event("MANAGE", f"{position.side} {position.symbol} · {'Bật' if enabled else 'Tắt'} quản lý vị thế")
-
-    def configure_position(self, position_id, exits):
-        position = self.store.position(position_id)
-        if exits is not None:
-            exits = asdict(load_record(ExitSettings, exits).validate())
-        position.exit_overrides = exits
-        self.store.save_position(position)
-        self.store.event("SETTINGS", f"{position.symbol}: cập nhật E/M riêng" if exits else f"{position.symbol}: dùng E/M chung")
 
     def bind_unknown(self, order_id, broker_id):
         order = self.store.order(order_id)

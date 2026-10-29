@@ -1,4 +1,4 @@
-"""Native MayinTien E/M controls shared by RULE and individual positions."""
+"""Native MayinTien controls for the one shared protection rule."""
 from dataclasses import asdict
 from types import SimpleNamespace
 import tkinter as tk
@@ -19,6 +19,7 @@ class ProtectionFormMixin(OriginalRuleForms):
                 ProtectionFormMixin.set_protection_enabled(widget, enabled)
 
     def _init_protection(self, parent, values):
+        values={**values,'tp_enabled':False,'tp_distance':0.0}
         self._migration_error=''
         self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT'
         try:
@@ -58,8 +59,6 @@ class ProtectionFormMixin(OriginalRuleForms):
             self.set_protection_enabled(parent,False)
 
     def _price_reference(self):
-        position=next((row for row in self.app.view.get('positions',[]) if row['id']==getattr(self,'position_id',None)),None)
-        if position:return position['entry'],position.get('margin_per_contract')
         symbol=self.app.view.get('contract','VN30F1M')
         quote=self.app.view.get('quotes',{}).get(symbol,{})
         if not quote or quote.get('symbol')!=symbol or not load_record(Quote,quote).fresh(self.app.settings.max_quote_age):return None,None
@@ -72,11 +71,14 @@ class ProtectionFormMixin(OriginalRuleForms):
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=8,pady=3)
         row=ctk.CTkFrame(bar,fg_color='transparent')
         row.pack(fill='x')
-        for key,label in (('sl_enabled','SL'),('tp_enabled','TP'),('arm_enabled','TSL / ARM')):
+        self.tp_enabled=tk.BooleanVar(value=False)
+        self.take_profit.configure(state='disabled')
+        for key,label in (('sl_enabled','SL'),('arm_enabled','TSL / ARM')):
             variable=tk.BooleanVar(value=getattr(exits,key))
             setattr(self,key,variable)
             ctk.CTkSwitch(row,text=label,variable=variable,width=105,font=('Segoe UI',12),progress_color=self.GREEN).pack(side='left',padx=(0,12))
-        self._hint_icon(row,'Mọi khoảng SL/TP/ARM/Lùi/LẶP tính trên giá vốn bình quân của hợp đồng. Giá vốn 2.000, SL 0,25% là khoảng giá 5: Long tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. 2,5% là khoảng giá 50. TSL bám đỉnh Long/đáy Short với khoảng lùi quy ra từ % giá vốn. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR là hệ số riêng. Cấu hình đã lưu được quy đổi để xem theo cùng đơn vị; LƯU mới áp dụng.').pack(side='right',padx=3)
+        ctk.CTkLabel(row,text='TP · OFF',font=('Segoe UI',12),text_color=self.TEXT).pack(side='left',padx=8)
+        self._hint_icon(row,'Một RULE chung áp dụng cho toàn bộ hợp đồng đang giữ, lệnh chờ và lệnh mới. TP OFF. SL/ARM/Lùi/LẶP tính trên giá vốn bình quân của từng hợp đồng. Giá vốn 2.000, SL 0,25% là khoảng giá 5: mua cắt tại 1.995, bán cắt tại 2.005. TSL bám đỉnh/đáy với khoảng lùi theo % giá vốn. Giữ lãi (%) tính trên lãi đỉnh; Đóng (%) tính trên HĐ, ATR là hệ số riêng. LƯU áp dụng cùng bộ thông số cho tất cả; nhận/bỏ quản lý chỉ thay quyền BOT, không tạo RULE riêng.').pack(side='right',padx=3)
         ctk.CTkLabel(row,text='% GIÁ VỐN',font=('Segoe UI',12,'bold'),text_color=self.TITLE).pack(side='right',padx=5)
 
     def _update_units(self):
@@ -104,6 +106,8 @@ class ProtectionFormMixin(OriginalRuleForms):
             old=values[key]
             values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(str(raw).strip().removesuffix('%').replace(',','.'))
         values['sl_distance']=abs(values['sl_distance'])
+        values['tp_enabled']=False
+        values['tp_distance']=0.0
         values['distance_unit']='PRICE_PERCENT'
         values['arm_basis']='ORIGINAL' if self.normal_sell_basis.get()=='GỐC' else 'REMAINING'
         values['dynamic_basis']='ORIGINAL' if self.dynamic_sell_basis.get()=='GỐC' else 'REMAINING'

@@ -180,7 +180,8 @@ def _consolidated_scenario(scale):
             canvas = rule.exit_body._parent_canvas
             assert rule.below_arm_switch.winfo_rooty()+rule.below_arm_switch.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
         common = dict(app.settings.exit)
-        rule.select_scope('VỊ THẾ')
+        assert not hasattr(rule, 'scope_selector') and not hasattr(rule, 'inherit_switch')
+        assert rule.primary.cget('text') == 'LƯU RULE'
         settle()
         if scale == 1.:
             canvas = rule.exit_body._parent_canvas
@@ -189,13 +190,13 @@ def _consolidated_scenario(scale):
         assert rule.confirmation.winfo_manager() == 'grid' and app.view['positions'][0]['managed']
         rule.confirm_management()
         assert not app.view['positions'][0]['managed'] and app.runtime is None
-        rule.inherit_exit.set(False)
-        rule._inherit_changed()
         rule.initial_sl.delete(0, 'end')
         rule.initial_sl.insert(0, '12')
         rule.request_management()
-        assert not rule.confirmation.winfo_manager() and 'Lưu E/M' in rule.status.cget('text')
+        assert not rule.confirmation.winfo_manager() and 'Lưu RULE' in rule.status.cget('text')
         rule.save()
+        common = dict(app.settings.exit)
+        assert common['sl_distance'] == 12 and not common['tp_enabled']
         rule.request_management()
         app.view['armed'] = True
         rule.confirm_management()
@@ -204,10 +205,8 @@ def _consolidated_scenario(scale):
         rule.request_management()
         rule.confirm_management()
         assert app.view['positions'][0]['managed']
-        rule.inherit_exit.set(True)
-        rule._inherit_changed()
         assert float(rule.initial_sl.get()) == common['sl_distance']
-        assert rule.initial_sl.cget('state') == 'disabled'
+        assert rule.initial_sl.cget('state') == 'normal'
         rule.save()
         rule.select('TÍN HIỆU')
         settle()
@@ -280,7 +279,6 @@ def _consolidated_scenario(scale):
         assert 'Mẫu offline' in connection.note.cget('text') and not getattr(app, 'signal_session', None)
         connection.destroy()
         rule.select('E/M')
-        rule.select_scope('VỊ THẾ')
         rule.request_management()
         app.view['positions'] = []
         rule.confirm_management()
@@ -292,7 +290,7 @@ def _consolidated_scenario(scale):
 
 
 @pytest.mark.parametrize('scale', [1., 1.5, 2.])
-def test_two_settings_windows_scopes_signal_roundtrip_and_reachable_controls(scale):
+def test_two_settings_windows_shared_rule_signal_roundtrip_and_reachable_controls(scale):
     result = subprocess.run([sys.executable, '-X', 'utf8', '-c',
         inspect.getsource(_consolidated_scenario)+f'\n_consolidated_scenario({scale!r})'],
         cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=40)

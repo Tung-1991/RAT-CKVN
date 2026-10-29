@@ -37,11 +37,14 @@ class MayinController(OriginalPanels):
         self.mode_choice,self.bot=self.mode,self.bot_button
         self.kind=self.order_type
         self.qty,self.limit=tk.StringVar(),tk.StringVar()
-        self.ticket_tp,self.ticket_sl=tk.StringVar(value='RULE'),tk.StringVar(value='RULE')
+        self.ticket_tp,self.ticket_sl=tk.StringVar(value='OFF'),tk.StringVar(value='RULE')
         self.quantity_entry,self.price_entry,self.tp_entry,self.sl_entry=self.quantity,self.price,self.tp,self.sl
         for entry,variable in ((self.quantity,self.qty),(self.price,self.limit),(self.tp,self.ticket_tp),(self.sl,self.ticket_sl)):
             entry.configure(textvariable=variable)
-            variable.trace_add('write',lambda *_:self._refresh_ticket_preview())
+            if entry in (self.quantity,self.price):
+                variable.trace_add('write',lambda *_:self._refresh_ticket_preview())
+            else:
+                entry.configure(state='disabled')
         self.open_buttons=[self.execute_button,self.short_button]
         self.capacity_label=ctk.CTkLabel(self.left,text='SỨC MỞ: --',font=('Segoe UI',13),text_color=COL_MUTED)
         self.capacity_label.pack(fill='x',padx=12,pady=(2,4))
@@ -200,7 +203,7 @@ class MayinController(OriginalPanels):
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
-                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M → MẶC ĐỊNH hoặc VỊ THẾ.'
+                self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M, áp dụng chung tất cả hợp đồng.'
                 continue
             policy=getattr(rules,prefix+'_policy')
             basis='gốc' if getattr(rules,prefix+'_basis')=='ORIGINAL' else 'còn lại'
@@ -229,10 +232,10 @@ class MayinController(OriginalPanels):
             return
         if not self.preview_management.winfo_manager():self.preview_management.grid()
         position=load_record(Position,raw)
-        rules=load_record(ExitSettings,position.exit_overrides or self.settings.exit)
+        rules=load_record(ExitSettings,self.settings.exit)
         self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ')
-        source='RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG'
-        self.preview_rule_source.configure(text='RULE RIÊNG' if position.exit_overrides is not None else 'RULE CHUNG')
+        source='RULE CHUNG'
+        self.preview_rule_source.configure(text=source)
         self._render_management_config(rules,position.entry,position.margin_per_contract)
         self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nĐơn vị hiển thị: % giá vốn\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
@@ -243,6 +246,16 @@ class MayinController(OriginalPanels):
 
     def render(self):
         view,account=self.view,self.view.get('account',{})
+        self.ticket_tp.set('OFF')
+        rules=load_record(ExitSettings,self.settings.exit)
+        try:
+            quote=view.get('quotes',{}).get(view.get('contract'),{})
+            if quote and (quote.get('symbol')!=view.get('contract') or not load_record(Quote,quote).fresh(self.settings.max_quote_age)):
+                quote={}
+            displayed=price_percent_rules(self.settings.exit,quote.get('last'),account.get('margin_per_contract'))
+            self.ticket_sl.set(f"{displayed['sl_distance']:g}%" if rules.sl_enabled else 'OFF')
+        except ValueError:
+            self.ticket_sl.set('CHỜ' if rules.sl_enabled else 'OFF')
         mode=view.get('mode',self.settings.mode)
         requested=self.mode_requested or (self.switch_pending[0].mode if self.switch_pending else None)
         self.mode_choice.set(requested or mode)
