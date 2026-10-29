@@ -349,8 +349,7 @@ def _rule_adapter_scenario():
         buy_volume_enabled=True,buy_volume_average_sessions=12,buy_volume_min_ratio=1.45,
         sell_signal_use_rsi=True,sell_signal_require_ema_cross=True,realtime_indicator_interval='2M',
         whipsaw_enabled=True,whipsaw_n=5,whipsaw_x=9)
-    settings=Settings(exit=asdict(exits),signals=signals.to_dict(),capital_limit=80_000_000,
-        max_contracts=3,risk_limit=5_000_000,risk_nav_pct=4,estimated_fee_per_contract=25000).validate()
+    settings=Settings(exit=asdict(exits),signals=signals.to_dict(),estimated_fee_per_contract=25000).validate()
     app=App(settings=settings,start_runtime=False)
     try:
         app.update()
@@ -373,7 +372,7 @@ def _rule_adapter_scenario():
         app.send=lambda *a,**kw:sent.append((a,kw))
         window.save()
         assert len(saved)==1 and saved[0].exit==expected
-        assert saved[0].capital_limit==settings.capital_limit and saved[0].max_contracts==3
+        assert saved[0].paper_balance==settings.paper_balance
         assert saved[0].signals==signals.to_dict()
         assert not sent
     finally:
@@ -793,13 +792,10 @@ def _split_app_scenario(kind,scale):
             connection=app.popups['connection']
             assert connection.winfo_ismapped()
             connection.select_page('VỐN');settle()
-            assert connection.variables['capital.max_contracts']._viking_entry.winfo_ismapped()
-            connection.variables['capital.max_contracts'].set('3')
-            connection.save_connection();assert app.settings.max_contracts==3
+            assert not any(key.startswith('capital.') for key in connection.variables)
+            connection.save_connection()
+            assert not hasattr(app.settings,'max_contracts')
             assert app.settings.exit['sl_distance']==12
-            connection.variables['capital.risk_nav_pct'].set('-1')
-            connection.save_connection();assert app.settings.risk_nav_pct==0
-            connection.variables['capital.risk_nav_pct'].set('0')
             connection.select_page('TELEGRAM / LỊCH');settle()
             connection.primary.invoke()
             connection.backend_button.invoke()

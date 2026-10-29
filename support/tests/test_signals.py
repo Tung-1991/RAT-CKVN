@@ -153,16 +153,16 @@ def test_minute_interval_uses_completed_bucket_and_keeps_live_memory(analysis):
     assert above["memory"]["valid"] and above["buy_alert"]
 
 
-def test_volume_gate_and_max_contracts_are_analysis_only(analysis):
+def test_volume_gate_is_analysis_only_and_positions_do_not_create_a_manual_cap(analysis):
     service, store = analysis
     settings = config(buy_signal_require_ema_cross=False, buy_signal_use_rsi=False, buy_volume_enabled=True)
     value = service.observe(payload(2002), settings, now=NOW)["p2"]
     assert not value["buy_alert"] and "VOLUME" in value["status"]
-    settings = replace(config(buy_signal_require_ema_cross=False, buy_signal_use_rsi=False), max_contracts=1)
+    settings = config(buy_signal_require_ema_cross=False, buy_signal_use_rsi=False)
     data = payload(2002, NOW + timedelta(seconds=1))
     data["positions"] = [{"quantity": 1}]
     value = service.observe(data, settings, now=NOW + timedelta(seconds=1))["p2"]
-    assert value["badge"] == "USED" and not value["buy_alert"]
+    assert value["badge"] == "READY" and value["buy_alert"]
     assert not store.orders()
 
 

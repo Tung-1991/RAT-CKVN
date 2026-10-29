@@ -249,7 +249,7 @@ def _consolidated_scenario(scale):
         reachable(connection.connection_body, connection.footer)
         assert connection.otp_card.winfo_ismapped()
         assert connection.otp_entry.cget('state') == 'disabled'
-        assert 'capital.estimated_fee_per_contract' not in connection.variables
+        assert not any(key.startswith('capital.') for key in connection.variables)
         assert not hasattr(connection.variables['connection.account'],'_viking_entry')
         connection.variables['connection.key'].set('offline-key')
         connection.variables['connection.secret'].set('offline-secret')
@@ -262,9 +262,8 @@ def _consolidated_scenario(scale):
         assert connection.variables['connection.loan'].get() == '2279'
         assert '2,000' in connection.profile_fee.cget('text')
         assert connection.account_menu.cget('state') == 'disabled'
-        connection.variables['capital.max_contracts'].set('3')
         connection.save_connection()
-        assert app.settings.max_contracts == 3 and app.settings.account_no == ''
+        assert app.settings.account_no == '' and not hasattr(app.settings,'max_contracts')
         assert app.runtime is None and not runtime_root().exists()
         connection.select_page('TELEGRAM / LỊCH');settle()
         connection.variables['telegram.token'].set('offline-token')

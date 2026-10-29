@@ -94,20 +94,19 @@ def test_scale_in_weights_basis_reduction_keeps_it_and_restart_does_not_reprice(
     assert not restarted.enabled.is_set()
 
 
-def test_pnl_risk_uses_per_position_basis_and_reference_price(system):
+def test_ticket_pnl_loss_uses_prospective_margin_without_an_account_risk_gate(system):
     from ckps.trading.portfolio import capacity
     engine,broker,store=system
     settings=engine.settings
-    settings.risk_limit=1_500_000
     exits=rules(sl_enabled=True,sl_distance=2.5)
     settings.exit=asdict(exits)
     snapshot=replace(engine.latest,margin_per_contract=40_000_000,margin_reference_price=2000)
     position=Position.create('VN30F1M','LONG',1,2000,margin_per_contract=20_000_000)
     result=capacity(settings,snapshot,[position],[],'LONG',2000,exits)
-    assert result.risk_per_contract==1_000_000 and result.maximum==1
+    assert result.risk_per_contract==1_000_000 and result.maximum==2
     position.margin_per_contract=None
     result=capacity(settings,snapshot,[position],[],'LONG',2000,exits)
-    assert result.maximum==0 and 'ký quỹ' in result.reason
+    assert result.maximum==2 and result.risk_per_contract==1_000_000
     assert reference_margin(40_000_000,2000,2010)==40_200_000
 
 
@@ -131,21 +130,24 @@ def test_external_position_basis_is_taken_from_its_broker_row_and_never_repriced
     assert carried.margin_per_contract is None
 
 
-def test_account_risk_legacy_money_cap_requires_nav_and_converts_to_tighter_percent():
-    from types import SimpleNamespace
-    from ckps.dashboard.mayin.connection_window import ConnectionWindow
-    class Value:
-        def __init__(self,value):self.value=value
-        def get(self):return self.value
-    form=SimpleNamespace(app=SimpleNamespace(settings=Settings(risk_limit=2_000_000),view={}),
-        capital_keys=('capital_limit','max_contracts','risk_nav_pct'),variables={
-            'capital.capital_limit':Value('0'),'capital.max_contracts':Value('3'),'capital.risk_nav_pct':Value('5')})
-    with pytest.raises(ValueError):ConnectionWindow.capital_values(form)
-    form.app.view={'account':{'nav':100_000_000}}
-    converted=ConnectionWindow.capital_values(form)
-    assert converted['risk_nav_pct']==2 and converted['risk_limit']==0
-    form.variables['capital.risk_nav_pct']=Value('1')
-    assert ConnectionWindow.capital_values(form)['risk_nav_pct']==1
+def test_old_manual_caps_are_retired_on_load_and_cannot_silently_block_manual_orders(system):
+    import json
+    from ckps.config import read_settings, runtime_root, write_settings
+    engine,broker,store=system
+    old_caps={'capital_limit':1,'max_contracts':1,'risk_limit':1,'risk_nav_pct':.0001}
+    saved={**asdict(engine.settings),**old_caps}
+    folder=runtime_root()
+    folder.mkdir(parents=True)
+    path=folder/'settings.json'
+    path.write_text(json.dumps(saved),encoding='utf-8')
+    engine.settings=broker.settings=read_settings()
+    assert not set(old_caps)&asdict(engine.settings).keys()
+    engine.open_manual('LONG',2,'MOK');engine.poll()
+    assert store.positions()[0].quantity==2
+    assert not engine.enabled.is_set()
+    write_settings(engine.settings)
+    assert not set(old_caps)&json.loads(path.read_text(encoding='utf-8')).keys()
+    assert asdict(read_settings())==asdict(engine.settings)
 
 
 def test_partial_fills_pin_margin_with_position_and_do_not_count_same_fill_twice(system):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import floor
 
-from ckps.models import ExitSettings, Settings, Snapshot, load_record
+from ckps.models import ExitSettings, Settings, Snapshot
 from ckps.connections.dnse.fees import fee_pair
 
 
@@ -18,7 +18,7 @@ class Capacity:
 
 
 def capacity(settings: Settings, snapshot: Snapshot, positions, orders, side, entry, exits: ExitSettings):
-    """Account exposure includes unmanaged positions. Broker reservations count once."""
+    """Broker buying power sets quantity; SL loss is an estimate, never an extra cap."""
     broker_max = snapshot.qmax_long if side == "LONG" else snapshot.qmax_short
     margin = snapshot.margin_per_contract
     if broker_max is None or margin is None or margin <= 0:
@@ -36,47 +36,10 @@ def capacity(settings: Settings, snapshot: Snapshot, positions, orders, side, en
     local = [o for o in orders if o.pending and o.action == "OPEN" and not o.broker_id]
     local_qty = sum(o.remainder for o in local)
     maximum = max(0, int(broker_max) - local_qty)
-    held = sum(p.quantity for p in positions)
-    pending_qty = sum(o.remainder for o in orders if o.pending and o.action == "OPEN")
-    if settings.max_contracts:
-        maximum = min(maximum, max(0, settings.max_contracts - held - pending_qty))
-    room = None
-    if settings.capital_limit:
-        if snapshot.used_margin is None or snapshot.pending_margin is None:
-            return Capacity(0, int(broker_max), None, None, "Thiếu ký quỹ đã dùng/đang chờ.")
-        room = max(0.0, settings.capital_limit - snapshot.used_margin - snapshot.pending_margin - local_qty * margin)
-        maximum = min(maximum, floor(room / margin))
+    room = (max(0.0, snapshot.remaining_margin - local_qty * margin)
+            if snapshot.remaining_margin is not None else None)
     fee_open, fee_close = fee_pair(settings, snapshot)
     fee_round = fee_open + fee_close if fee_open is not None and fee_close is not None else None
     risk_each = exits.points(exits.sl_distance, entry, margin) * 100_000 + fee_round if exits.sl_enabled and fee_round is not None else None
-    risk_ceiling = settings.risk_limit or None
-    if settings.risk_nav_pct:
-        if snapshot.nav is None or snapshot.nav <= 0:
-            return Capacity(0, int(broker_max), risk_each, room, "Thiếu NAV để tính trần rủi ro.")
-        by_nav = snapshot.nav * settings.risk_nav_pct / 100
-        risk_ceiling = min(risk_ceiling, by_nav) if risk_ceiling is not None else by_nav
-    if risk_ceiling is not None:
-        if fee_round is None:
-            return Capacity(0, int(broker_max), None, room, 'Chờ phí gói DNSE để kiểm tra trần rủi ro.')
-        if risk_each is None or risk_each <= 0:
-            return Capacity(0, int(broker_max), risk_each, room, "Cần SL để kiểm tra trần rủi ro.")
-        used_risk = 0.0
-        for position in positions:
-            rule = load_record(ExitSettings, position.exit_overrides or settings.exit)
-            if not rule.sl_enabled:
-                return Capacity(0, int(broker_max), risk_each, room, "Có vị thế chưa có SL; chưa xác định tổng rủi ro.")
-            try:distance = rule.points(rule.sl_distance, position.entry, position.margin_per_contract)
-            except ValueError:return Capacity(0,int(broker_max),risk_each,room,'Chờ ký quỹ vị thế để tính % PNL.')
-            used_risk += position.quantity * (distance * 100_000 + fee_round)
-        for order in orders:
-            if order.pending and order.action == "OPEN":
-                rule = load_record(ExitSettings, order.exit_settings or settings.exit)
-                if not rule.sl_enabled:
-                    return Capacity(0, int(broker_max), risk_each, room, "Lệnh mở đang chờ chưa có SL.")
-                order_margin = order.margin_per_contract
-                try:distance = rule.points(rule.sl_distance, order.price or entry, order_margin)
-                except ValueError:return Capacity(0,int(broker_max),risk_each,room,'Chờ ký quỹ lệnh mở để tính % PNL.')
-                used_risk += order.remainder * (distance * 100_000 + fee_round)
-        maximum = min(maximum, floor(max(0.0, risk_ceiling - used_risk) / risk_each))
     return Capacity(maximum, int(broker_max), risk_each, room,
-                    "Đã hết sức mở hoặc chạm giới hạn vốn/rủi ro." if maximum <= 0 else "", margin)
+                    "Đã hết sức mở DNSE hoặc đang giữ chỗ cho lệnh mở." if maximum <= 0 else "", margin)

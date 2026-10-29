@@ -126,19 +126,17 @@ def test_read_worker_replaces_obsolete_response_and_never_publishes_credentials(
     assert not probe.thread.is_alive()
 
 
-def test_real_capacity_uses_api_fee_and_waits_for_unknown_fees_only_with_risk_cap(system):
+def test_real_capacity_uses_api_fee_for_sl_estimate_without_limiting_broker_power(system):
     from ckps.trading.portfolio import capacity
     engine,broker,store=system
-    settings=replace(engine.settings,mode='REAL',estimated_fee_per_contract=900_000,risk_limit=1_005_000)
+    settings=replace(engine.settings,mode='REAL',estimated_fee_per_contract=900_000)
     rules=ExitSettings(sl_enabled=True,sl_distance=10)
     snapshot=replace(engine.latest,package_fees=package_fees(PACKAGE))
     result=capacity(settings,snapshot,[],[],'LONG',2000,rules)
-    assert result.risk_per_contract==1_004_000 and result.maximum==1
+    assert result.risk_per_contract==1_004_000 and result.maximum==2
     snapshot.package_fees=package_fees({})
     result=capacity(settings,snapshot,[],[],'SHORT',2000,rules)
-    assert result.maximum==0 and 'phí gói DNSE' in result.reason
-    settings.risk_limit=0
-    assert capacity(settings,snapshot,[],[],'LONG',2000,rules).maximum>0
+    assert result.maximum==2 and result.risk_per_contract is None
 
 
 def test_paper_uses_api_fees_without_mutating_settings_or_real_wallet(system):

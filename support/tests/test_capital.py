@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 import pytest
 
-from ckps.models import ExitSettings, Order, Position
+from ckps.models import ExitSettings, Order, Position, Settings, Snapshot
 
 
 def test_paper_capital_can_be_changed_without_quotes_and_same_amount_is_not_added_twice(system):
@@ -66,19 +66,18 @@ def test_paper_funding_command_cannot_change_real_account(system,monkeypatch):
     assert store.get('paper','account')==before
 
 
-def test_risk_below_one_contract_returns_zero_not_forced_one(system):
+def test_broker_power_below_one_contract_returns_zero_not_forced_one(system):
     engine, broker, store = system
-    engine.settings.risk_limit = 500_000
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    broker.set_price(6000)
+    engine.poll()
     assert engine.preview("LONG").maximum == 0
     with pytest.raises(ValueError):
         engine.open_manual("LONG", None, "MOK")
     assert not store.orders()
 
 
-def test_unmanaged_positions_consume_capital_and_contract_limit(system):
+def test_unmanaged_positions_consume_broker_buying_power(system):
     engine, broker, store = system
-    engine.settings.max_contracts = 2
     store.put("paper_position", "VN30F1M", {"symbol": "VN30F1M", "side": "LONG", "quantity": 1, "entry": 2000})
     engine.poll()
     assert not store.positions()[0].managed
@@ -87,7 +86,6 @@ def test_unmanaged_positions_consume_capital_and_contract_limit(system):
 
 def test_accepted_pending_margin_is_not_subtracted_twice(system):
     engine, broker, store = system
-    engine.settings.capital_limit = 100_000_000
     engine.open_manual("LONG", 1, "LO", price=1990)
     engine.poll()
     limit = engine.preview("LONG")
@@ -95,47 +93,89 @@ def test_accepted_pending_margin_is_not_subtracted_twice(system):
     assert limit.maximum == 1
 
 
-def test_total_risk_counts_existing_positions(system):
+def test_sl_loss_is_an_estimate_and_does_not_add_a_second_opening_limit(system):
     engine, broker, store = system
-    engine.settings.risk_limit = 1_500_000
-    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
+    engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=1000))
+    engine.open_manual("LONG", 1, "MOK")
+    engine.poll()
+    assert engine.preview("LONG").risk_per_contract == 100_000_000
+    assert engine.preview("LONG").maximum == 1
     engine.open_manual("LONG", 1, "MOK")
     engine.poll()
     assert engine.preview("LONG").maximum == 0
+    assert store.positions()[0].quantity == 2 and not engine.enabled.is_set()
 
 
-def test_missing_nav_does_not_fabricate_risk_budget(system):
+def test_missing_nav_does_not_block_confirmed_broker_buying_power(system):
     engine, broker, store = system
-    engine.settings.risk_nav_pct = 1
     engine.latest.nav = None
-    assert engine.preview("LONG").maximum == 0
-    assert "NAV" in engine.preview("LONG").reason
+    assert engine.preview("LONG").maximum == 2
+
+
+@pytest.mark.parametrize('side,expected',[('LONG',3),('SHORT',1)])
+def test_broker_power_reserves_only_unaccepted_open_remainders(side,expected):
+    from ckps.trading.portfolio import capacity
+    snapshot=Snapshot('VN30F1M',[],[],{},200_000_000,280_000_000,40_000_000,5,3,
+                      pending_margin=40_000_000,margin_reference_price=2000)
+    local=Order.create('VN30F1M',side,3,filled=1)
+    accepted=Order.create('VN30F1M',side,1,broker_id='accepted',status='WORKING')
+    closing=Order.create('VN30F1M',side,4,action='CLOSE')
+    filled=Order.create('VN30F1M',side,5,status='FILLED',filled=5)
+    positions=[Position.create('VN30F1M',side,7,2000,managed=False)]
+    result=capacity(Settings(),snapshot,positions,[local,accepted,closing,filled],side,2000,ExitSettings())
+    assert result.maximum==expected and result.available_budget==120_000_000
+    assert result.risk_per_contract is None  # No SL is required for a manual entry.
+
+
+@pytest.mark.parametrize('side,qmax_long,qmax_short,margin',[
+    ('LONG',None,4,40_000_000),('SHORT',4,None,40_000_000),
+    ('LONG',4,4,None),('SHORT',4,4,0)])
+def test_missing_broker_buying_power_or_margin_never_becomes_one_contract(side,qmax_long,qmax_short,margin):
+    from ckps.trading.portfolio import capacity
+    snapshot=Snapshot('VN30F1M',[],[],{},100_000_000,0,margin,qmax_long,qmax_short)
+    result=capacity(Settings(),snapshot,[],[],side,2000,ExitSettings())
+    assert result.maximum==0 and result.reason
+
+
+@pytest.mark.parametrize('side',['LONG','SHORT'])
+def test_manual_submit_refreshes_broker_power_before_creating_an_order(system,monkeypatch,side):
+    engine,broker,store=system
+    assert engine.preview(side).maximum==2
+    observed=[]
+    def limits(symbol,price):
+        observed.append((symbol,price))
+        return {'qmax_long':0,'qmax_short':0,'margin_per_contract':40_000_000,
+                'margin_reference_price':price}
+    monkeypatch.setattr(broker,'opening_limits',limits,raising=False)
+    monkeypatch.setattr(broker,'submit',lambda *a,**kw:pytest.fail('No order may reach the broker.'))
+    with pytest.raises(ValueError,match='sức mở'):
+        engine.open_manual(side,1,'MOK')
+    assert observed==[('VN30F1M',2000)] and not store.orders() and not store.positions()
 
 
 @pytest.mark.parametrize("side", ["LONG", "SHORT"])
 @pytest.mark.parametrize("pending", [False, True])
-def test_scale_in_uses_existing_policy_for_risk_and_rejects_conflicting_ticket(system, side, pending):
+def test_scale_in_uses_existing_sl_estimate_and_rejects_conflicting_ticket(system, side, pending):
     engine, broker, store = system
-    engine.settings.risk_limit = 1_500_000
     engine.settings.exit = asdict(ExitSettings(sl_enabled=True, sl_distance=1))
     wide = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
     engine.open_manual(side, 1, "LO" if pending else "MOK", price=1990 if side == "LONG" else 2010,
                        exit_settings=wide)
     engine.poll()
     assert engine.preview(side).risk_per_contract == 1_000_000
-    assert engine.preview(side).maximum == 0
+    assert engine.preview(side).maximum == 1
     before = len(store.orders())
     with pytest.raises(ValueError, match="cùng E/M"):
         engine.open_manual(side, 1, "MOK", exit_settings=engine.settings.exit)
-    with pytest.raises(ValueError):
-        engine.open_manual(side, 1, "MOK")
     assert len(store.orders()) == before
+    inherited = engine.open_manual(side, 1, "MOK")
+    assert inherited.exit_settings == wide
+    assert len(store.orders()) == before + 1
 
 
 @pytest.mark.parametrize("side", ["LONG", "SHORT"])
 def test_scale_in_inherits_pinned_policy_and_keeps_pending_risk_on_rule_change(system, side):
     engine, broker, store = system
-    engine.settings.risk_limit = 3_000_000
     wide = asdict(ExitSettings(sl_enabled=True, sl_distance=10))
     engine.open_manual(side, 1, "MOK", exit_settings=wide)
     engine.poll()

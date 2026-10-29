@@ -21,9 +21,9 @@ def test_bad_broker_money_is_unknown_and_stock_is_never_used():
 
 
 def test_ticket_price_changes_margin_and_caps():
-    snapshot = Snapshot('VN30F1M', [], [], {}, 100_000_000, 0, 40_000_000, 2, 2,
+    snapshot = Snapshot('VN30F1M', [], [], {}, 80_000_000, 20_000_000, 40_000_000, 2, 2,
                         pending_margin=0, margin_reference_price=2000)
-    result = capacity(Settings(capital_limit=80_000_000), snapshot, [], [], 'SHORT', 2100, ExitSettings())
+    result = capacity(Settings(), snapshot, [], [], 'SHORT', 2100, ExitSettings())
     assert result.maximum == 1 and result.margin_per_contract == 42_000_000
 
 

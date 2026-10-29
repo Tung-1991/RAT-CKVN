@@ -7,7 +7,6 @@ import customtkinter as ctk
 from .forms import OriginalRuleForms
 from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup
 from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
-from ckps.models import quantity
 from ckps.rules.market_alerts import MarketAlertSettings
 from .connection_status import otp_status
 from .connection_preview import ConnectionPreviewMixin
@@ -29,11 +28,7 @@ class ConnectionFields(OriginalRuleForms):
         hints={'connection.key':'API đọc giá cho PAPER; REAL dùng thêm tài khoản và OTP. Ghi nhớ tùy chọn bằng mã hóa Windows.',
                'connection.secret':'API secret DNSE dùng cho phiên kết nối; không ghi vào log.',
                'connection.account':'Số tiểu khoản phái sinh DNSE dùng cho REAL.',
-               'connection.loan':'Gói ký quỹ DNSE. Nếu chỉ có một gói, app tự chọn.',
-               'capital.capital_limit':'0: không đặt trần riêng; sức mở vẫn do DNSE xác nhận.',
-               'capital.max_contracts':'0: không giới hạn HĐ riêng. Tính cả vị thế và lệnh đang chờ.',
-               'capital.risk_nav_pct':'Trần rủi ro theo NAV phái sinh; thiếu NAV không tự tính.',
-               'capital.estimated_fee_per_contract':'Phí ước tính cho một HĐ mỗi chiều; 0 hiện chờ phí.'}
+               'connection.loan':'Gói ký quỹ DNSE. Nếu chỉ có một gói, app tự chọn.'}
         hint=hints.get(key,'')
         if isinstance(value, bool):
             variable = self._switch(card, label, value, hint)
@@ -88,7 +83,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         for page in self.pages.values():page.grid_columnconfigure(0,weight=1)
         self.connection_body=self.form._content(self.pages['DNSE / VỐN'],columns=2)
         self._connection(self.connection_body)
-        self._capital(self.connection_body)
+        self._paper_capital(self.connection_body)
         self._telegram(self.pages['TELEGRAM / LỊCH'])
         self.footer=ctk.CTkFrame(self,fg_color='transparent')
         self.footer.grid(row=1,column=0,sticky='ew',padx=16,pady=(4,10))
@@ -129,7 +124,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             font=('Segoe UI',12),checkbox_width=16,checkbox_height=16).pack(fill='x',padx=10,pady=(4,8))
         self._build_account_preview(page)
         self.otp_card=self.form.card(page,'XÁC THỰC GIAO DỊCH REAL')
-        self.otp_card.grid_configure(row=1,column=0)
+        self.otp_card.grid_configure(row=1,column=0,columnspan=2)
         otp_row=ctk.CTkFrame(self.otp_card,fg_color='transparent')
         otp_row.pack(fill='x',padx=9,pady=4)
         otp_row.grid_columnconfigure(1,weight=1)
@@ -150,15 +145,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             ctk.CTkButton(buttons,text='XÁC THỰC',width=120,height=30,command=self.verify_otp)]
         for button in self.otp_buttons:button.pack(side='left',padx=(0,8))
 
-    def _capital(self,page):
-        page.grid_columnconfigure((0,1),weight=1,uniform='capital')
-        limits=self.form.card(page,'GIỚI HẠN TỰ ĐẶT',1)
-        limits.grid_configure(row=1,column=1)
-        self.capital_keys=('capital_limit','max_contracts','risk_nav_pct')
-        for key,label in (('capital_limit','Trần ký quỹ (đ)'),('max_contracts','Tổng HĐ tối đa'),
-                ('risk_nav_pct','Rủi ro (% NAV)')):
-            self.form.field(limits,'capital.'+key,label,getattr(self.app.settings,key),width=100)
-        self._capital_cards=(limits,)
+    def _paper_capital(self,page):
         self.paper_card=self.form.card(page,'TIỀN ẢO PAPER')
         self.paper_card.grid_configure(row=2,columnspan=2)
         self.paper_funds=ctk.CTkFrame(self.paper_card,fg_color='transparent')
@@ -238,17 +225,6 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             self.note.configure(text='Đã chạy backend riêng · Không có quyền giao dịch.',text_color=GREEN)
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
-    def capital_values(self):
-        values={key:quantity(self.variables['capital.'+key].get()) if key=='max_contracts'
-            else float(self.variables['capital.'+key].get().replace(',','').strip()) for key in self.capital_keys}
-        if self.app.settings.risk_limit:
-            nav=self.app.view.get('account',{}).get('nav')
-            if not nav or nav<=0:raise ValueError('Cần NAV xác minh để quy đổi trần lỗ cũ sang % NAV.')
-            legacy=self.app.settings.risk_limit/nav*100
-            values['risk_nav_pct']=min(values['risk_nav_pct'],legacy) if values['risk_nav_pct'] else legacy
-            values['risk_limit']=0.
-        return values
-
     def remember_values(self, credentials):
         if getattr(self.app,'preview_only',False):
             return
@@ -261,7 +237,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         try:
             if self.app.mode_requested or self.app.switch_pending:
                 raise ValueError('Hoàn tất kết nối sổ đang chọn trước khi lưu.')
-            settings=replace(self.app.settings,**self.capital_values(),
+            settings=replace(self.app.settings,
                 account_no=self.variables['connection.account'].get().strip() if self.app.settings.mode=='REAL' else self.app.settings.account_no,
                 loan_package_id=self.variables['connection.loan'].get().strip() if self.app.settings.mode=='REAL' else self.app.settings.loan_package_id).validate()
             if self.app.runtime and (settings.account_no!=self.app.settings.account_no or settings.loan_package_id!=self.app.settings.loan_package_id):
@@ -269,7 +245,6 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             credentials=self.api_credentials()
             self.remember_values(credentials)
             self.app.save_config(settings)
-            self.variables['capital.risk_nav_pct'].set(str(settings.risk_nav_pct))
             self.app.connection_profile=credentials
             if self.remember.get():self.app.send('remember_session')
             self.note.configure(text='Đã áp dụng vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
@@ -369,10 +344,8 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             if values['mode']=='REAL' and not values['account']:raise ValueError('Chọn tài khoản CKPS từ kết quả ĐỌC API.')
             if values['mode']=='REAL' and not values['loan']:raise ValueError('Chọn gói ký quỹ từ kết quả ĐỌC API.')
             settings=replace(self.app.settings,mode=values['mode'],
-                **self.capital_values(),
                 account_no=values['account'] if values['mode']=='REAL' else self.app.settings.account_no,
                 loan_package_id=values['loan'] if values['mode']=='REAL' else self.app.settings.loan_package_id).validate()
-            self.variables['capital.risk_nav_pct'].set(str(settings.risk_nav_pct))
             self.remember_values(credentials)
             session=getattr(self.app,'signal_session',None)
             signal_credentials=getattr(self.app,'signal_credentials',{})

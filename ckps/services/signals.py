@@ -208,15 +208,12 @@ class SignalAnalysis:
         elif not whip_ok:
             candidate = False
             status = "WHIPSAW · CHỜ"
-        full = settings.max_contracts > 0 and sum(int(v["quantity"]) for v in data.get("positions", [])) >= settings.max_contracts
         pending = any(o.get("action") == "OPEN" and o.get("status") not in {"FILLED", "CANCELLED", "REJECTED", "EXPIRED", "FAILED"}
                       for o in data.get("orders", []))
         ema_gate = gate if cross_needed else marks.get("buy_ema_fast", 0) > marks.get("buy_ema_slow", 0)
-        badge = "USED" if full or pending or (cross_needed and memory.get("used")) else "READY" if ema_gate else "WAIT"
+        badge = "USED" if pending or (cross_needed and memory.get("used")) else "READY" if ema_gate else "WAIT"
         if pending:
             candidate, status = False, "CÓ LỆNH MỞ ĐANG CHỜ"
-        if full:
-            candidate, status = False, "ĐỦ HẠN MỨC HĐ"
         phase = market_phase(now, working_dates, exchange="VN30")[0]
         if phase not in {"ATO", "OPEN", "ATC"}:
             candidate = False

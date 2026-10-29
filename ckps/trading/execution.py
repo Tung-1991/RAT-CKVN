@@ -465,7 +465,7 @@ class Engine:
         limit = self.preview(side, price if kind == "LO" else quote.last, exits, refresh=True)
         qty = limit.maximum if qty is None else quantity(qty)
         if qty <= 0 or qty > limit.maximum:
-            raise ValueError(limit.reason or f"Tối đa {limit.maximum} HĐ theo vốn/sức mở/rủi ro.")
+            raise ValueError(limit.reason or f"Tối đa {limit.maximum} HĐ theo sức mở DNSE.")
         pinned = exit_settings is not None or any(p.exit_overrides is not None for p in current) or any(
             o.exit_settings is not None for o in self.store.orders(pending=True)
             if o.symbol == self.latest.contract and o.action == "OPEN")

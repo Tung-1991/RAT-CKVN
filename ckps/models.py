@@ -127,10 +127,6 @@ class Settings:
     account_no: str = ""
     loan_package_id: str = ""
     alias: str = "VN30F1M"
-    capital_limit: float = 0.0
-    max_contracts: int = 0
-    risk_limit: float = 0.0
-    risk_nav_pct: float = 0.0
     paper_balance: float = 100_000_000.0
     paper_margin_rate: float = 0.2
     estimated_fee_per_contract: float = 0.0
@@ -150,10 +146,9 @@ class Settings:
             raise ValueError("Thông báo vào lệnh cần công tắc bật/tắt.")
         if self.account_no and not self.account_no.isdigit():
             raise ValueError("Số tài khoản DNSE chỉ chứa chữ số.")
-        for name in ("capital_limit", "risk_limit", "risk_nav_pct", "estimated_fee_per_contract"):
+        for name in ("estimated_fee_per_contract",):
             if not isfinite(float(getattr(self, name))) or getattr(self, name) < 0:
                 raise ValueError(f"{name}: cần một số không âm.")
-        self.max_contracts = quantity(self.max_contracts)
         if not 0 < self.paper_margin_rate < 1 or not isfinite(self.paper_balance) or self.paper_balance <= 0:
             raise ValueError("Vốn/ký quỹ PAPER không hợp lệ.")
         if not 1 <= self.poll_seconds <= 60 or not 1 <= self.max_quote_age <= 120:

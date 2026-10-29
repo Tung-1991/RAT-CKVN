@@ -9,7 +9,9 @@
 - UI dùng TÍN HIỆU / GIỜ THEO DÕI, không dùng BUY/ENTRY BUY/giờ mua. P2 và E
   giữ cổng ALERT riêng trong backend, UI gom dưới EMA/RSI; mặc định OFF,
   tắt chỉ ngừng thông báo, vẫn phân tích.
-- P3 giữ giới hạn vốn CKPS; E/M mới dùng duy nhất % PNL trước phí trên ký quỹ cơ sở/HĐ
+- P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
+  tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
+  E/M mới dùng duy nhất % PNL trước phí trên ký quỹ cơ sở/HĐ
   được xác minh và lưu cố định cùng vị thế. Không còn chọn điểm/% giá; cấu hình cũ quy đổi
   bản nháp rồi LƯU, thiếu cơ sở giữ nguyên và báo CHỜ. Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
@@ -34,7 +36,8 @@
 - Đóng/giảm, hủy/sửa/đối soát lệnh dùng vùng thao tác trong màn hình; chỉ hiện nút phù hợp
   dòng đang chọn. Xác nhận gửi lệnh vẫn cần nhưng nằm trong app, không popup.
 - Hướng dẫn/công thức đưa vào hint; lịch ngày nghỉ DNSE tự động, ngày bổ sung thu gọn
-  trong NGÀY RIÊNG. Rủi ro tài khoản dùng một trần % NAV; khác với % PNL vị thế.
+  trong NGÀY RIÊNG. Lỗ dự kiến tại SL tự tính từ E/M để xem trước khi xác nhận;
+  không thêm hạn mức tài khoản bắt người dùng nhập.
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
