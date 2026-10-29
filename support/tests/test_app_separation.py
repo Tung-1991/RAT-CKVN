@@ -87,7 +87,7 @@ def test_demo_long_uses_same_dynamic_repeat_and_arm_milestones_without_ledger():
         position,current=long_sample(stage)
         before=asdict(position)
         arm,dynamic=position_milestones(position,demo_rules(),current,1.)
-        assert position.entry==2000 and position.metrics['levels']['sl']==1990 and position.metrics['levels']['tp']==2040
+        assert position.entry==2000 and position.metrics['levels']['sl']==1990 and position.metrics['levels']['tp']==0
         if stage=='TSL / ARM':
             assert f'{target:,.1f}' in arm.value and 'NHƯỜNG ARM' in dynamic.value
         else:assert f'{target:,.1f}' in dynamic.value

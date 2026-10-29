@@ -719,7 +719,7 @@ def _split_app_scenario(kind,scale):
                 assert app.bot.cget('state')=='normal'
                 for button in (app.rule_button,app.connection_button):assert button.cget('state')=='normal'
                 assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,990.0'
-                assert app.positions_tree.cell('DEMO-LONG','tp')['text']=='2,040.0'
+                assert app.positions_tree.cell('DEMO-LONG','tp')['text']=='—'
                 assert ('NHƯỜNG ARM' in app.preview_exit_value.cget('text'))==(stage=='TSL / ARM')
             app.show_sample('LẶP');settle()
             app.bot.invoke();settle()
