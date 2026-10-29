@@ -1,6 +1,7 @@
 """Compact connection pages built from MayinTien's original cards and fields."""
 from dataclasses import replace
 import os
+import time
 import tkinter as tk
 import customtkinter as ctk
 from .forms import OriginalRuleForms
@@ -9,6 +10,7 @@ from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.models import quantity
 from ckps.rules.market_alerts import MarketAlertSettings
 from .connection_status import otp_status
+from .connection_preview import ConnectionPreviewMixin
 from ..settings_state import signal_settings, save_signal_settings, start_signal_backend
 
 
@@ -67,7 +69,7 @@ class ConnectionFields(OriginalRuleForms):
         return variable
 
 
-class ConnectionWindow(_StableToplevel):
+class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
     def __init__(self, app, requested_mode=None):
         super().__init__(app)
         self.app=app
@@ -111,18 +113,21 @@ class ConnectionWindow(_StableToplevel):
     def _connection(self,page):
         page.grid_columnconfigure((0,1),weight=1,uniform='dnse')
         api=self.api_card=self.form.card(page,'API DNSE')
+        self.read_api_button=ctk.CTkButton(api._viking_header,text='ĐỌC MẪU' if getattr(self.app,'preview_only',False) else 'ĐỌC API',
+            width=88,height=27,font=('Segoe UI',12,'bold'),command=self.read_api)
+        self.read_api_button.pack(side='right')
+        self.key_visibility=ctk.CTkButton(api._viking_header,text='HIỆN',width=50,height=27,
+            font=('Segoe UI',12),fg_color='#3A3F47',command=self.toggle_key_visibility)
+        self.key_visibility.pack(side='right',padx=5)
         self.target_label=ctk.CTkLabel(api,text='',font=('Segoe UI',13,'bold'),text_color=MUTED,anchor='w')
         self.target_label.pack(fill='x',padx=9,pady=(0,4))
         for key,label in (('key','API key'),('secret','API secret')):
-            value=getattr(self.app,'connection_profile',self.app.credentials).get(key,'')
+            value=getattr(self.app,'connection_profile',self.app.credentials).get(key,'') or os.environ.get('CKPS_DNSE_API_'+key.upper(),'')
             self.form.field(api,'connection.'+key,label,value,secret=True,width=350)
         self.remember=tk.BooleanVar(value=getattr(self.app,'remember_connection',False))
         ctk.CTkCheckBox(api,text='Ghi nhớ trên máy · Windows mã hóa',variable=self.remember,
             font=('Segoe UI',12),checkbox_width=16,checkbox_height=16).pack(fill='x',padx=10,pady=(4,8))
-        self.real_account_card=self.form.card(page,'TÀI KHOẢN PHÁI SINH',1)
-        for key,label,value in (('account','Tài khoản CKPS',self.app.settings.account_no),('loan','Gói ký quỹ',self.app.settings.loan_package_id)):
-            variable=self.form.field(self.real_account_card,'connection.'+key,label,value,width=180)
-            if key=='loan':variable._viking_entry.configure(placeholder_text='Tự chọn nếu DNSE có một gói')
+        self._build_account_preview(page)
         self.otp_card=self.form.card(page,'XÁC THỰC GIAO DỊCH REAL')
         self.otp_card.grid_configure(row=1,column=0)
         otp_row=ctk.CTkFrame(self.otp_card,fg_color='transparent')
@@ -145,15 +150,14 @@ class ConnectionWindow(_StableToplevel):
         self.otp_buttons=[ctk.CTkButton(buttons,text='GỬI EMAIL',width=120,height=30,command=self.send_otp),
             ctk.CTkButton(buttons,text='XÁC THỰC',width=120,height=30,command=self.verify_otp)]
         for button in self.otp_buttons:button.pack(side='left',padx=(0,8))
-        self.packages_label=ctk.CTkLabel(self.otp_card,text='',font=('Segoe UI',12),text_color=MUTED,anchor='w')
 
     def _capital(self,page):
         page.grid_columnconfigure((0,1),weight=1,uniform='capital')
-        limits=self.form.card(page,'VỐN / RỦI RO',1)
+        limits=self.form.card(page,'GIỚI HẠN TỰ ĐẶT',1)
         limits.grid_configure(row=1,column=1)
-        self.capital_keys=('capital_limit','max_contracts','risk_limit','risk_nav_pct','estimated_fee_per_contract')
+        self.capital_keys=('capital_limit','max_contracts','risk_limit','risk_nav_pct')
         for key,label in (('capital_limit','Trần ký quỹ (đ)'),('max_contracts','Tổng HĐ tối đa'),
-                ('risk_limit','Lỗ tới SL (đ)'),('risk_nav_pct','Lỗ / NAV (%)'),('estimated_fee_per_contract','Phí / HĐ (đ)')):
+                ('risk_limit','Lỗ tới SL (đ)'),('risk_nav_pct','Lỗ / NAV (%)')):
             self.form.field(limits,'capital.'+key,label,getattr(self.app.settings,key),width=100)
         self._capital_cards=(limits,)
         self.paper_card=self.form.card(page,'TIỀN ẢO PAPER')
@@ -178,7 +182,7 @@ class ConnectionWindow(_StableToplevel):
         self.backend_button=ctk.CTkButton(card._viking_header,text='CHẠY',width=100,height=26,
             font=('Segoe UI',12,'bold'),command=self.toggle_backend)
         self.backend_button.pack(side='right')
-        self.backend_state=ctk.CTkLabel(card,text='Chưa chạy · Phân tích độc lập BOT giao dịch',font=('Segoe UI',12),text_color=MUTED,anchor='w')
+        self.backend_state=ctk.CTkLabel(card,text='Chưa chạy · Dùng chung API DNSE ở tab DNSE / VỐN',font=('Segoe UI',12),text_color=MUTED,anchor='w')
         self.backend_state.pack(fill='x',padx=10,pady=(2,4))
         from .calendar_form import CalendarForm
         self.calendar_form=CalendarForm(self.notification_body,settings=getattr(self.app,'_demo_calendar',None),notice_toggle=False)
@@ -200,8 +204,7 @@ class ConnectionWindow(_StableToplevel):
         settings=replace(settings,telegram_chat=self.variables['telegram.chat'].get().strip(),
             telegram_enabled=any(option.get() for option in self.options.values()),
             entry_notifications=self.options['entry'].get(),market_alerts=market.to_dict()).validate()
-        credentials={key:self.variables['connection.'+key].get().strip() or self.app.credentials.get(key,'')
-                     or os.environ.get('CKPS_DNSE_API_'+key.upper(),'') for key in ('key','secret')}
+        credentials=self.api_credentials()
         credentials['telegram_token']=self.variables['telegram.token'].get().strip()
         return settings,self.calendar_form.values(),credentials
 
@@ -252,11 +255,11 @@ class ConnectionWindow(_StableToplevel):
             if self.app.mode_requested or self.app.switch_pending:
                 raise ValueError('Hoàn tất kết nối sổ đang chọn trước khi lưu.')
             settings=replace(self.app.settings,**self.capital_values(),
-                account_no=self.variables['connection.account'].get().strip(),
-                loan_package_id=self.variables['connection.loan'].get().strip()).validate()
+                account_no=self.variables['connection.account'].get().strip() if self.app.settings.mode=='REAL' else self.app.settings.account_no,
+                loan_package_id=self.variables['connection.loan'].get().strip() if self.app.settings.mode=='REAL' else self.app.settings.loan_package_id).validate()
             if self.app.runtime and (settings.account_no!=self.app.settings.account_no or settings.loan_package_id!=self.app.settings.loan_package_id):
                 raise ValueError('Tài khoản/gói đã đổi: bấm KẾT NỐI DNSE để đối soát sổ mới.')
-            credentials={key:self.variables['connection.'+key].get().strip() for key in ('key','secret')}
+            credentials=self.api_credentials()
             self.remember_values(credentials)
             self.app.save_config(settings)
             self.app.connection_profile=credentials
@@ -352,14 +355,22 @@ class ConnectionWindow(_StableToplevel):
             values={key:self.variables['connection.'+key].get().strip() for key in ('mode','key','secret','account','loan')}
             if not all(values[key] or os.environ.get('CKPS_DNSE_API_'+key.upper()) for key in ('key','secret')):
                 raise ValueError('Nhập API key và API secret DNSE.')
-            if values['mode']=='REAL' and not values['account']:raise ValueError('Nhập tài khoản CKPS cho REAL.')
+            credentials=self.api_credentials()
+            if self._profile_signature!=self._signature(credentials) or time.time()-self.preview_profile.get('observed_at',0)>300:
+                self.read_api(connect_after=True)
+                return
+            if values['mode']=='REAL' and not values['account']:raise ValueError('Chọn tài khoản CKPS từ kết quả ĐỌC API.')
+            if values['mode']=='REAL' and not values['loan']:raise ValueError('Chọn gói ký quỹ từ kết quả ĐỌC API.')
             settings=replace(self.app.settings,mode=values['mode'],
                 **self.capital_values(),
                 account_no=values['account'] if values['mode']=='REAL' else self.app.settings.account_no,
                 loan_package_id=values['loan'] if values['mode']=='REAL' else self.app.settings.loan_package_id).validate()
-            credentials={key:values[key] for key in ('key','secret')}
-            credentials={key:value or os.environ.get('CKPS_DNSE_API_'+key.upper(),'') for key,value in credentials.items()}
             self.remember_values(credentials)
+            session=getattr(self.app,'signal_session',None)
+            signal_credentials=getattr(self.app,'signal_credentials',{})
+            if session and session.running and any(signal_credentials.get(key)!=credentials[key] for key in ('key','secret')):
+                session.close()
+                self.app.report('Đã dừng tín hiệu theo API cũ; bấm CHẠY để dùng API DNSE mới.')
             self.app.clear_confirmation()
             self._connecting=True
             self.app.mode_requested=settings.mode
@@ -382,12 +393,10 @@ class ConnectionWindow(_StableToplevel):
 
     def _update_view(self):
         self._update_after=None
+        self._drain_profile()
         session=getattr(self.app,'signal_session',None)
         self.backend_button.configure(text='DỪNG' if session and session.running else 'CHẠY')
         if session:self.backend_state.configure(text=session.status)
-        packages=self.app.view.get('loan_packages',[])
-        self.packages_label.configure(text=' · '.join(f"{p['id']} {p['name']}" for p in packages[:2]))
-        self.packages_label.pack(fill='x',padx=9,pady=(0,4)) if packages else self.packages_label.pack_forget()
         otp_enabled=(not getattr(self.app,'preview_only',False) and self.variables['connection.mode'].get()=='REAL'
             and self.app.settings.mode=='REAL' and self.app.runtime and not self.app.mode_requested and not self.app.switch_pending
             and self.otp_matches_active())
@@ -414,6 +423,7 @@ class ConnectionWindow(_StableToplevel):
 
     def destroy(self):
         if self._update_after:self.after_cancel(self._update_after)
+        if self._probe:self._probe.close()
         if not self.app.switch_pending:
             self.app.mode_requested=None
             self.app.ui_status=None

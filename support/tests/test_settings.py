@@ -154,7 +154,7 @@ def _consolidated_scenario(scale):
         app.update()
     def controls(parent):
         for child in parent.winfo_children():
-            if isinstance(child, (ctk.CTkEntry, ctk.CTkCheckBox, ctk.CTkSwitch, ctk.CTkButton, ctk.CTkSegmentedButton)):
+            if isinstance(child, (ctk.CTkEntry, ctk.CTkCheckBox, ctk.CTkSwitch, ctk.CTkButton, ctk.CTkSegmentedButton, ctk.CTkOptionMenu)):
                 yield child
             else:
                 yield from controls(child)
@@ -246,6 +246,23 @@ def _consolidated_scenario(scale):
         reachable(connection.connection_body, connection.footer)
         assert connection.otp_card.winfo_ismapped()
         assert connection.otp_entry.cget('state') == 'disabled'
+        assert 'capital.estimated_fee_per_contract' not in connection.variables
+        assert not hasattr(connection.variables['connection.account'],'_viking_entry')
+        connection.variables['connection.key'].set('offline-key')
+        connection.variables['connection.secret'].set('offline-secret')
+        connection.key_visibility.invoke()
+        assert connection.variables['connection.secret']._viking_entry.cget('show') == ''
+        connection.key_visibility.invoke()
+        assert connection.variables['connection.secret']._viking_entry.cget('show') == '•'
+        connection.read_api_button.invoke();settle()
+        assert connection.variables['connection.account'].get() == '1234567890'
+        assert connection.variables['connection.loan'].get() == '2279'
+        assert '2,000' in connection.profile_fee.cget('text')
+        assert connection.account_menu.cget('state') == 'disabled'
+        connection.variables['capital.max_contracts'].set('3')
+        connection.save_connection()
+        assert app.settings.max_contracts == 3 and app.settings.account_no == ''
+        assert app.runtime is None and not runtime_root().exists()
         connection.select_page('TELEGRAM / LỊCH');settle()
         connection.variables['telegram.token'].set('offline-token')
         connection.variables['telegram.chat'].set('offline-chat')

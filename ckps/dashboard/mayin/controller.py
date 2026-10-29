@@ -130,11 +130,16 @@ class MayinController(OriginalPanels):
             qty_unknown=not self.qty.get().strip() and (account.get('qmax_long') is None or account.get('margin_per_contract') is None)
             sl=(money(-rules.points(rules.sl_distance,entry)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
             tp=(money(rules.points(rules.tp_distance,entry)*qty*100_000) if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
-            fee=self.settings.estimated_fee_per_contract*qty
-            fees=money(fee) if self.settings.estimated_fee_per_contract else 'CHỜ PHÍ'
-            self.lbl_order_value_title.configure(text='KÝ QUỸ + PHÍ' if self.settings.estimated_fee_per_contract else 'KÝ QUỸ · CHỜ PHÍ')
+            package=account.get('package_fees',{})
+            per_contract=package.get('open')
+            if per_contract is None and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
+                per_contract=self.settings.estimated_fee_per_contract
+            fee=per_contract*qty if per_contract is not None else None
+            fees=money(fee) if fee is not None else 'CHỜ DNSE'
+            self.lbl_fee_title.configure(text='PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')
+            self.lbl_order_value_title.configure(text='KÝ QUỸ + PHÍ GÓI' if package.get('open') is not None else 'KÝ QUỸ + PHÍ' if per_contract is not None else 'KÝ QUỸ · CHỜ PHÍ')
             margin=long_capacity.margin_per_contract
-            cash=money(margin*qty+fee) if margin is not None else '—'
+            cash=money(margin*qty+(fee or 0)) if margin is not None else '—'
             for widget,text in ((self.lbl_tp_preview,tp),(self.lbl_sl_preview,sl),(self.lbl_fee_preview,fees),(self.lbl_order_value,cash)):
                 widget.configure(text=text)
         except (ValueError,TypeError):

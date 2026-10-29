@@ -17,7 +17,8 @@ class DashboardActionsMixin:
         snapshot = Snapshot(self.view.get('contract', self.settings.alias), [], [], {},
             data.get('remaining_margin'), data.get('used_margin'), data.get('margin_per_contract'),
             data.get('qmax_long'), data.get('qmax_short'), nav=data.get('nav'),
-            pending_margin=data.get('pending_margin'), margin_reference_price=data.get('margin_reference_price') or quote.get('last'))
+            pending_margin=data.get('pending_margin'), margin_reference_price=data.get('margin_reference_price') or quote.get('last'),
+            package_fees=data.get('package_fees',{}))
         positions = [load_record(Position, row) for row in self.view.get('positions', [])]
         orders = [load_record(Order, row) for row in self.view.get('orders', [])]
         if any(p.symbol == snapshot.contract and p.side != side for p in positions):
@@ -71,10 +72,10 @@ class DashboardActionsMixin:
             self.send("open_manual", side, qty, kind, px, exit_settings=overrides)
         from .formatting import money
         margin = money(limit.margin_per_contract * qty) if limit.margin_per_contract else 'chờ xác minh'
-        loss = money(limit.risk_per_contract * qty) if limit.risk_per_contract is not None else 'chưa có SL'
+        loss = money(limit.risk_per_contract * qty) if limit.risk_per_contract is not None else 'chờ phí DNSE' if rules.sl_enabled else 'chưa có SL'
         self.confirm(f"{self.settings.mode} · {side} {self.view.get('contract', 'VN30F1M')} · {amount}\n"
                      f"{kind} {price(px)} · Ký quỹ {margin} · Lỗ tại SL ~{loss}"
-                     + (" + phí" if not self.settings.estimated_fee_per_contract and rules.sl_enabled else ""), submit)
+                     + (' · Phí gói DNSE; thuế/phí Sở chờ đối chiếu' if self.settings.mode=='REAL' else ' · Phí mô phỏng'), submit)
 
     def manage_position(self):
         return self.settings_dialog('E/M', scope='VỊ THẾ')

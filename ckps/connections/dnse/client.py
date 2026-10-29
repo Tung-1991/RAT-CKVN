@@ -18,6 +18,7 @@ from ckps.models import FINAL, Order, Quote, Settings, Snapshot, is_vn30, market
 
 from ckps.connections.dnse.protocol import BrokerError, UnknownOutcome, SubmissionCancelled, first, rows, unwrap, normalize_order
 from ckps.connections.dnse.account import amount, balances
+from ckps.connections.dnse.fees import package_fees
 
 class DNSEBroker:
     mode = "REAL"
@@ -204,7 +205,8 @@ class DNSEBroker:
         return Snapshot(contract, positions, orders, quotes,
             funds["remaining_margin"], funds["used_margin"],
             margin, qlong, qshort, funds["nav"], bars=bars, source="DNSE",
-            pending_margin=pending_margin, total_money=total_money, collateral_total=funds["collateral_total"], margin_reference_price=px)
+            pending_margin=pending_margin, total_money=total_money, collateral_total=funds["collateral_total"], margin_reference_price=px,
+            package_fees=package_fees(package))
 
     def opening_limits(self, symbol, price):
         """Read broker capacity at the exact proposed price, never a POST retry."""
@@ -221,7 +223,7 @@ class DNSEBroker:
             margin = price * 100_000 * rate
         return dict(qmax_long=quantity(response["qmaxBuy"]) if response.get("qmaxBuy") is not None else None,
                     qmax_short=quantity(response["qmaxSell"]) if response.get("qmaxSell") is not None else None,
-                    margin_per_contract=margin, margin_reference_price=price)
+                    margin_per_contract=margin, margin_reference_price=price, package_fees=package_fees(package))
 
     def submit(self, order, can_submit=None):
         if not is_vn30(order.symbol) or order.symbol.startswith("VN30F"):

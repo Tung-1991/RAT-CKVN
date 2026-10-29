@@ -27,6 +27,8 @@
   RULE E/M chọn CHUNG / VỊ THẾ; cấu hình riêng, kế thừa và nhận/bỏ quản lý đều ở đó.
   Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và vào lệnh.
   Không danh mục CKCS, không tab BOT, không tooltip/legend/preview trùng lặp.
+- DNSE dùng chung một cặp API key/secret; ĐỌC API hiển thị tài khoản CKPS/gói/phí,
+  tự chọn khi duy nhất, có nhiều thì chọn từ API. Không nhập ID/phí tay; phí gói không đồng nghĩa tổng thuế/phí Sở.
 - Đóng/giảm, hủy/sửa/đối soát lệnh dùng vùng thao tác trong màn hình; chỉ hiện nút phù hợp
   dòng đang chọn. Xác nhận gửi lệnh vẫn cần nhưng nằm trong app, không popup.
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.

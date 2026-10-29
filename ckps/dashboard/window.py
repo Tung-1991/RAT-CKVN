@@ -107,7 +107,8 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
 
     def _start_runtime(self, settings, credentials):
         try:
-            self.runtime = Runtime(settings, credentials)
+            profile=getattr(self,'connection_preview',{}).get('profile',{}) if settings.mode=='PAPER' else None
+            self.runtime = Runtime(settings, credentials, market_profile=profile)
             self.bot_requested = False
             self.credentials, self.settings = credentials, settings
             self.connection_profile = dict(credentials)

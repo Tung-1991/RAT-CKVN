@@ -72,6 +72,12 @@ class PaperBroker:
         quote=(self.feed.latest(symbol,self.settings.max_quote_age) if self.feed else None) or self.quotes.get(symbol)
         return quote if quote and quote.symbol==symbol else None
 
+    def _fee(self, action):
+        fees=self.market_view.get('account_profile',{}).get('fees',{})
+        # PAPER uses the higher published close rate for its estimate.
+        value=fees.get('close' if action=='CLOSE' else 'open')
+        return self.settings.estimated_fee_per_contract if value is None else value
+
     def _fill(self, row):
         if row["status"] in FINAL:
             return
@@ -86,7 +92,7 @@ class PaperBroker:
         holding = self.store.get("paper_position", key)
         qty = row["quantity"] - row["filled"]
         account = self.store.get("paper", "account")
-        fee = self.settings.estimated_fee_per_contract * qty
+        fee = self._fee(row['action']) * qty
         if row["action"] == "OPEN":
             if holding and holding["side"] != row["side"]:
                 row["status"] = "REJECTED"
@@ -176,7 +182,8 @@ class PaperBroker:
             qmax = int(remaining//margin) if margin and remaining is not None else None
             return Snapshot(self.contract, positions, orders, self.quotes, remaining, used, margin,
                             qmax,qmax,nav,source="PAPER · TIỀN ẢO",pending_margin=pending,bars=self.bars,paper_capital=account['capital'],
-                            total_money=account['cash'],collateral_total=account['cash'],margin_reference_price=self.quotes[self.contract].last if self.contract in self.quotes else None)
+                            total_money=account['cash'],collateral_total=account['cash'],margin_reference_price=self.quotes[self.contract].last if self.contract in self.quotes else None,
+                            package_fees=self.market_view.get('account_profile',{}).get('fees',{}))
 
     def close(self):
         if self.market:

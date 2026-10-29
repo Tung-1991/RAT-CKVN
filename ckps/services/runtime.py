@@ -21,7 +21,7 @@ from ckps.services.calendar import CalendarWorker, summary as calendar_summary
 class Runtime:
     """One I/O worker; Tk receives immutable snapshots and never waits on HTTP."""
 
-    def __init__(self, settings, credentials=None, *, offline=False):
+    def __init__(self, settings, credentials=None, *, offline=False, market_profile=None):
         self.settings = settings
         from ckps.services.quote_cache import QuoteCache
         self.quote_cache = QuoteCache()
@@ -33,7 +33,12 @@ class Runtime:
         secret=credentials.get("secret") or os.environ.get("CKPS_DNSE_API_SECRET","")
         try:
             if settings.mode=="PAPER":
-                market=None if offline else PaperMarket(ReadOnlyHistory(key,secret) if key and secret else None,poll_seconds=settings.poll_seconds)
+                from ckps.connections.dnse.discovery import AccountReader
+                reader=AccountReader(key,secret) if key and secret and not offline else None
+                profile=market_profile or {}
+                market=None if offline else PaperMarket(ReadOnlyHistory(key,secret) if key and secret else None,
+                    poll_seconds=settings.poll_seconds,account_reader=reader,account=profile.get('account_no',settings.account_no),
+                    package=profile.get('loan_package_id',settings.loan_package_id))
                 broker=PaperBroker(self.store,settings,market=market,offline=offline)
             else:
                 broker=DNSEBroker(key,secret,settings.account_no,settings.loan_package_id)
@@ -158,7 +163,7 @@ class Runtime:
         views = {"armed": self.engine.enabled.is_set(), "healthy": self.engine.healthy,
                  "consistent": self.engine.consistent, "error": self.engine.error,
                  "mode": self.settings.mode, "contract": snapshot.contract if snapshot else "VN30F1M",
-                 "loan_packages": [{"id": p.get("id"), "name": p.get("name"), "rate": p.get("initialRate")}
+                 "loan_packages": [{"id": p.get("id"), "name": p.get("name"), "rate": p.get("initialRate"), 'tradingFee': p.get('tradingFee')}
                                    for p in getattr(self.engine.broker, "packages", [])],
                  "quotes": quotes, "positions": [asdict(p) for p in self.store.positions()],
                  "orders": [asdict(o) for o in self.store.orders()][-300:],
@@ -169,6 +174,7 @@ class Runtime:
         until = getattr(broker, 'token_until', 0.)
         views['trading_auth'] = {'required': self.settings.mode == 'REAL', 'until': until,
             'valid': bool(getattr(broker, 'token', '') and until > time.time())}
+        views['account_profile'] = getattr(broker, 'market_view', {}).get('account_profile', {})
         if snapshot:
             from ckps.services.market_context import context
             views['market_context'] = context(snapshot, max_age=self.settings.max_quote_age)
@@ -179,7 +185,7 @@ class Runtime:
             # must not recompute it from realtime prices or placeholder bars.
             views["atr14_pct"] = self.engine._atr(snapshot.contract) or None
             views["account"] = {name: getattr(snapshot, name) for name in (
-                "nav", "remaining_margin", "used_margin", "margin_per_contract", "pending_margin", "qmax_long", "qmax_short", "observed_at", "source", "paper_capital", "total_money", "collateral_total", "margin_reference_price")}
+                "nav", "remaining_margin", "used_margin", "margin_per_contract", "pending_margin", "qmax_long", "qmax_short", "observed_at", "source", "paper_capital", "total_money", "collateral_total", "margin_reference_price", 'package_fees')}
         for side in ("LONG", "SHORT"):
             try:
                 views[side] = asdict(self.engine.preview(side))

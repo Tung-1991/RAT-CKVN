@@ -284,6 +284,7 @@ class Snapshot:
     total_money: float | None = None
     collateral_total: float | None = None
     margin_reference_price: float | None = None
+    package_fees: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import floor
 
 from ckps.models import ExitSettings, Settings, Snapshot, load_record
+from ckps.connections.dnse.fees import fee_pair
 
 
 @dataclass
@@ -45,7 +46,9 @@ def capacity(settings: Settings, snapshot: Snapshot, positions, orders, side, en
             return Capacity(0, int(broker_max), None, None, "Thiếu ký quỹ đã dùng/đang chờ.")
         room = max(0.0, settings.capital_limit - snapshot.used_margin - snapshot.pending_margin - local_qty * margin)
         maximum = min(maximum, floor(room / margin))
-    risk_each = exits.points(exits.sl_distance, entry) * 100_000 + settings.estimated_fee_per_contract * 2 if exits.sl_enabled else None
+    fee_open, fee_close = fee_pair(settings, snapshot)
+    fee_round = fee_open + fee_close if fee_open is not None and fee_close is not None else None
+    risk_each = exits.points(exits.sl_distance, entry) * 100_000 + fee_round if exits.sl_enabled and fee_round is not None else None
     risk_ceiling = settings.risk_limit or None
     if settings.risk_nav_pct:
         if snapshot.nav is None or snapshot.nav <= 0:
@@ -53,6 +56,8 @@ def capacity(settings: Settings, snapshot: Snapshot, positions, orders, side, en
         by_nav = snapshot.nav * settings.risk_nav_pct / 100
         risk_ceiling = min(risk_ceiling, by_nav) if risk_ceiling is not None else by_nav
     if risk_ceiling is not None:
+        if fee_round is None:
+            return Capacity(0, int(broker_max), None, room, 'Chờ phí gói DNSE để kiểm tra trần rủi ro.')
         if risk_each is None or risk_each <= 0:
             return Capacity(0, int(broker_max), risk_each, room, "Cần SL để kiểm tra trần rủi ro.")
         used_risk = 0.0
@@ -60,13 +65,13 @@ def capacity(settings: Settings, snapshot: Snapshot, positions, orders, side, en
             rule = load_record(ExitSettings, position.exit_overrides or settings.exit)
             if not rule.sl_enabled:
                 return Capacity(0, int(broker_max), risk_each, room, "Có vị thế chưa có SL; chưa xác định tổng rủi ro.")
-            used_risk += position.quantity * (rule.points(rule.sl_distance, position.entry) * 100_000 + settings.estimated_fee_per_contract * 2)
+            used_risk += position.quantity * (rule.points(rule.sl_distance, position.entry) * 100_000 + fee_round)
         for order in orders:
             if order.pending and order.action == "OPEN":
                 rule = load_record(ExitSettings, order.exit_settings or settings.exit)
                 if not rule.sl_enabled:
                     return Capacity(0, int(broker_max), risk_each, room, "Lệnh mở đang chờ chưa có SL.")
-                used_risk += order.remainder * (rule.points(rule.sl_distance, order.price or entry) * 100_000 + settings.estimated_fee_per_contract * 2)
+                used_risk += order.remainder * (rule.points(rule.sl_distance, order.price or entry) * 100_000 + fee_round)
         maximum = min(maximum, floor(max(0.0, risk_ceiling - used_risk) / risk_each))
     return Capacity(maximum, int(broker_max), risk_each, room,
                     "Đã hết sức mở hoặc chạm giới hạn vốn/rủi ro." if maximum <= 0 else "", margin)
