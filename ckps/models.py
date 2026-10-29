@@ -126,6 +126,11 @@ class ExitSettings:
         return value * entry / 100 if self.distance_unit in {"PERCENT", "PRICE_PERCENT"} else value
 
 
+def _default_exit_settings():
+    from ckps.rules.defaults import default_exit_settings
+    return default_exit_settings()
+
+
 @dataclass
 class Settings:
     mode: str = "PAPER"
@@ -137,7 +142,7 @@ class Settings:
     estimated_fee_per_contract: float = 0.0
     poll_seconds: float = 2.0
     max_quote_age: float = 10.0
-    exit: dict = field(default_factory=lambda: asdict(ExitSettings()))
+    exit: dict = field(default_factory=_default_exit_settings)
     telegram_enabled: bool = False
     telegram_chat: str = ""
     signals: dict = field(default_factory=dict)

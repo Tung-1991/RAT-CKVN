@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import asdict, replace
 import os
 import socket
 from datetime import datetime
@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from ckps.connections.dnse.paper import PaperBroker
-from ckps.models import Settings
+from ckps.models import ExitSettings, Settings
 from ckps.trading.execution import Engine
 from ckps.storage import Store
 
@@ -31,7 +31,9 @@ def offline(monkeypatch, tmp_path):
 @pytest.fixture
 def system(tmp_path):
     store = Store(tmp_path / "ledger.sqlite3")
-    settings = Settings()
+    # Unit scenarios opt into individual branches themselves. The shipped
+    # ready-to-use preset has dedicated startup/execution tests.
+    settings = Settings(exit=asdict(ExitSettings()))
     broker = PaperBroker(store, settings, offline=True)
     engine = Engine(store, broker, settings)
     engine.poll()

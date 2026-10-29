@@ -20,7 +20,12 @@ def read_settings():
     if not path.exists():
         return Settings()
     try:
-        return load_record(Settings, json.loads(path.read_text(encoding="utf-8"))).validate()
+        values = json.loads(path.read_text(encoding="utf-8"))
+        # An empty section contains no saved strategy. A fully saved OFF rule
+        # is an explicit user choice and must survive every restart.
+        if values.get('exit') == {}:
+            values.pop('exit')
+        return load_record(Settings, values).validate()
     except (ValueError, TypeError, KeyError) as exc:
         raise RuntimeError("Cấu hình CKPS không hợp lệ; giữ nguyên file để kiểm tra.") from exc
 

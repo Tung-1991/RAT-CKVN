@@ -3,15 +3,13 @@ from dataclasses import asdict, replace
 import time
 
 from ckps.models import ExitSettings, Position, Quote, Settings
+from ckps.rules.defaults import default_exit_settings
 from ckps.rules.protection import evaluate
 from .window import App
 
 
 def demo_rules():
-    return ExitSettings(distance_unit='PRICE_PERCENT',sl_enabled=True,sl_distance=.5,tp_enabled=False,tp_distance=0,
-        arm_enabled=True,arm_gain=1,trail_gap=.25,arm_close_pct=50,arm_repeat=True,repeat_gap=.25,
-        dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,dynamic_repeat=True,
-        atr_start_multiplier=.5,atr_trail_multiplier=.8,retention_pct=70,retention_until_enabled=False)
+    return ExitSettings(**default_exit_settings())
 
 
 def long_sample(stage):

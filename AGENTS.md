@@ -19,6 +19,10 @@
   Không chọn đơn vị. Điểm/% PNL cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
   giữ nguyên và báo CHỜ. Vị thế/lệnh đang chờ giữ E/M cũ riêng khi đổi RULE chung.
   Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
+- App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
+  ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
+  DYNAMIC AUTO: ATR START 0,5, ATR trail 0,8, giữ 70% lãi, LẶP ON.
+  Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,
   Ngài tự quyết định giao dịch, không chặn mở mới theo đáo hạn.

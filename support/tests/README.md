@@ -5,6 +5,7 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 | File | Phạm vi |
 | --- | --- |
+| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; bản mẫu dùng chung preset; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |
 | `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; mốc LẶP qua gap/hồi giá, handoff, khớp từng phần và restart |
 | `test_capital.py` | Sức mở/ký quỹ tự lấy từ broker, giữ chỗ lệnh local không trừ hai lần, kiểm tra lại trước gửi; SL chỉ ước tính lỗ, không thêm hạn mức; chỉnh vốn PAPER giữ lãi/phí/lịch sử, chặn giảm dưới ký quỹ và tách REAL |
