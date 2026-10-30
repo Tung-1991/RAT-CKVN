@@ -184,14 +184,14 @@ def _consolidated_scenario(scale):
         for name in ('normal_policy_menu','dynamic_policy_menu','normal_sell_basis','dynamic_sell_basis_selector','normal_sell','dynamic_sell'):
             assert not hasattr(rule,name),name
         assert not any(isinstance(w,ctk.CTkOptionMenu) for w in controls(rule.protection_host))
-        assert not any(isinstance(w,ctk.CTkSegmentedButton) for w in controls(rule.protection_host))
+        assert any(isinstance(w,ctk.CTkSegmentedButton) for w in controls(rule.protection_host))
         assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
         assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
         assert rule._exits()['arm_close_pct']==50 and rule._exits()['dynamic_close_pct']==50
-        for name in ('take_profit','normal_atr_multiplier','normal_atr_activation_multiplier',
+        for name in ('normal_atr_multiplier','normal_atr_activation_multiplier',
                      'normal_retention_pct','normal_retention_until_pct','below_arm_switch'):
             assert not hasattr(rule,name),name
-        assert sum(isinstance(w,ctk.CTkEntry) for w in controls(rule.protection_host))==4
+        assert sum(isinstance(w,ctk.CTkEntry) for w in controls(rule.protection_host))==7
         assert '1,00%' in rule.dynamic_atr_value.cget('text')
         assert rule.primary.cget('text') == 'LƯU RULE'
         settle()

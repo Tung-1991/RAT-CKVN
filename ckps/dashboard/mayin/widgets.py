@@ -30,10 +30,10 @@ PALETTE = {
 FONT_KEY = ("Segoe UI", 14, "bold")
 
 
-FONT_VALUE = ("Segoe UI", 14)
+FONT_VALUE = ("Segoe UI", 16, "bold")
 
 
-FONT_MONO_VALUE = ("Cascadia Mono", 14)
+FONT_MONO_VALUE = ("Cascadia Mono", 16, "bold")
 
 
 FONT_TABLE_HEADING = ("Segoe UI", 16, "bold", "italic")
@@ -197,7 +197,7 @@ class _StableToplevel(ctk.CTkToplevel):
         super().destroy()
 
 
-def size_popup(window, width=780, height=620):
+def size_popup(window, width=860, height=740):
     """Use one centered logical size for RULE/KẾT NỐI without going off-screen at high DPI."""
     scale = max(.5, window._get_window_scaling())
     # Tk caches the screen size before CTk enables Windows DPI awareness.
@@ -215,9 +215,41 @@ def size_popup(window, width=780, height=620):
 
 
 class StableTabview(ctk.CTkTabview):
+    _button_height = 36
+    _outer_spacing = 6
+    _outer_button_overhang = 6
+
+    def __init__(self,*args,**kwargs):
+        options=dict(segmented_button_fg_color='#172330',
+            segmented_button_unselected_color='#222E3B',
+            segmented_button_unselected_hover_color='#32475D',
+            segmented_button_selected_color='#286AA6',
+            segmented_button_selected_hover_color='#337EBE',text_color='#E3EDF8')
+        super().__init__(*args,**{**options,**kwargs})
+        self._segmented_button.configure(font=('Segoe UI',14,'bold'),height=36,corner_radius=7)
+
     def _grid_forget_all_tabs(self, exclude_name=None):
         # CTk queues this 100 ms after set(). A stale callback must not hide
         # the new current tab if the user switches again before it executes.
         if exclude_name is not None and exclude_name != self.get():
             return
         super()._grid_forget_all_tabs(exclude_name)
+
+
+def choice_bar(parent, **kwargs):
+    options = dict(height=36, corner_radius=7, border_width=3, fg_color='#172330',
+        selected_color='#286AA6', selected_hover_color='#337EBE',
+        unselected_color='#222E3B', unselected_hover_color='#32475D',
+        text_color='#E3EDF8', text_color_disabled='#78899B',
+        font=('Segoe UI',14,'bold'), dynamic_resizing=False)
+    return ctk.CTkSegmentedButton(parent, **{**options, **kwargs})
+
+
+def option_menu(parent, **kwargs):
+    options = dict(height=36, corner_radius=7, fg_color='#24364A',
+        button_color='#315A81', button_hover_color='#3B74A7',
+        text_color='#E3EDF8', text_color_disabled='#8191A3',
+        dropdown_fg_color='#1B2938', dropdown_hover_color='#2B5C87',
+        dropdown_text_color='#E3EDF8', font=('Segoe UI',14,'bold'),
+        dropdown_font=('Segoe UI',14), dynamic_resizing=False)
+    return ctk.CTkOptionMenu(parent, **{**options, **kwargs})

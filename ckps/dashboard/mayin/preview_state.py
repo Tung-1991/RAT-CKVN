@@ -40,9 +40,11 @@ def preview_state(view, max_age, position=None, rules=None, *, changing_book=Fal
     elif any(o.get('position_id') == position.id and o.get('action') == 'CLOSE'
              and o.get('status') not in FINAL for o in view.get('orders', [])):
         management = ('QL · CHỜ KHỚP', 'amber')
-    elif rules and not any((rules.sl_enabled, rules.tp_enabled, rules.arm_enabled, rules.dynamic_enabled)):
+    elif rules and rules.ema_exit_enabled and not any((rules.sl_enabled, rules.tp_enabled, rules.arm_enabled, rules.dynamic_enabled)) and not view.get('ema_exit',{}).get('ready'):
+        management = ('QL · CHỜ EMA 1D', 'amber')
+    elif rules and not any((rules.sl_enabled, rules.tp_enabled, rules.arm_enabled, rules.dynamic_enabled, rules.ema_exit_enabled)):
         management = ('QL · RULE OFF', 'amber')
-    elif rules and not (rules.sl_enabled or rules.tp_enabled or
+    elif rules and not (rules.sl_enabled or rules.tp_enabled or rules.ema_exit_enabled or
                        rules.arm_enabled and rules.arm_policy == 'AUTO' or
                        rules.dynamic_enabled and rules.dynamic_policy == 'AUTO'):
         management = ('QL · CHỈ BÁO', 'blue')

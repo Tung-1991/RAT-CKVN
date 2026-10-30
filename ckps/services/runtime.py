@@ -91,6 +91,9 @@ class Runtime:
                     if name == "settings":
                         settings = load_record(Settings, args[0]).validate()
                         self.settings = self.engine.settings = settings
+                        feed = getattr(self.engine.broker, 'feed', None)
+                        if feed:
+                            feed.max_quote_age = settings.max_quote_age
                         if isinstance(self.engine.broker, PaperBroker):
                             self.engine.broker.settings = settings
                     elif name == "paper_capital":
@@ -184,6 +187,7 @@ class Runtime:
             # Expose the same completed-candle ATR used by protection; the UI
             # must not recompute it from realtime prices or placeholder bars.
             views['atr14'] = self.engine.atr_snapshot(snapshot.contract)
+            views['ema_exit'] = self.engine.ema_snapshot(snapshot.contract)
             views["atr14_pct"] = views['atr14']['pct']
             views["account"] = {name: getattr(snapshot, name) for name in (
                 "nav", "remaining_margin", "used_margin", "margin_per_contract", "pending_margin", "qmax_long", "qmax_short", "observed_at", "source", "paper_capital", "total_money", "collateral_total", "margin_reference_price", 'package_fees')}

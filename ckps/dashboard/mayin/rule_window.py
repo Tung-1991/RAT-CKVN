@@ -22,7 +22,7 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.tabs = StableTabview(self, fg_color=self.BG, border_width=1, border_color=self.BORDER,
-            segmented_button_selected_color=self.BLUE, segmented_button_unselected_color='#3A3F47', command=self._page_changed)
+            segmented_button_selected_color=self.BLUE, segmented_button_unselected_color='#222E3B', command=self._page_changed)
         self.tabs.grid(row=0, column=0, sticky='nsew', padx=10, pady=(8, 3))
         self._tab_font(self.tabs, 14)
         em = self.tabs.add('E/M')

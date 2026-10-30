@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 def shared_exit_settings(values):
     """Fixed execution choices for the single ready-to-use RULE."""
-    return {**values, 'tp_enabled': False, 'tp_distance': 0.0,
+    return {**values,
             'arm_policy': 'AUTO', 'dynamic_policy': 'AUTO',
             'arm_basis': 'REMAINING', 'dynamic_basis': 'REMAINING',
             'arm_close_pct': 50.0, 'dynamic_close_pct': 50.0,

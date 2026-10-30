@@ -28,7 +28,7 @@ def ticket():
 def test_invalid_ticket_clears_previous_money_estimates(field, text):
     app = ticket()
     MayinController._refresh_ticket_preview(app)
-    assert app.lbl_tp_preview.text == 'OFF' and app.lbl_sl_preview.text == '-2,000,000 đ'
+    assert app.lbl_tp_preview.text == 'OFF' and app.lbl_sl_preview.text == '-2,000,000'
     getattr(app, field).get = lambda: text
     MayinController._refresh_ticket_preview(app)
     assert app.lbl_tp_preview.text == 'OFF'
@@ -52,7 +52,7 @@ def test_auto_preview_for_an_existing_short_uses_short_buying_power():
     app.view['account'].update(qmax_long=0, qmax_short=2)
     app.ticket_capacity = lambda side, *args: SimpleNamespace(margin_per_contract=40_000_000, maximum=2 if side=='SHORT' else 0)
     MayinController._refresh_ticket_preview(app)
-    assert app.lbl_sl_preview.text == '-2,000,000 đ' and app.lbl_fee_preview.text == '4,000 đ'
+    assert app.lbl_sl_preview.text == '-2,000,000' and app.lbl_fee_preview.text == '4,000'
     assert app.lbl_order_value.text == '80,004,000 đ'
 
 

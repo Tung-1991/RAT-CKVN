@@ -2,6 +2,7 @@
 import tkinter as tk
 import customtkinter as ctk
 from .theme import BORDER, SURFACE, SURFACE_2, TITLE, TEXT, BLUE
+from .mayin.widgets import StableTabview, choice_bar
 
 
 LABELS = {"POINTS": "ĐIỂM", "PERCENT": "% GIÁ", "ORIGINAL": "GỐC", "REMAINING": "CÒN GIỮ",
@@ -36,8 +37,8 @@ class CompactForm:
         elif choices:
             display = tk.StringVar(value=LABELS.get(str(value), str(value)))
             values = {LABELS.get(v, v): v for v in choices}
-            widget = ctk.CTkSegmentedButton(row, values=list(values), variable=display, height=27,
-                font=("Segoe UI", 10, "bold"), selected_color=BLUE, dynamic_resizing=False,
+            widget = choice_bar(row, values=list(values), variable=display, height=34,
+                font=("Segoe UI", 13, "bold"),
                 command=lambda selected: variable.set(values[selected]))
             variable.trace_add("write", lambda *_: display.set(LABELS.get(variable.get(), variable.get())))
         else:
@@ -53,6 +54,10 @@ def columns(parent, count=2):
 
 
 def tabs(parent):
-    return ctk.CTkTabview(parent, fg_color="transparent", border_width=0,
-        segmented_button_selected_color=BLUE, segmented_button_unselected_color=SURFACE_2,
-        segmented_button_unselected_hover_color=BORDER)
+    view = StableTabview(parent, fg_color=SURFACE, border_width=1, border_color='#34465A',
+        anchor='nw', segmented_button_fg_color='#172330',
+        segmented_button_selected_color='#286AA6', segmented_button_selected_hover_color='#337EBE',
+        segmented_button_unselected_color='#222E3B', segmented_button_unselected_hover_color='#32475D',
+        text_color='#E3EDF8')
+    view._segmented_button.configure(font=('Segoe UI',14,'bold'),height=36,corner_radius=7)
+    return view

@@ -53,6 +53,7 @@ def normalize_order(row):
         fill = 0  # The broker's NEW acknowledgement proves no execution yet.
     if fill is None or (number(fill) > 0 and (avg is None or number(avg) <= 0)):
         state = "UNKNOWN"
+    reported_quantity = first(row, "quantity", "orderQuantity")
     return {
         "broker_id": str(first(row, "id", "orderId", default="")),
         "symbol": str(row.get("symbol", "")),
@@ -60,7 +61,7 @@ def normalize_order(row):
         "tag": str(first(row, "remark", "comment", default="")),
         "status": state, "filled": None if fill is None else quantity(fill),
         "avg_fill": number(avg),
-        "quantity": quantity(first(row, "quantity", "orderQuantity", default=0)),
+        "quantity": quantity(reported_quantity) if reported_quantity is not None else None,
         "price": number(row.get("price")),
         "fee": number(first(row, "fee", "commission", default=0)) + number(row.get("tax")),
     }

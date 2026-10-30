@@ -7,13 +7,21 @@
 - Backend riêng giữ P1/P2 MayinTien để phân tích; Telegram gồm biến động VN30,
   nhắc trước đáo hạn và Tín hiệu / Lệnh (gợi ý, biên nhận mở/đóng/giảm).
   Không có quyền mở/đóng lệnh.
+- E thực thi tại app giao dịch, tách khỏi E ALERT của backend: EMA nhanh/chậm
+  mặc định 3/6, chỉnh ngay E/M cùng REALTIME/CLOSED và nhịp TICK/1M/2M/5M trên nến 1D.
+  Long nhanh < chậm, Short nhanh > chậm thì đóng toàn bộ khi E + BOT + quyền vị thế ON. E mới mặc định OFF,
+  bật/lưu tại RULE → E/M; không phụ thuộc ALERT/Telegram, không mở hoặc đảo chiều.
+- SL/TP/E đóng HĐ khả dụng trước, hủy lệnh đóng cũ cản trở và chờ broker xác nhận
+  trước khi giải phóng giữ chỗ. Ý định thoát lưu bền qua hồi giá/restart, vẫn
+  cần BOT/quyền ON; tắt nhánh hoặc bỏ quản lý dừng ý định. UNKNOWN không gửi lại.
 - UI dùng TÍN HIỆU / GIỜ THEO DÕI, không dùng BUY/ENTRY BUY/giờ mua. P2 và E
   giữ cổng ALERT riêng trong backend, UI gom dưới EMA/RSI; mặc định OFF,
   tắt chỉ ngừng thông báo, vẫn phân tích.
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
   E/M mới dùng duy nhất % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa
-  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5; TP cố định OFF.
+  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5. TP mặc định OFF,
+  có công tắc và mức % giá vốn tại RULE; bật thì chốt toàn bộ. Giữ cấu hình TP đã lưu.
   TSL/LẶP bám đỉnh Long/đáy Short, khoảng lùi quy ra từ cùng % giá vốn.
   RULE tạo mới trong code cũng mặc định PRICE_PERCENT. Preview/hint chỉ hiện
   % giá vốn; đơn vị dữ liệu cũ chỉ xử lý nội bộ, không trình bày thành mode.
@@ -30,7 +38,7 @@
   ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
   DYNAMIC cố định ATR14 nến ngày đã đóng: START 0,5 ATR, trail 0,8 ATR,
   giữ 70% lãi đỉnh, không TỚI MFE riêng; LẶP mặc định ON.
-  Chỉ bốn ô số SL/ARM/Lùi/LẶP; bỏ ô chỉnh ATR/giữ lãi/TỚI MFE và lặp dưới ARM.
+  Các ô SL/TP/ARM/Lùi/LẶP cùng hai chu kỳ EMA của E; bỏ ô chỉnh ATR/giữ lãi/TỚI MFE và lặp dưới ARM.
   Cấu hình cũ cũng dùng các hệ số cố định này; vẫn giữ cờ nhánh/LẶP đã lưu.
   Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
@@ -68,11 +76,14 @@
   riêng với ngày phiên, không lấy nến hôm nay hoặc dựng số mẫu trong app thật.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ hiện CHỜ; không suy ngược điểm Short. Ẩn PNL
-  và trạng thái lặp trên màn hình chính. Nội dung 14, kết quả 18, giá/vốn 24;
+  và trạng thái lặp trên màn hình chính. Chi tiết chính 16 đậm, kết quả 22, giá/vốn 24;
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
   Trạng thái bảng xét cả BOT chung và dữ liệu; bỏ nút BẢO VỆ LỆNH/NHẬN/BỎ QUẢN LÝ khỏi bảng,
   chọn dòng rồi mở RULE → E/M để nhận/bỏ quyền BOT. Backend chỉ nhận tham số tín hiệu qua pipe, không nhận tài khoản/OTP.
+- Chọn PAPER/REAL không tự mở KẾT NỐI. REAL xác minh tài khoản/gói qua GET worker;
+  thiếu cấu hình hoặc nhiều lựa chọn thì báo ngay MAIN, giữ sổ cũ. Bỏ kết quả cũ
+  khi đổi ý/kết nối; chỉ dừng sổ cũ sau khi xác minh, sổ mới luôn BOT OFF.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

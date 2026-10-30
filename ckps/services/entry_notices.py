@@ -105,7 +105,7 @@ def receipt_text(value, at):
     if math.isfinite(price) and price > 0:
         text += f" · {'Giá khớp' if filled else 'Giá LO'} {price:g}"
     if action == 'CLOSE':
-        reason = {'MANUAL': 'ĐÓNG TAY', 'SL': 'SL', 'TP': 'TP', 'ARM': 'TSL / ARM', 'DYN': 'DYNAMIC'}.get(value.get('reason'), 'ĐÓNG / GIẢM')
+        reason = {'MANUAL': 'ĐÓNG TAY', 'SL': 'SL', 'E': 'E / EMA', 'TP': 'TP', 'ARM': 'TSL / ARM', 'DYN': 'DYNAMIC'}.get(value.get('reason'), 'ĐÓNG / GIẢM')
         text += '\n' + reason
         remaining = value.get('remaining')
         if type(remaining) is int and remaining >= 0:

@@ -64,7 +64,7 @@ class OriginalRuleForms:
         row = ctk.CTkFrame(card, fg_color='transparent')
         row.pack(fill='x', padx=8 if compact else 12, pady=2 if compact else 3)
         row.grid_columnconfigure(0, weight=1)
-        caption = ctk.CTkLabel(row, text=label, width=1, font=('Segoe UI', 12) if compact else FONT_KEY, text_color=self.TITLE, anchor='w', justify='left')
+        caption = ctk.CTkLabel(row, text=label, width=1, font=('Segoe UI', 14), text_color=self.TITLE, anchor='w', justify='left')
         caption.grid(row=0, column=0, sticky='ew')
 
         def wrap_caption(_event: Any) -> None:
@@ -72,7 +72,7 @@ class OriginalRuleForms:
             if caption.cget('wraplength') != length:
                 caption.configure(wraplength=length)
         caption.bind('<Configure>', wrap_caption, add='+')
-        entry = ctk.CTkEntry(row, width=68 if compact else 92, height=27 if compact else 34, justify='right', font=('Segoe UI', 12) if compact else FONT_VALUE, fg_color='#181B20', border_color='#444B55', text_color=self.TEXT, textvariable=variable)
+        entry = ctk.CTkEntry(row, width=78 if compact else 92, height=32 if compact else 34, justify='right', font=FONT_VALUE, fg_color='#15202C', border_color='#3A526B', text_color=self.TEXT, textvariable=variable)
         if variable is None:
             entry.insert(0, str(value))
         entry.grid(row=0, column=1, padx=(8, 5))
@@ -115,18 +115,20 @@ class OriginalRuleForms:
         body = self._content(frame, columns=2)
         self.exit_body=body
         compact=not include_signals
-        take = self._card(body, 'SL / LẶP', '', 1, 0, span=2,compact=compact)
+        take = self._card(body, 'SL / TP / LẶP', '', 1, 0, span=2,compact=compact)
         limits = ctk.CTkFrame(take, fg_color='transparent')
         limits.pack(fill='x', padx=4, pady=(0, 2 if compact else 6))
-        limits.grid_columnconfigure((0, 1), weight=1, uniform='exit-limits')
+        limits.grid_columnconfigure((0, 1, 2), weight=1, uniform='exit-limits')
         limit_cells = []
-        for column in range(2):
+        for column in range(3):
             cell = ctk.CTkFrame(limits, fg_color='transparent')
             cell.grid(row=0, column=column, sticky='nsew')
             cell._viking_compact=compact
             limit_cells.append(cell)
+        self.exit_limit_cells=limit_cells
         self.initial_sl = self._field(limit_cells[0], 'SL (% GIÁ)', self.params.initial_sl_pct, 'Mức cắt lỗ theo % giá vốn bình quân. Nhập 0,25 hoặc -0,25: app dùng khoảng cách 0,25%. Giá vốn 2.000: Long cắt tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. Không tính trên tiền hoặc NAV.')
-        self.reentry_sl = self._field(limit_cells[1], 'LẶP (% GIÁ)', self.params.reentry_sl_pct, 'Khoảng giá giữa các lượt đóng = giá vốn × bước LẶP / 100. Chờ lệnh trước kết thúc, không gửi lặp cùng lượt; không phụ thuộc ký quỹ.')
+        self.take_profit = self._field(limit_cells[1], 'TP (% GIÁ)', self.params.take_profit_pct, 'Chốt toàn bộ theo % giá vốn. Giá vốn 2.000, TP 1%: Long chốt tại 2.020, Short tại 1.980. Chỉ tự đóng khi TP, BOT và quyền vị thế ON.')
+        self.reentry_sl = self._field(limit_cells[2], 'LẶP (% GIÁ)', self.params.reentry_sl_pct, 'Khoảng giá giữa các lượt đóng = giá vốn × bước LẶP / 100. Chờ lệnh trước kết thúc, không gửi lặp cùng lượt; không phụ thuộc ký quỹ.')
         self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Khi BOT và quyền quản lý ON, mỗi lượt tự đóng 50% số HĐ còn lại, làm tròn xuống và tối thiểu 1 HĐ. Ví dụ 4 → 2 → 1 → 0 HĐ qua các lượt LẶP, không gửi liên tục cùng một mốc.', 2, 0, span=2,compact=compact)
         groups = ctk.CTkFrame(self.protect_card, fg_color='transparent')
         groups.pack(fill='x', padx=4, pady=(0, 0 if compact else 2))

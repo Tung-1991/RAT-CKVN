@@ -64,16 +64,16 @@ def test_same_percent_applies_to_each_contract_entry_without_resetting_protectio
 
 
 @pytest.mark.parametrize('side,price', [('LONG',2200),('SHORT',1800)])
-def test_tp_stays_off_even_when_old_settings_attempt_to_enable_it(system,side,price):
+def test_saved_tp_is_respected_and_closes_the_position(system,side,price):
     engine, broker, store = system
     settings=Settings(exit=asdict(ExitSettings(tp_enabled=True,tp_distance=.1))).validate()
     write_settings(settings)
     engine.settings=read_settings()
-    assert not engine.settings.exit['tp_enabled'] and engine.settings.exit['tp_distance']==0
+    assert engine.settings.exit['tp_enabled'] and engine.settings.exit['tp_distance']==.1
     engine.open_manual(side,1,'MOK');engine.poll();engine.arm(True)
     broker.set_price(price);engine.poll();engine.poll()
-    assert store.positions()[0].quantity==1 and len(store.orders())==1
-    assert levels(store.positions()[0],engine.exits(store.positions()[0]))['tp']==0
+    assert not store.positions() and len(store.orders())==2
+    assert store.orders()[-1].reason=='TP' and store.orders()[-1].applied==1
 
 
 @pytest.mark.parametrize('stage', ['ARM','DYN'])

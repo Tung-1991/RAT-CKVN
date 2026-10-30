@@ -7,8 +7,9 @@ from ckps.models import FINAL, ExitSettings, Position, Quote, Snapshot, Order, l
 from ckps.rules.defaults import shared_exit_settings
 from .formatting import price, clock
 from .theme import BORDER
+from .mode_switch import ModeSwitchMixin
 
-class DashboardActionsMixin:
+class DashboardActionsMixin(ModeSwitchMixin):
     def ticket_capacity(self, side, entry, rules):
         from ckps.trading.portfolio import Capacity, capacity
         data = self.view.get('account', {})
@@ -113,21 +114,6 @@ class DashboardActionsMixin:
         window = self.connection()
         window.select_page('TELEGRAM / LỊCH')
         return window
-
-    def _mode_selected(self, mode):
-        if self.switch_pending:
-            self.mode_choice.set(self.switch_pending[0].mode)
-            return
-        if mode != self.settings.mode:
-            self.clear_confirmation()
-            self.mode_requested = mode
-            self.connection(mode)
-        else:
-            self.mode_requested = None
-            window = self.popups.get("connection")
-            if window and window.winfo_exists():
-                window.select_mode(mode)
-        self.render()
 
     def toggle_bot(self):
         if not self.runtime:

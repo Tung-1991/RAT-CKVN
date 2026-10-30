@@ -12,6 +12,7 @@ import customtkinter as ctk
 from ckps.connections.dnse.fees import package_fees
 from ..formatting import money, clock
 from ..theme import MUTED, GREEN, RED
+from .widgets import option_menu
 
 
 class ConnectionPreviewMixin:
@@ -42,7 +43,7 @@ class ConnectionPreviewMixin:
             row.pack(fill='x',padx=10,pady=4)
             row.grid_columnconfigure(1,weight=1)
             ctk.CTkLabel(row,text=title,font=('Segoe UI',13),width=100,anchor='w').grid(row=0,column=0,sticky='w')
-            menu=ctk.CTkOptionMenu(row,values=['Đọc API để chọn'],variable=variable,command=command,
+            menu=option_menu(row,values=['Đọc API để chọn'],variable=variable,command=command,
                 height=30,width=1,font=('Segoe UI',13),dynamic_resizing=False,state='disabled')
             menu.grid(row=0,column=1,sticky='ew',padx=(4,0))
             setattr(self,name,menu)

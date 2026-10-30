@@ -36,7 +36,7 @@ def signal_preview(view, max_age=10, *, now=None):
             'MA200 · '+price(ma),{'ABOVE':'green','BELOW':'red','EQUAL':'neutral'}[state])
     else:trend=('CHỜ','Chưa đủ nến ngày','neutral')
     entry=context.get('entry',{})
-    result=('CHỜ','Backend chưa chạy · KẾT NỐI → TELEGRAM / LỊCH' if not view.get('analysis_running') else 'Backend đang chờ đủ dữ liệu 1D','neutral')
+    result=('CHỜ','Backend chưa chạy · KẾT NỐI' if not view.get('analysis_running') else 'Backend đang chờ dữ liệu 1D','neutral')
     if entry.get('state')=='WAIT':result=('CHƯA CÓ ĐIỂM','Đang theo dõi','neutral')
     elif entry.get('state')=='OFF':result=('TẠM DỪNG','Chưa bật phân tích','neutral')
     elif entry.get('state')=='READY':

@@ -4,11 +4,11 @@ from math import ceil
 from typing import Any
 import customtkinter as ctk
 from .tokens import *
-from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_entry_text, fit_label_text
+from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_entry_text, fit_label_text, option_menu
 from .hover_hint import _HoverHint
 APP_NAME = 'RAT VN30'
 APP_VERSION = '0.1.0'
-INFO_PANEL_HEIGHT = 190
+INFO_PANEL_HEIGHT = 260
 
 class OriginalPanels:
 
@@ -41,11 +41,11 @@ class OriginalPanels:
         account_footer.grid_columnconfigure(2, weight=1)
         self.lbl_pnl = ctk.CTkLabel(account_footer, text='PNL: ĐANG TÍNH', font=('Segoe UI', 12, 'bold'), anchor='w')
         self.lbl_pnl.grid(row=0, column=0, sticky='w')
-        self.lbl_cash = ctk.CTkLabel(account, text='Tổng tiền: —', font=('Segoe UI', 13), text_color=COL_MUTED, anchor='w')
+        self.lbl_cash = ctk.CTkLabel(account, text='Tổng tiền: —', font=('Segoe UI', 15, 'bold'), text_color='#A9C5E2', anchor='w')
         self.lbl_cash.grid(row=2, column=0, columnspan=2, sticky='ew', padx=11, pady=(0, 1))
 
         def fit_stats(_event=None):
-            fit_label_text(self.lbl_cash, base_font=('Segoe UI', 13), minimum_size=13)
+            fit_label_text(self.lbl_cash, base_font=('Segoe UI', 15, 'bold'), minimum_size=15)
         self._fit_account_stats = fit_stats
         account_footer.bind('<Configure>', fit_stats, add='+')
         control = ctk.CTkFrame(self.left, fg_color=COL_SURFACE, corner_radius=10, border_width=1, border_color=COL_BORDER)
@@ -88,7 +88,7 @@ class OriginalPanels:
         quote.pack(fill='x', padx=8, pady=(7, 4))
         quote.grid_columnconfigure(0, weight=1)
         quote.grid_columnconfigure(1, weight=1)
-        self.lbl_quote_symbol = ctk.CTkLabel(quote, text=self.symbol.get(), width=72, height=28, font=('Segoe UI', 14, 'bold'), fg_color='#2B3440', corner_radius=7, text_color=COL_TEXT, anchor='center')
+        self.lbl_quote_symbol = ctk.CTkLabel(quote, text=self.symbol.get(), width=72, height=30, font=('Segoe UI', 16, 'bold'), fg_color='#2B3D51', corner_radius=7, text_color='#C4DFFA', anchor='center')
         self.lbl_quote_symbol.grid(row=0, column=0, sticky='w', padx=(11, 5), pady=(6, 0))
         change_box = ctk.CTkFrame(quote, fg_color='transparent')
         change_box.grid(row=0, column=1, sticky='e', padx=(5, 9), pady=(6, 0))
@@ -96,7 +96,7 @@ class OriginalPanels:
         self.lbl_change.pack(side='left')
         self.lbl_price = ctk.CTkLabel(quote, text='---', font=('Cascadia Mono', 24, 'bold'), text_color=COL_TEXT, anchor='center', corner_radius=4)
         self.lbl_price.grid(row=1, column=0, columnspan=2, sticky='ew', padx=10, pady=(0, 0))
-        self.lbl_market = ctk.CTkLabel(quote, text='CHỜ DỮ LIỆU', font=('Segoe UI', 13, 'bold'), text_color=COL_WARN, anchor='center')
+        self.lbl_market = ctk.CTkLabel(quote, text='CHỜ DỮ LIỆU', font=('Segoe UI', 15, 'bold'), text_color=COL_WARN, anchor='center')
         self.lbl_market.grid(row=2, column=0, columnspan=2, sticky='ew', padx=10, pady=(0, 5))
         preview = ctk.CTkFrame(quote, fg_color='transparent')
         preview.grid(row=3, column=0, columnspan=2, sticky='ew', padx=7, pady=(0, 6))
@@ -104,13 +104,13 @@ class OriginalPanels:
         pnl_panel = ctk.CTkFrame(preview, fg_color='#1B1F25', corner_radius=7)
         pnl_panel.grid(row=0, column=0, sticky='ew')
         pnl_panel.grid_columnconfigure((0, 1, 2), weight=1, uniform='pnl_preview')
-        pnl_specs = (('TP', 'lbl_tp_title', 'lbl_tp_preview', COL_GREEN), ('SL', 'lbl_sl_title', 'lbl_sl_preview', COL_RED), ('PHÍ', 'lbl_fee_title', 'lbl_fee_preview', COL_WARN))
+        pnl_specs = (('TP · đ', 'lbl_tp_title', 'lbl_tp_preview', COL_GREEN), ('SL · đ', 'lbl_sl_title', 'lbl_sl_preview', COL_RED), ('PHÍ · đ', 'lbl_fee_title', 'lbl_fee_preview', COL_WARN))
         for column, (title, title_attr, value_attr, title_color) in enumerate(pnl_specs):
             box = ctk.CTkFrame(pnl_panel, fg_color='transparent')
             box.grid(row=0, column=column, sticky='nsew', padx=5, pady=5)
             title_label = ctk.CTkLabel(box, text=title, font=FONT_PREVIEW_TITLE, height=22, text_color=title_color, anchor='center')
             title_label.pack(fill='x')
-            label = ctk.CTkLabel(box, text='NA', font=FONT_PREVIEW_VALUE, text_color=COL_PREVIEW_TEXT, anchor='center', height=28)
+            label = ctk.CTkLabel(box, text='NA', font=FONT_PREVIEW_VALUE, text_color=title_color, anchor='center', height=32,wraplength=110)
             label.pack(fill='x')
             setattr(self, title_attr, title_label)
             setattr(self, value_attr, label)
@@ -126,7 +126,7 @@ class OriginalPanels:
         action.grid_propagate(False)
         action.grid_columnconfigure((1, 2), weight=1, uniform='direction')
         self.order_type = tk.StringVar(value='LO')
-        self.order_type_menu = ctk.CTkOptionMenu(action, values=['LO', 'MOK', 'MTL'], variable=self.order_type, command=self._order_type_changed, width=115, height=38, font=('Segoe UI', 13, 'bold'), fg_color=COL_GRAY, button_color='#4B515B', button_hover_color='#59616D', corner_radius=8, dynamic_resizing=False)
+        self.order_type_menu = option_menu(action, values=['LO', 'MOK', 'MTL'], variable=self.order_type, command=self._order_type_changed, width=115, height=38)
         self.order_type_menu.grid(row=0, column=0, sticky='ew', padx=(0, 7))
         self.execute_button = ctk.CTkButton(action, text='LONG', font=('Segoe UI', 13, 'bold'), height=38, fg_color='#16A34A', hover_color='#15803D', border_width=1, border_color=COL_GREEN, corner_radius=8, command=lambda: self._submit('BUY'))
         self.execute_button.grid(row=0, column=1, sticky='ew')
@@ -157,7 +157,7 @@ class OriginalPanels:
         self._update_order_preview()
         brand = ctk.CTkFrame(self.left, fg_color='transparent')
         brand.pack(fill='x', padx=6, pady=(1, 0))
-        ctk.CTkLabel(brand, text=f'{APP_NAME} · v{APP_VERSION}', font=('Segoe UI', 14), text_color=COL_MUTED).pack()
+        ctk.CTkLabel(brand, text=f'{APP_NAME} · v{APP_VERSION}', font=('Segoe UI', 16, 'bold'), text_color='#92B2D1').pack()
 
     @staticmethod
     def _manual_input(frame: ctk.CTkFrame, column: int, label: str, value: str, disabled: bool=False, *, placeholder: str='', dimmed: bool=False, row: int=0) -> ctk.CTkEntry:
@@ -201,7 +201,7 @@ class OriginalPanels:
         self._preview_help={'arm':'','dynamic':''}
         self._preview_position_context=''
         self._preview_fit_labels=[]
-        def label(parent,name,text='',size=14,color=COL_PREVIEW_TEXT,bold=False,mono=False,**grid):
+        def label(parent,name,text='',size=16,color='#BDD4EC',bold=True,mono=False,**grid):
             font=('Cascadia Mono' if mono else 'Segoe UI',size,*(['bold'] if bold else []))
             widget=StatusLabel(parent,text=text,width=1,height=size+5,font=font,text_color=color,anchor='w')
             widget.grid_propagate(False)
@@ -214,31 +214,40 @@ class OriginalPanels:
             setattr(self,name,widget);self._preview_fit_labels.append((widget,font))
             return widget
         self.market_context_label=ctk.CTkLabel(self.info_header,text='CHỈ THAM KHẢO',height=28,
-            font=('Segoe UI',14),text_color=COL_MUTED,anchor='e')
+            font=('Segoe UI',15,'bold'),text_color='#9BB9D8',anchor='e')
         self.market_context_label.grid(row=0,column=1,sticky='ew',padx=(8,10))
         signals=ctk.CTkFrame(data,fg_color='transparent')
         signals.grid(row=0,column=0,sticky='ew',pady=(0,7))
         signals.grid_columnconfigure((0,1),weight=1,uniform='signals')
         self.preview_signal_cards=[]
         for column,prefix,title in ((0,'entry','ĐIỂM VÀO'),(1,'trend','THỊ TRƯỜNG')):
-            card=ctk.CTkFrame(signals,width=1,fg_color='#171D25',corner_radius=7,
+            card=ctk.CTkFrame(signals,width=1,height=112,fg_color='#1B2939',corner_radius=8,
                 border_width=1,border_color=COL_GRID)
             card.grid(row=0,column=column,sticky='nsew',padx=(0,4) if column==0 else (4,0))
             card.grid_columnconfigure(0,weight=1)
-            label(card,'preview_'+prefix+'_title',title,size=14,bold=True,row=0,column=0,padx=13,pady=(8,0))
-            label(card,'preview_'+prefix+'_value','CHỜ',size=18,bold=True,row=1,column=0,padx=13,pady=3)
-            label(card,'preview_'+prefix+'_detail','Chờ dữ liệu',size=14,row=2,column=0,padx=13,pady=(0,8))
+            label(card,'preview_'+prefix+'_title',title,size=14,color='#B8D7F8',bold=True,row=0,column=0,padx=15,pady=(12,3))
+            label(card,'preview_'+prefix+'_value','CHỜ',size=22,bold=True,row=1,column=0,padx=15,pady=5)
+            label(card,'preview_'+prefix+'_detail','Chờ dữ liệu',size=16,row=2,column=0,padx=15,pady=(2,12))
             self.preview_signal_cards.append(card)
-        atr=ctk.CTkFrame(data,width=1,fg_color=COL_PANEL_BODY,corner_radius=5)
-        atr.grid(row=1,column=0,sticky='ew',pady=(0,5))
+        metadata=ctk.CTkFrame(data,fg_color='transparent')
+        metadata.grid(row=1,column=0,sticky='ew',pady=(2,7))
+        metadata.grid_columnconfigure(0,weight=2,uniform='preview-metadata')
+        metadata.grid_columnconfigure(1,weight=1,uniform='preview-metadata')
+        atr=ctk.CTkFrame(metadata,width=1,fg_color='#1A2A3C',border_width=1,border_color='#344E6C',corner_radius=7)
+        atr.grid(row=0,column=0,sticky='nsew',padx=(0,4))
         atr.grid_columnconfigure(0,weight=1)
-        atr.grid_columnconfigure(1,weight=2)
         self.preview_atr=atr
-        label(atr,'preview_atr_value','ATR14 · CHỜ NẾN 1D',size=14,color=COL_WARN,bold=True,row=0,column=0,padx=10,pady=5)
-        label(atr,'preview_atr_detail','',size=14,row=0,column=1,padx=10,pady=5)
+        label(atr,'preview_atr_title','DYNAMIC · ATR14',size=14,color='#9EBEE1',bold=True,row=0,column=0,padx=12,pady=(8,0))
+        label(atr,'preview_atr_value','ATR14 · CHỜ NẾN 1D',size=16,color=COL_WARN,bold=True,row=1,column=0,padx=12,pady=(4,2))
+        label(atr,'preview_atr_detail','',size=16,color='#DCC59E',row=2,column=0,padx=12,pady=(1,9))
         atr._hover_hint=_HoverHint(atr,lambda:'ATR14 lấy cùng nến 1D đã đóng mà backend dùng cho DYNAMIC; ngày phiên đi kèm số ATR. Không lấy nến đang chạy. Bắt đầu = 0,5 × ATR%; lùi ATR = 0,8 × ATR%, giữ 70% lãi đỉnh. Các mốc vào/thoát chỉ tham khảo; BOT và quyền quản lý vẫn quyết định có gửi lệnh hay không.',click_to_toggle=True,hover=False)
-        self.preview_connection=label(data,'preview_connection_status',size=14,color=COL_MUTED,
-            row=2,column=0,padx=8,pady=(0,6))
+        authentication=ctk.CTkFrame(metadata,width=1,fg_color='#202B31',border_width=1,border_color='#3D555F',corner_radius=7)
+        authentication.grid(row=0,column=1,sticky='nsew',padx=(4,0))
+        authentication.grid_columnconfigure(0,weight=1)
+        self.preview_authentication=authentication
+        label(authentication,'preview_auth_title','XÁC THỰC',size=14,color='#AFC7D1',bold=True,row=0,column=0,padx=12,pady=(8,0))
+        self.preview_connection=label(authentication,'preview_connection_status',size=16,color='#B8D3E3',
+            row=1,column=0,padx=12,pady=(6,10))
         management=ctk.CTkFrame(data,width=1,fg_color='transparent')
         management.grid(row=3,column=0,sticky='new')
         management.grid_columnconfigure(0,weight=1)
@@ -262,8 +271,8 @@ class OriginalPanels:
             key='arm' if index==0 else 'dynamic'
             caption._hover_hint=_HoverHint(caption,lambda key=key:self._preview_help[key],click_to_toggle=True,
                 fixed_size=True,max_width=480,font=('Segoe UI',15),hover=False)
-            label(row,'preview_'+prefix+'_value',size=14,row=0,column=1,padx=8,pady=9)
-            label(row,'preview_'+prefix+'_detail',size=14,row=0,column=2,padx=(8,10),pady=9)
+            label(row,'preview_'+prefix+'_value',size=16,row=0,column=1,padx=8,pady=9)
+            label(row,'preview_'+prefix+'_detail',size=16,row=0,column=2,padx=(8,10),pady=9)
         management.grid_remove()
         panel.bind('<Configure>',self._fit_preview_text,add='+')
         data.bind('<Configure>',self._layout_preview,add='+')
@@ -301,7 +310,7 @@ class OriginalPanels:
         required=ceil((self.preview_data.winfo_reqheight()+overhead)/scale)+2
         # Reserve the short protection block as soon as a position is selected.
         # Tk may still report its previous (hidden) requested size in this turn.
-        height=max(260 if self.preview_management.winfo_manager() else INFO_PANEL_HEIGHT,required)
+        height=max(340 if self.preview_management.winfo_manager() else INFO_PANEL_HEIGHT,required)
         self.table_workspace.configure(height=170)
         if self.info_panel.cget('height')!=height:self.info_panel.configure(height=height)
         self.right.grid_rowconfigure(1,weight=1,minsize=170)

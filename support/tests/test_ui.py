@@ -72,9 +72,11 @@ def _layout_scenario(scale):
             assert app.info_choice.get()==name
         assert not hasattr(app,'preview_health_group')
         app._mode_selected('REAL');settle(600)
-        connection=app.popups['connection']
-        assert app.settings.mode=='PAPER' and app.mode_choice.get()=='REAL'
-        assert app.mode_requested=='REAL' and connection.tabs.get()=='DNSE / VỐN'
+        assert app.settings.mode=='PAPER' and app.mode_choice.get()=='PAPER'
+        assert app.mode_requested is None and 'connection' not in app.popups
+        assert 'KẾT NỐI' in app.status.cget('text')
+        connection=app.connection('REAL');settle(600)
+        assert connection.tabs.get()=='DNSE / VỐN'
         assert connection.otp_card.winfo_ismapped()
         for widget in widgets(connection.pages['DNSE / VỐN']):
             if isinstance(widget,ctk.CTkEntry) and widget.winfo_ismapped():
@@ -200,7 +202,7 @@ def _layout_scenario(scale):
         app.geometry('1080x700');settle(500)
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.preview_management.winfo_ismapped() and app.preview_exit_value.winfo_ismapped()
-        assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.35
+        assert app.table_workspace.winfo_height()>=170*app.table_workspace._get_widget_scaling()
         assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
         for widget,font in app._preview_fit_labels:
             if not widget.winfo_ismapped():continue
@@ -282,7 +284,7 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
                 else:
                     yield from controls(child)
         assert rule.initial_sl.cget('state') == 'normal'
-        assert not hasattr(rule,'take_profit')
+        assert hasattr(rule,'take_profit')
         rule.sl_enabled.set(True)
         rule.initial_sl.delete(0, 'end')
         rule.initial_sl.insert(0, '10')
@@ -366,7 +368,7 @@ def _rule_adapter_scenario():
         window=app.settings_dialog('E/M');app.update()
         from ckps.rules.defaults import shared_exit_settings
         expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT'}
-        for key in ('sl_distance','repeat_gap','arm_gain','trail_gap'):
+        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap'):
             expected[key]=getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
@@ -513,7 +515,7 @@ def _position_protection_scenario(scale):
             app.view['positions'][0]['exit_overrides'] = {'sl_enabled':True,'sl_distance':999}
             app.position_exit()
             assert editor._exits() == expected and editor.initial_sl.cget('state')=='normal'
-            assert not hasattr(editor,'take_profit')
+            assert hasattr(editor,'take_profit')
             editor.destroy();app.update()
             saved.clear()
         assert not errors, errors
@@ -641,7 +643,7 @@ def _table_review_scenario(interactive=False):
         assert table.cell(short.id,'pnl')['color']=='#EF4444'
         assert table.cell(short.id,'side')['color']=='#EF4444'
         assert table.cell(long.id,'sl')['text']=='1,990.0'
-        assert table.cell(long.id,'tp')['text']=='—'  # TP is fixed OFF in the shared product rule.
+        assert table.cell(long.id,'tp')['text']=='2,040.0'
         assert table.cell(long.id,'managed')['text']=='TẠM DỪNG'
         assert table._display==('#0','side','entry','sl','tp','managed')
         assert table._row_height==round(44*table._get_widget_scaling())
@@ -755,7 +757,7 @@ def _split_app_scenario(kind,scale):
             assert app.positions_tree.selection()==('DEMO-LONG',)
             assert 'Còn 1/2 HĐ' in app._preview_position_context
             assert not hasattr(app,'preview_status_badge') and not hasattr(app,'preview_sl_value')
-            assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
+            assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=470
             assert not {'manage','adopt'} & set(app.action_buttons)
             app.preview_em_exit._label.event_generate('<Button-1>');settle()
             detail=app.preview_em_exit._hover_hint.popup
@@ -767,8 +769,8 @@ def _split_app_scenario(kind,scale):
             # Click the actual MAIN buttons, not just the popup constructors.
             app.rule_button.invoke();settle()
             rule=app.popups['rule']
-            assert rule.winfo_width()/rule._get_window_scaling()<=781
-            assert rule.winfo_height()/rule._get_window_scaling()<=621
+            assert rule.winfo_width()/rule._get_window_scaling()<=861
+            assert rule.winfo_height()/rule._get_window_scaling()<=741
             assert rule.winfo_ismapped() and rule.tabs.get()=='E/M'
             assert set(rule.tabs._tab_dict)=={'E/M','TÍN HIỆU'}
             if scale is None:
@@ -836,8 +838,10 @@ def _split_app_scenario(kind,scale):
             assert app.runtime is None and not app.switch_pending
             connection.destroy();settle()
             app._mode_selected('REAL');settle()
-            connection=app.popups['connection']
-            assert connection.otp_card.winfo_ismapped() and app.mode_requested=='REAL'
+            assert not connection.winfo_exists() and app.mode_requested is None
+            assert app.mode_choice.get()=='PAPER'
+            connection=app.connection('REAL');settle()
+            assert connection.otp_card.winfo_ismapped()
             connection.variables['connection.account'].set('123')
             connection.connect();assert app.runtime is None and not app.switch_pending
             connection.destroy();settle()

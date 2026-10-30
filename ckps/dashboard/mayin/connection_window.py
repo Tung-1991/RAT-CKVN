@@ -5,7 +5,7 @@ import time
 import tkinter as tk
 import customtkinter as ctk
 from .forms import OriginalRuleForms
-from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup
+from .widgets import StableTabview, _StableToplevel, FONT_VALUE, size_popup, choice_bar
 from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.rules.market_alerts import MarketAlertSettings
 from .connection_status import otp_status
@@ -42,7 +42,7 @@ class ConnectionFields(OriginalRuleForms):
                 row = ctk.CTkFrame(card, fg_color='transparent')
                 row.pack(fill='x', padx=8, pady=5)
                 ctk.CTkLabel(row,text=label,font=('Segoe UI',13),text_color=self.TITLE).pack(side='left')
-                ctk.CTkSegmentedButton(row,values=list(choices),variable=variable,
+                choice_bar(row,values=list(choices),variable=variable,
                     font=('Segoe UI',13,'bold'),height=32,selected_color=self.BLUE).pack(side='right')
             else:
                 entry = self._field(card,label,value,hint,variable=variable)
@@ -76,7 +76,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.variables={'connection.mode':tk.StringVar(value=requested_mode or app.settings.mode)}
         self.form=ConnectionFields(self.variables)
         self.tabs=StableTabview(self,fg_color='transparent',border_width=0,
-            segmented_button_selected_color=BLUE,segmented_button_unselected_color='#3A3F47',command=self._page_changed)
+            segmented_button_selected_color=BLUE,segmented_button_unselected_color='#222E3B',command=self._page_changed)
         self.tabs.grid(row=0,column=0,sticky='nsew',padx=8,pady=(4,0))
         self.tabs._segmented_button.configure(font=('Segoe UI',14,'bold'),height=30)
         self.pages={name:self.tabs.add(name) for name in ('DNSE / VỐN','TELEGRAM / LỊCH')}
@@ -130,7 +130,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         otp_row.grid_columnconfigure(1,weight=1)
         self.variables['connection.otp_type']=tk.StringVar(value='EMAIL')
         self.variables['connection.otp']=tk.StringVar()
-        ctk.CTkSegmentedButton(otp_row,values=['EMAIL','SMART'],variable=self.variables['connection.otp_type'],
+        choice_bar(otp_row,values=['EMAIL','SMART'],variable=self.variables['connection.otp_type'],
             font=('Segoe UI',12,'bold'),height=30,width=150).grid(row=0,column=0,padx=(0,10))
         self.otp_entry=ctk.CTkEntry(otp_row,textvariable=self.variables['connection.otp'],show='•',height=30,
             font=FONT_VALUE,placeholder_text='Mã OTP')
@@ -353,6 +353,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
                 session.close()
                 self.app.report('Đã dừng tín hiệu theo API cũ; bấm CHẠY để dùng API DNSE mới.')
             self.app.clear_confirmation()
+            self.app._cancel_mode_probe()
             self._connecting=True
             self.app.mode_requested=settings.mode
             self.app.switch_pending=(settings,credentials)
@@ -406,6 +407,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         if self._update_after:self.after_cancel(self._update_after)
         if self._probe:self._probe.close()
         if not self.app.switch_pending:
+            self.app._cancel_mode_probe()
             self.app.mode_requested=None
             self.app.ui_status=None
             self.app.mode_choice.set(self.app.settings.mode)

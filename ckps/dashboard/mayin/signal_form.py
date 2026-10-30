@@ -2,6 +2,7 @@
 from dataclasses import asdict, replace
 import tkinter as tk
 import customtkinter as ctk
+from .widgets import choice_bar
 
 from ckps.rules.signal_settings import SignalSettings
 from ckps.rules.market_alerts import MarketAlertSettings
@@ -119,8 +120,8 @@ class SignalForm(OriginalRuleForms, ctk.CTkFrame):
         variable = self.variable(key)
         shown = tk.StringVar(value=labels[variable.get()])
         reverse = {label: value for value, label in labels.items()}
-        ctk.CTkSegmentedButton(row, values=list(labels.values()), variable=shown,
-            selected_color=self.BLUE, font=('Segoe UI', 12, 'bold'), height=27,
+        choice_bar(row, values=list(labels.values()), variable=shown,
+            font=('Segoe UI', 12, 'bold'), height=32,
             command=lambda selected: variable.set(reverse[selected])).pack(side='left', padx=(0, 8))
         variable.trace_add('write', lambda *_: shown.set(labels[variable.get()]))
 

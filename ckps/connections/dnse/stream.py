@@ -16,8 +16,9 @@ from ckps.models import Quote, is_vn30, market_time, number
 
 
 class MarketFeed:
-    def __init__(self, key, secret):
+    def __init__(self, key, secret, *, max_quote_age=10):
         self.key, self.secret = key, secret
+        self.max_quote_age = max_quote_age
         self.stop_event = threading.Event()
         self.changed = threading.Event()
         self.lock = threading.Lock()
@@ -75,7 +76,14 @@ class MarketFeed:
                 return
             stamp = next((data[key] for key in ("time", "timestamp", "matchTime", "tradingTime") if data.get(key) is not None), None)
             quote = Quote(symbol, px, at=market_time(stamp), source="DNSE WS")
+            if not quote.fresh(self.max_quote_age):
+                return
             with self.lock:
+                previous = self.ticks.get(symbol)
+                if previous and quote.at < previous.at:
+                    return
+                # Validate every event before accumulating its extreme. A later
+                # fresh tick must never make an old or undated event actionable.
                 self.ticks[symbol] = quote
                 low, high = self.extremes.get(symbol, (px, px))
                 self.extremes[symbol] = min(low, px), max(high, px)
@@ -105,9 +113,10 @@ class MarketFeed:
                 except websocket.WebSocketException:
                     self.socket.close()
 
-    def latest(self, symbol, max_age=10):
+    def latest(self, symbol, max_age=None):
         with self.lock:
             value = self.ticks.get(symbol)
+            max_age = self.max_quote_age if max_age is None else max_age
             return replace(value) if value and value.fresh(max_age) and self.authenticated else None
 
     def drain(self):

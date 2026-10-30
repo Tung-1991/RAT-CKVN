@@ -58,6 +58,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.after(100, self._drain)
 
     def _drain(self):
+        self._drain_mode_probe()
         if self.runtime:
             import queue
             for _ in range(100):
@@ -107,6 +108,8 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
             self.runtime.command(name, *args, **kwargs)
 
     def _start_runtime(self, settings, credentials):
+        cancel_probe=getattr(self,'_cancel_mode_probe',None)
+        if cancel_probe:cancel_probe()
         try:
             profile=getattr(self,'connection_preview',{}).get('profile',{}) if settings.mode=='PAPER' else None
             self.runtime = Runtime(settings, credentials, market_profile=profile)
@@ -131,6 +134,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
     def close(self):
         self.running = False
         self.closing = True
+        self._cancel_mode_probe()
         session = getattr(self, 'signal_session', None)
         if session:
             session.close()

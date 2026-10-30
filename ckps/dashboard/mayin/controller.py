@@ -145,19 +145,21 @@ class MayinController(OriginalPanels):
                 raise ValueError('Chờ khối lượng hợp lệ.')
             qty_unknown=not self.qty.get().strip() and (account.get('qmax_'+side.lower()) is None
                 or margin is None or (not held_side and account.get('qmax_long')!=account.get('qmax_short')))
-            sl=(money(-rules.points(rules.sl_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
-            tp=(money(rules.points(rules.tp_distance,entry,margin)*qty*100_000) if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
+            sl=(money(-rules.points(rules.sl_distance,entry,margin)*qty*100_000).removesuffix(' đ') if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
+            tp=(money(rules.points(rules.tp_distance,entry,margin)*qty*100_000).removesuffix(' đ') if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
             package=account.get('package_fees',{})
             per_contract=package.get('open')
             if per_contract is None and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
                 per_contract=self.settings.estimated_fee_per_contract
             fee=per_contract*qty if per_contract is not None and not qty_unknown else None
-            fees=money(fee) if fee is not None else 'CHỜ HĐ' if qty_unknown else 'CHỜ DNSE'
-            self.lbl_fee_title.configure(text='PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')
+            fees=money(fee).removesuffix(' đ') if fee is not None else 'CHỜ HĐ' if qty_unknown else 'CHỜ DNSE'
+            self.lbl_fee_title.configure(text=('PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')+' · đ')
             self.lbl_order_value_title.configure(text='KÝ QUỸ + PHÍ GÓI' if package.get('open') is not None else 'KÝ QUỸ + PHÍ' if per_contract is not None else 'KÝ QUỸ · CHỜ PHÍ')
             cash=money(margin*qty+fee) if margin is not None and fee is not None and not qty_unknown else '—'
-            for widget,text in ((self.lbl_tp_preview,tp),(self.lbl_sl_preview,sl),(self.lbl_fee_preview,fees),(self.lbl_order_value,cash)):
-                widget.configure(text=text)
+            for widget,text,color in ((self.lbl_tp_preview,tp,'#55D6A4' if rules.tp_enabled else '#92ABC5'),
+                    (self.lbl_sl_preview,sl,'#F38B96' if rules.sl_enabled else '#92ABC5'),
+                    (self.lbl_fee_preview,fees,'#E9BF6B'),(self.lbl_order_value,cash,'#A8D3F5')):
+                widget.configure(text=text,text_color=color)
         except (ValueError,TypeError):
             for widget,text in ((self.lbl_tp_preview,'—' if rules.tp_enabled else 'OFF'),
                                 (self.lbl_sl_preview,'—' if rules.sl_enabled else 'OFF'),
@@ -171,18 +173,22 @@ class MayinController(OriginalPanels):
 
     def _render_signal_preview(self):
         from .signal_preview import signal_preview
-        colors={'green':('#86EFAC','#397B57'),'red':('#FCA5A5','#8B4851'),
-                'neutral':(COL_TEXT,'#435367')}
+        colors={'green':('#86EFAC','#397B57','#18332D'),'red':('#FCA5A5','#8B4851','#33232D'),
+                'neutral':('#DCE8F5','#435E7A','#1B2A3B')}
         session=getattr(self,'signal_session',None)
         result=signal_preview({**self.view,'analysis_running':bool(session and session.running)},self.settings.max_quote_age)
         for prefix,card,(value,detail,tone) in zip(('entry','trend'),self.preview_signal_cards,result):
-            foreground,border=colors[tone]
-            card.configure(fg_color='#1C242E',border_color=border)
+            foreground,border,background=colors[tone]
+            card.configure(fg_color=background,border_color=border)
             getattr(self,'preview_'+prefix+'_value').configure(text=value,text_color=foreground)
             getattr(self,'preview_'+prefix+'_detail').configure(text=detail)
+            getattr(self,'preview_'+prefix+'_detail').configure(text_color='#B4D9CA' if tone=='green' else '#E1B8C0' if tone=='red' else '#ADC8E3')
         from .connection_status import otp_status
         text,tone=otp_status(self.view,self.settings.mode)
+        if self.settings.mode=='PAPER':text='PAPER · KHÔNG CẦN OTP'
         self.preview_connection_status.configure(text=text,text_color=COL_GREEN if tone=='green' else COL_WARN if tone=='amber' else COL_MUTED)
+        self.preview_authentication.configure(fg_color='#193129' if tone=='green' else '#342D20' if tone=='amber' else '#202C37',
+            border_color='#39694E' if tone=='green' else '#77623B' if tone=='amber' else '#3E566C')
         from .atr_preview import atr_preview
         value,detail,ready=atr_preview(self.view)
         self.preview_atr_value.configure(text=value,text_color=COL_ACCENT_BLUE if ready else COL_WARN)
@@ -264,7 +270,7 @@ class MayinController(OriginalPanels):
         mode=view.get('mode',self.settings.mode)
         requested=self.mode_requested or (self.switch_pending[0].mode if self.switch_pending else None)
         self.mode_choice.set(requested or mode)
-        self.mode_selector.configure(selected_color=COL_WARN if requested else COL_GREEN,
+        self.mode_selector.configure(selected_color=COL_WARN if requested else COL_GREEN if mode=='PAPER' else COL_RED,
             state='disabled' if self.switch_pending else 'normal')
         self.lbl_equity_title.configure(text='KÝ QUỸ ẢO · PAPER' if mode=='PAPER' else 'KÝ QUỸ · REAL')
         self.lbl_equity.configure(text=money(account.get('collateral_total')))
@@ -287,7 +293,7 @@ class MayinController(OriginalPanels):
                 text_color=COL_MUTED if ready else COL_WARN)
             self.lbl_market.grid()
         else:self.lbl_market.grid_remove()
-        self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',13))
+        self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',15,'bold'),text_color='#ADC8E3')
         self.market_context_label.configure(text='CHỈ THAM KHẢO · MẪU' if getattr(self,'preview_only',False) else 'CHỈ THAM KHẢO')
         if not self.limit.get() and value:
             self.limit.set(f'{value:.1f}')

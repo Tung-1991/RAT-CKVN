@@ -11,6 +11,8 @@ from ckps.rules.protection import adverse_anchor, evaluate
 from ckps.services.calendar import block_reason as calendar_block_reason
 from ckps.rules.distances import reference_margin, price_rules
 from ckps.rules.defaults import shared_exit_settings
+from ckps.rules.ema_exit import EMAExit
+from ckps.trading.exit_requests import FULL_EXITS, requested_exit, request_exit
 
 
 class Engine:
@@ -24,6 +26,10 @@ class Engine:
         self.consistent = False
         self.error = "Chưa đồng bộ tài khoản."
         self.suspended = set()
+        self.ema_exit = EMAExit()
+        feed = getattr(broker, 'feed', None)
+        if feed:
+            feed.max_quote_age = self.settings.max_quote_age
         for order in store.orders(pending=True):
             if order.status == "CREATED":
                 order.status = "CANCELLED"
@@ -124,6 +130,19 @@ class Engine:
             raise BrokerError("Mã/chiều phản hồi lệnh không khớp yêu cầu; cần đối soát.")
         reported_qty = update.get("quantity")
         replacing = bool(order.replacement)
+        expected = {order.quantity}
+        if replacing:
+            expected.add(order.replacement['quantity'])
+        if reported_qty is not None and reported_qty not in expected:
+            order.status = 'UNKNOWN'
+            order.message = f'DNSE trả tổng {reported_qty} HĐ, khác yêu cầu {order.quantity} HĐ; chờ đối soát.'
+            self.store.save_order(order)
+            if order.message != before['message'] or before['status'] != 'UNKNOWN':
+                self.store.event('RECONCILE', order.message)
+                self._record_order_notice(order)
+            return
+        if before['status'] == 'CANCEL_PENDING' and status in {'WORKING', 'PARTIAL'}:
+            status = 'CANCEL_PENDING'  # An old working row does not reject a cancellation.
         if replacing:
             wanted = order.replacement
             if (reported_qty == wanted["quantity"] and
@@ -201,7 +220,7 @@ class Engine:
             if not position and order.parent_position_id and order.abandon_remainder:
                 position = self.store.position(order.parent_position_id)
                 position.closed_at = 0.0
-                position.managed = False
+                position.managed = bool(position.managed and position.metrics.get('full_exit'))
                 position.note = "Khớp muộn phần mở đã yêu cầu hủy; tiếp tục đóng theo yêu cầu thoát toàn bộ."
             if position and position.side != order.side:
                 raise BrokerError("Khớp mở ngược chiều với vị thế đang giữ; cần đối soát.")
@@ -264,6 +283,11 @@ class Engine:
         """Cancel once outside the fill transaction; absence never confirms cancellation."""
         for order in self.store.orders(pending=True):
             if order.abandon_remainder and order.broker_id and order.status in {"WORKING", "PARTIAL"}:
+                if order.parent_position_id:
+                    parent = self.store.position(order.parent_position_id)
+                    if parent.metrics.get('auto_full_exit') and (
+                            not self.enabled.is_set() or not parent.managed or parent.id in self.suspended):
+                        continue
                 try:
                     self.cancel(order.id)
                 except BrokerError as exc:
@@ -271,6 +295,8 @@ class Engine:
 
     def _complete_full_exits(self):
         for position in self.store.positions():
+            if position.metrics.get('auto_full_exit'):
+                continue  # Automatic SL/E still requires BOT and position permission.
             if not position.metrics.get("closing_all") or not position.metrics.get("late_open_fill"):
                 continue
             available = position.quantity - sum(o.remainder for o in self._pending_closes(position.id))
@@ -361,6 +387,47 @@ class Engine:
             self._notify(f"{position.side} {symbol} · {position.quantity} HĐ\n{position.note}",
                          f"external:{position.id}:{position.quantity}:{position.entry}")
 
+    def ema_snapshot(self, symbol):
+        return self.ema_exit.observe(self.latest, self.settings, symbol)
+
+    def _decision(self, position, price):
+        rules = self.exits(position)
+        try:
+            decision = evaluate(position, price, rules, self._atr(position.symbol))
+        except ValueError:
+            decision = None  # Legacy margin-based distances must not disable E.
+        if decision and decision.reason == 'SL':
+            return decision
+        pending = requested_exit(position, rules)
+        if pending:
+            return pending
+        if decision and decision.reason == 'TP':
+            return decision
+        return self.ema_exit.decision(position, self.ema_snapshot(position.symbol)) or decision
+
+    def _cancel_exit_obstructions(self, position, reason):
+        for order in self._pending_closes(position.id):
+            if order.source == 'AUTO' and order.reason in FULL_EXITS:
+                continue
+            request = self.store.position(position.id).metrics['full_exit']
+            if order.id in request['cancel_requested'] or not order.broker_id or order.status not in {'WORKING', 'PARTIAL'}:
+                continue
+            if not self.enabled.is_set() or position.id in self.suspended:
+                return
+            with self.store.transaction():
+                current = self.store.position(position.id)
+                current.metrics['full_exit']['cancel_requested'].append(order.id)
+                self.store.save_position(current)
+            try:
+                self.cancel(order.id, protective=True)
+            except SubmissionCancelled:
+                current = self.store.position(position.id)
+                current.metrics['full_exit']['cancel_requested'].remove(order.id)
+                self.store.save_position(current)
+                return
+            except BrokerError as exc:
+                self.store.event('ERROR', f'{reason}: chờ hủy lệnh đóng cũ · {exc}')
+
     def _manage(self):
         allowed = self.enabled.is_set() and self.consistent
         try:
@@ -372,14 +439,32 @@ class Engine:
                 quote = self._quote(position.symbol)
             except BrokerError:
                 continue
-            try:decision = evaluate(position, quote.last, self.exits(position), self._atr(position.symbol))
+            try:decision = self._decision(position, quote.last)
             except ValueError:
                 continue
             self.store.save_position(position)
             # Monitoring is independent of permission to act.
             if not allowed or not position.managed or position.id in self.suspended:
                 continue
-            if not decision or self._pending_closes(position.id):
+            if not decision:
+                continue
+            if decision.reason in FULL_EXITS:
+                with self.store.transaction():
+                    request_exit(position, decision)
+                    self.store.save_position(position)
+                    self._abandon_open_remainders(position)
+                last = position.metrics['full_exit'].get('order_id')
+                if last:
+                    prior = self.store.order(last)
+                    if prior.status in {'FAILED', 'REJECTED', 'EXPIRED'} or (
+                            prior.status == 'CANCELLED' and prior.broker_id and not prior.applied):
+                        continue  # An unsuccessful mutation needs operator review.
+                available = position.quantity - sum(o.remainder for o in self._pending_closes(position.id))
+                if available <= 0:
+                    self._cancel_exit_obstructions(position, decision.reason)
+                    continue
+                decision = replace(decision, quantity=min(available, decision.quantity))
+            elif self._pending_closes(position.id):
                 continue
             if decision.policy == "ALERT":
                 state_key = decision.stage + ":ALERT"
@@ -393,17 +478,29 @@ class Engine:
                                  f"alert:{position.id}:{state_key}:{state['count']}")
             elif self.enabled.is_set():
                 self.close_position(position.id, decision.quantity, automatic=decision)
+                if decision.reason in FULL_EXITS:
+                    try:
+                        self._ready()
+                    except BrokerError:
+                        break
+                    # Send the free contracts before potentially slow DELETEs.
+                    self._cancel_exit_obstructions(self.store.position(position.id), decision.reason)
+                    self._retire_open_remainders()
                 # A new broker snapshot is required before another automatic order.
                 break
 
     def on_prices(self, quotes, extremes):
         if not self.latest or not self.healthy:
             return
+        accepted = set()
         for symbol, quote in quotes.items():
-            if quote.fresh(self.settings.max_quote_age):
+            previous = self.latest.quotes.get(symbol)
+            if quote.symbol == symbol and quote.fresh(self.settings.max_quote_age) and (
+                    not previous or quote.at >= previous.at):
                 self.latest.quotes[symbol] = quote
+                accepted.add(symbol)
         for position in self.store.positions():
-            if position.symbol in extremes and position.symbol in quotes and quotes[position.symbol].fresh(self.settings.max_quote_age):
+            if position.symbol in extremes and position.symbol in accepted:
                 low, high = extremes[position.symbol]
                 position.best = max(position.best or position.entry, high) if position.sign > 0 else min(position.best or position.entry, low)
                 position.worst = min(position.worst or position.entry, low) if position.sign > 0 else max(position.worst or position.entry, high)
@@ -502,15 +599,24 @@ class Engine:
         if qty + reserved == position.quantity:
             with self.store.transaction():
                 position.metrics["closing_all"] = True
+                if not automatic:
+                    position.metrics.pop('full_exit', None)
+                    position.metrics.pop('auto_full_exit', None)
                 self.store.save_position(position)
                 self._abandon_open_remainders(position)
-            self._retire_open_remainders()
+            if not automatic:
+                self._retire_open_remainders()
         self._send(order)
         return order
 
     def _send(self, order):
         with self.store.transaction():
             self.store.save_order(order)
+            if order.source == 'AUTO' and order.reason in FULL_EXITS:
+                position = self.store.position(order.position_id)
+                request_exit(position, Decision(order.reason, order.trigger, position.quantity))
+                position.metrics['full_exit']['order_id'] = order.id
+                self.store.save_position(position)
             self.store.event("REQUEST", f"{order.action} {order.side} {order.symbol} · {order.quantity} HĐ · {order.reason}")
         handed_off = False
         try:
@@ -526,7 +632,7 @@ class Engine:
                     if not self.enabled.is_set() or not position.managed:
                         raise BrokerError("BOT đã tắt trước khi gửi.")
                     quote = self._quote(position.symbol)
-                    fresh_decision = evaluate(position, quote.last, self.exits(position), self._atr(position.symbol))
+                    fresh_decision = self._decision(position, quote.last)
                     if not fresh_decision or fresh_decision.policy != "AUTO" or fresh_decision.reason != order.reason:
                         raise BrokerError("Điều kiện bảo vệ đã thay đổi trước khi gửi.")
                     if order.reason in {"ARM", "DYN"}:
@@ -587,7 +693,8 @@ class Engine:
         if order.position_id in self.suspended or time.time() - self.latest.observed_at > self.settings.max_quote_age:
             return False
         position = self.store.position(order.position_id)
-        if not position.managed or position.closed_at or order.quantity > position.quantity:
+        available = position.quantity - sum(o.remainder for o in self._pending_closes(position.id, order.id))
+        if not position.managed or position.closed_at or order.quantity > available:
             return False
         feed = getattr(self.broker, "feed", None)
         newest = feed.latest(position.symbol, self.settings.max_quote_age) if feed else None
@@ -597,8 +704,9 @@ class Engine:
             quote = self._quote(position.symbol)
         except BrokerError:
             return False
-        decision = evaluate(position, quote.last, self.exits(position), self._atr(position.symbol))
-        allowed = bool(self.enabled.is_set() and decision and decision.policy == "AUTO" and decision.reason == order.reason)
+        decision = self._decision(position, quote.last)
+        allowed = bool(self.enabled.is_set() and decision and decision.policy == "AUTO"
+                       and decision.reason == order.reason and order.quantity <= decision.quantity)
         if allowed and order.reason in {"ARM", "DYN"}:
             order.protection_anchor = adverse_anchor(position.sign, order.protection_anchor, quote.last)
             # Persist the final pre-POST observation, including UNKNOWN outcomes.
@@ -623,6 +731,8 @@ class Engine:
             position.history_verified = True
             position.note = "Theo dõi MAE/MFE từ lúc nhận quản lý; không dựng đỉnh/đáy quá khứ."
         position.managed = bool(enabled)
+        if not enabled:
+            position.metrics.pop('full_exit', None)
         self.store.save_position(position)
         if enabled:
             self.suspended.discard(position_id)
@@ -648,16 +758,21 @@ class Engine:
             self._apply_update(order, row)
             self.store.event("RECONCILE", f"Operator gắn ID DNSE {broker_id} cho yêu cầu {order.id}")
 
-    def cancel(self, order_id):
+    def cancel(self, order_id, *, protective=False):
         order = self.store.order(order_id)
         if not order.pending or not order.broker_id:
             raise ValueError("Chưa thể hủy: lệnh đã kết thúc hoặc chưa xác định ID DNSE.")
+        if protective:
+            position = self.store.position(order.position_id)
+            if not self.enabled.is_set() or not position.managed or position.id in self.suspended:
+                raise SubmissionCancelled('BOT đã tắt trước khi hủy lệnh đóng cũ.')
         previous = order.status
         order.status = "CANCEL_PENDING"
         self.store.save_order(order)
-        if order.source == "AUTO" and order.position_id:
+        if order.source == "AUTO" and order.position_id and not protective:
             position = self.store.position(order.position_id)
             position.managed = False
+            position.metrics.pop('full_exit', None)
             position.note = "Đã yêu cầu hủy lệnh tự động; quản lý vị thế tạm dừng."
             self.store.save_position(position)
         try:

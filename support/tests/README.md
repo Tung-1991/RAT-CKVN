@@ -3,6 +3,17 @@
 Chạy bằng `START_SYSTEM.bat → 5` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
 Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay Telegram thật.
 
+`test_execution_safety.py`: SL/E với lệnh đóng đang chờ, khớp trong lúc hủy, timeout,
+restart/BOT OFF, giữ chỗ, quyền quản lý và khối lượng broker bị thay đổi.
+`test_stream_safety.py`: tick cũ/thiếu thời gian/tương lai/lùi thứ tự không làm sai MFE hoặc tự đóng TSL.
+`test_ema_exit.py`: E EMA3/6 Long/Short, REALTIME/CLOSED, nhịp phút, dữ liệu thiếu/cũ/khác mã,
+đóng toàn bộ đúng quyền và không phụ thuộc ALERT/Telegram.
+`test_runtime_safety.py`: snapshot tài khoản chậm không trì hoãn BOT OFF hoặc gây gửi lệnh muộn sau khi đã tắt BOT.
+`test_rule_controls.py`: TP % giá Long/Short với lệnh chờ, chu kỳ/chế độ/nhịp E độc lập,
+chặn tham số lỗi, form lưu đủ E/TP và bộ lọc lịch sử không sửa dữ liệu gốc hoặc gửi lệnh.
+`test_mode_switch.py`: PAPER/REAL không mở cửa sổ, xác minh trước khi đổi sổ,
+thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, sổ mới BOT OFF.
+
 | File | Phạm vi |
 | --- | --- |
 | `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; bản mẫu dùng chung preset; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |

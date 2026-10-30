@@ -12,7 +12,7 @@ STATUS_LABELS = {"CREATED": "ĐÃ XẾP", "SUBMITTING": "ĐANG GỬI", "WORKING"
     "PARTIAL": "KHỚP MỘT PHẦN", "UNKNOWN": "CHƯA RÕ", "CANCEL_PENDING": "CHỜ HỦY",
     "REPLACE_PENDING": "CHỜ SỬA", "FILLED": "KHỚP ĐỦ", "CANCELLED": "ĐÃ HỦY",
     "REJECTED": "TỪ CHỐI", "EXPIRED": "HẾT HIỆU LỰC", "FAILED": "LỖI"}
-REASON_LABELS = {"MANUAL":"ĐẶT TAY", "SL":"CẮT LỖ", "TP":"CHỐT LỜI", "ARM":"SAU ARM", "DYN":"DYNAMIC"}
+REASON_LABELS = {"MANUAL":"ĐẶT TAY", "SL":"CẮT LỖ", "E":"E · EMA", "TP":"CHỐT LỜI", "ARM":"SAU ARM", "DYN":"DYNAMIC"}
 
 
 class DashboardTablesMixin:
@@ -174,13 +174,16 @@ class DashboardTablesMixin:
     def _render_history(self):
         if not hasattr(self, "history_tree") or not self.history_tree.winfo_exists():
             return
+        history,orders=self.view.get('history',[]),self.view.get('orders',[])
+        window=getattr(self,'history_window',None)
+        if window and window.winfo_exists():history,orders=window.filtered(history,orders)
         self._fill_tree(self.history_tree, [(p["id"], (clock(p["closed_at"]), p["symbol"], p["side"], p["original_quantity"],
             price(p["entry"]), money(p["realized"] - p["fees"]) if p["pnl_verified"] else "CHƯA XÁC MINH", money(p["fees"]), p["source"]),
-            "flat") for p in reversed(self.view.get("history", []))])
+            "flat") for p in reversed(history)])
         self._fill_tree(self.order_history_tree, [(o["id"], (clock(o["created_at"]), o["symbol"], o["action"], o["side"], o["kind"],
-            price(o["price"]), f"{o['filled']}/{o['quantity']}", o["status"], o["reason"]), "flat") for o in reversed(self.view.get("orders", []))])
+            price(o["price"]), f"{o['filled']}/{o['quantity']}", o["status"], o["reason"]), "flat") for o in reversed(orders)])
 
-        for raw in self.view.get("history",[]):
+        for raw in history:
             key=raw["id"]
             pnl=raw["realized"]-raw["fees"]
             self._history_cells(self.history_tree,key,"closed",raw["side"])
@@ -190,7 +193,7 @@ class DashboardTablesMixin:
             self.history_tree.cell(key,"entry",numeric=True)
             self.history_tree.cell(key,"fees",numeric=True,color=MUTED)
             self.history_tree.cell(key,"source",text={"APP":"APP","EXTERNAL":"DNSE","MIXED":"APP / DNSE"}.get(raw["source"],raw["source"]))
-        for raw in self.view.get("orders",[]):
+        for raw in orders:
             key=raw["id"]
             self._history_cells(self.order_history_tree,key,"time",raw["side"])
             status=raw["status"]

@@ -89,8 +89,24 @@ class ExitSettings:
     retention_pct: float = 72.0
     retention_until_enabled: bool = True
     retention_until: float = 0.0
+    ema_exit_enabled: bool = False
+    ema_exit_fast: int = 3
+    ema_exit_slow: int = 6
+    ema_exit_mode: str = 'REALTIME'
+    ema_exit_interval: str = 'TICK'
 
     def validate(self):
+        if not isinstance(self.ema_exit_enabled, bool):
+            raise ValueError('E cần công tắc bật/tắt.')
+        for key in ('ema_exit_fast', 'ema_exit_slow'):
+            value = getattr(self, key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value != int(value) or not 1 <= value <= 1000:
+                raise ValueError('Chu kỳ EMA của E phải là số nguyên từ 1 đến 1000.')
+            setattr(self, key, int(value))
+        if self.ema_exit_fast >= self.ema_exit_slow:
+            raise ValueError('E: EMA nhanh phải nhỏ hơn EMA chậm.')
+        if self.ema_exit_mode not in {'REALTIME', 'CLOSED'} or self.ema_exit_interval not in {'TICK', '1M', '2M', '5M'}:
+            raise ValueError('E: chế độ nến hoặc nhịp quan sát không hợp lệ.')
         if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
@@ -164,6 +180,10 @@ class Settings:
         if not 1 <= self.poll_seconds <= 60 or not 1 <= self.max_quote_age <= 120:
             raise ValueError("Chu kỳ cập nhật không hợp lệ.")
         from ckps.rules.defaults import shared_exit_settings
+        # Preserve the old shared observation clock until an E rule is saved.
+        self.exit = {**self.exit,
+            'ema_exit_mode': self.exit.get('ema_exit_mode', self.signals.get('signal_mode', 'REALTIME')),
+            'ema_exit_interval': self.exit.get('ema_exit_interval', self.signals.get('realtime_indicator_interval', 'TICK'))}
         self.exit = shared_exit_settings(self.exit)
         load_record(ExitSettings, self.exit).validate()
         from ckps.rules.signal_settings import SignalSettings

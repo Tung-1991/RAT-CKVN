@@ -36,6 +36,8 @@ class SignalRuntime(SignalNotifications):
             self.store.close();self.lease.close()
             raise
         self.latest=None
+        if getattr(self.market, 'feed', None):
+            self.market.feed.max_quote_age = self.settings.max_quote_age
         self.commands,self.events=queue.Queue(),queue.Queue()
         self.stop=threading.Event()
         self.owner_token=credentials.get('telegram_token',os.environ.get('CKPS_TELEGRAM_TOKEN',''))
@@ -70,6 +72,8 @@ class SignalRuntime(SignalNotifications):
                 self.telegram_retry_at = 0
                 self.telegram_error = ''
             self.settings=settings
+            if getattr(getattr(self, 'market', None), 'feed', None):
+                self.market.feed.max_quote_age = settings.max_quote_age
             self.owner_token=token
             self.owner_enabled,self.owner_chat=settings.telegram_enabled,settings.telegram_chat
             self._drop_disabled_owner()

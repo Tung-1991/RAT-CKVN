@@ -49,4 +49,4 @@ FONT_BOLD = ("Segoe UI", 14)
 
 FONT_PREVIEW_TITLE = ("Segoe UI", 14, "bold")
 
-FONT_PREVIEW_VALUE = ("Cascadia Mono", 14)
+FONT_PREVIEW_VALUE = ("Cascadia Mono", 16, "bold")

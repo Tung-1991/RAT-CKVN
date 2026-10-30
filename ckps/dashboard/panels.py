@@ -5,6 +5,7 @@ from .theme import BLUE, MUTED, SLATE, SLATE_HOVER
 from .mayin.tokens import (COL_SURFACE as SURFACE, COL_SURFACE_2 as SURFACE_2, COL_BORDER as BORDER,
     COL_TITLE as TITLE, COL_PANEL_HEADER, COL_GRID)
 from .mayin.panels import INFO_PANEL_HEIGHT
+from .mayin.widgets import choice_bar
 
 class DashboardPanelsMixin(MayinController):
     """MayinTien: account/ticket at left, running orders and Preview/Log at right."""
@@ -18,7 +19,7 @@ class DashboardPanelsMixin(MayinController):
         ctk.CTkLabel(header, text='LỆNH ĐANG CHẠY', font=('Segoe UI', 16, 'bold'), text_color=TITLE).pack(side='left')
         self.running_count=ctk.CTkLabel(header,text='0 vị thế · 0 lệnh chờ',font=('Segoe UI',14),text_color=MUTED)
         self.running_count.pack(side='left',padx=14)
-        self.history_button = ctk.CTkButton(header, text='◷ LỊCH SỬ', width=100, height=30, fg_color=SLATE, hover_color=SLATE_HOVER, command=self.history)
+        self.history_button = ctk.CTkButton(header, text='◷ LỊCH SỬ', width=116, height=34,font=('Segoe UI',14,'bold'), fg_color='#243D57', hover_color='#315A81',border_width=1,border_color='#3D5B7C', command=self.history)
         self.history_button.pack(side='right')
         self.table_workspace = self._card(self.right)
         self.table_workspace.grid(row=1, column=0, sticky='nsew')
@@ -57,8 +58,8 @@ class DashboardPanelsMixin(MayinController):
         info_header.grid_columnconfigure(1,weight=1)
         self.info_header=info_header
         self.info_choice=tk.StringVar(value='PREVIEW')
-        self.info_selector=ctk.CTkSegmentedButton(info_header,values=['PREVIEW','LOG'],variable=self.info_choice,height=28,
-            font=('Segoe UI',14,'bold'),fg_color=COL_PANEL_HEADER,unselected_color=COL_PANEL_HEADER,selected_color=BLUE,command=self._select_info)
+        self.info_selector=choice_bar(info_header,values=['PREVIEW','LOG'],variable=self.info_choice,height=36,
+            command=self._select_info)
         self.info_selector.grid(row=0,column=0,sticky='w',padx=3,pady=3)
         content=ctk.CTkFrame(self.info_panel,fg_color='transparent')
         content.grid(row=1,column=0,sticky='nsew',padx=7)
@@ -68,7 +69,7 @@ class DashboardPanelsMixin(MayinController):
         for page in self.info_pages.values():
             page.grid(row=0,column=0,sticky='nsew')
         self._build_order_preview_tab(self.info_pages['PREVIEW'])
-        self.logs=ctk.CTkTextbox(self.info_pages['LOG'],fg_color=SURFACE_2,font=('Cascadia Mono',13),wrap='word')
+        self.logs=ctk.CTkTextbox(self.info_pages['LOG'],fg_color='#192532',text_color='#D6E3F2',border_width=1,border_color='#344D66',font=('Cascadia Mono',14),wrap='word')
         self.logs.pack(fill='both',expand=True)
         self.logs.configure(state='disabled')
         self.status=ctk.CTkLabel(self.info_panel,text='Đang khởi động…',text_color='#DBEAFE',font=('Segoe UI',14),anchor='w',height=28,
