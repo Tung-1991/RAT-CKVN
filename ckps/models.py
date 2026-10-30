@@ -82,12 +82,12 @@ class ExitSettings:
     dynamic_basis: str = "REMAINING"
     dynamic_repeat: bool = False
     atr_start_enabled: bool = True
-    atr_start_multiplier: float = 0.55
+    atr_start_multiplier: float = 0.5
     atr_trail_enabled: bool = True
     atr_trail_multiplier: float = 0.8
     retention_enabled: bool = True
-    retention_pct: float = 72.0
-    retention_until_enabled: bool = True
+    retention_pct: float = 70.0
+    retention_until_enabled: bool = False
     retention_until: float = 0.0
     ema_exit_enabled: bool = False
     ema_exit_fast: int = 3
@@ -105,8 +105,7 @@ class ExitSettings:
             setattr(self, key, int(value))
         if self.ema_exit_fast >= self.ema_exit_slow:
             raise ValueError('E: EMA nhanh phải nhỏ hơn EMA chậm.')
-        if self.ema_exit_mode not in {'REALTIME', 'CLOSED'} or self.ema_exit_interval not in {'TICK', '1M', '2M', '5M'}:
-            raise ValueError('E: chế độ nến hoặc nhịp quan sát không hợp lệ.')
+        self.ema_exit_mode, self.ema_exit_interval = 'REALTIME', 'TICK'
         if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
@@ -131,6 +130,13 @@ class ExitSettings:
             raise ValueError("Tỷ lệ giữ lãi phải trong [0, 100].")
         if self.dynamic_enabled and not (self.atr_trail_enabled or self.retention_enabled):
             raise ValueError("DYNAMIC cần ATR trail hoặc giữ lãi.")
+        if self.dynamic_enabled:
+            for enabled, value in ((self.atr_start_enabled, self.atr_start_multiplier),
+                                   (self.atr_trail_enabled, self.atr_trail_multiplier),
+                                   (self.retention_enabled, self.retention_pct),
+                                   (self.retention_until_enabled, self.retention_until)):
+                if enabled and value <= 0:
+                    raise ValueError('DYNAMIC: tham số đang bật phải lớn hơn 0.')
         return self
 
     def points(self, value, entry, margin_per_contract=None):

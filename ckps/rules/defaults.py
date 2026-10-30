@@ -3,16 +3,12 @@ from dataclasses import asdict
 
 
 def shared_exit_settings(values):
-    """Fixed execution choices for the single ready-to-use RULE."""
+    """Fixed execution permissions; preserve user protection thresholds."""
     return {**values,
             'arm_policy': 'AUTO', 'dynamic_policy': 'AUTO',
             'arm_basis': 'REMAINING', 'dynamic_basis': 'REMAINING',
             'arm_close_pct': 50.0, 'dynamic_close_pct': 50.0,
-            'atr_start_enabled': True, 'atr_start_multiplier': .5,
-            'atr_trail_enabled': True, 'atr_trail_multiplier': .8,
-            'retention_enabled': True, 'retention_pct': 70.0,
-            'retention_until_enabled': False, 'retention_until': 0.0,
-            'arm_repeat_below_arm': True}
+            'ema_exit_mode': 'REALTIME', 'ema_exit_interval': 'TICK'}
 
 
 def default_exit_settings():

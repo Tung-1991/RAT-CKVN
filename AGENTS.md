@@ -8,7 +8,7 @@
   nhắc trước đáo hạn và Tín hiệu / Lệnh (gợi ý, biên nhận mở/đóng/giảm).
   Không có quyền mở/đóng lệnh.
 - E thực thi tại app giao dịch, tách khỏi E ALERT của backend: EMA nhanh/chậm
-  mặc định 3/6, chỉnh ngay E/M cùng REALTIME/CLOSED và nhịp TICK/1M/2M/5M trên nến 1D.
+  mặc định 3/6, chỉnh ngay E/M; luôn REALTIME theo từng giá mới trên nến 1D, không chọn chế độ/nhịp.
   Long nhanh < chậm, Short nhanh > chậm thì đóng toàn bộ khi E + BOT + quyền vị thế ON. E mới mặc định OFF,
   bật/lưu tại RULE → E/M; không phụ thuộc ALERT/Telegram, không mở hoặc đảo chiều.
 - SL/TP/E đóng HĐ khả dụng trước, hủy lệnh đóng cũ cản trở và chờ broker xác nhận
@@ -32,14 +32,15 @@
 - TSL và DYNAMIC cố định tự đóng 50% HĐ còn lại mỗi lượt khi đủ quyền.
   Không AUTO / ALERT, GỐC / CÒN LẠI hoặc ô nhập tỷ lệ đóng trong E/M;
   chỉ hiển thị dòng 50% HĐ còn lại và giải thích làm tròn trong hint.
-  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ bốn ngưỡng giá và
+  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
   ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
-  DYNAMIC cố định ATR14 nến ngày đã đóng: START 0,5 ATR, trail 0,8 ATR,
-  giữ 70% lãi đỉnh, không TỚI MFE riêng; LẶP mặc định ON.
-  Các ô SL/TP/ARM/Lùi/LẶP cùng hai chu kỳ EMA của E; bỏ ô chỉnh ATR/giữ lãi/TỚI MFE và lặp dưới ARM.
-  Cấu hình cũ cũng dùng các hệ số cố định này; vẫn giữ cờ nhánh/LẶP đã lưu.
+  DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
+  giữ 70% lãi đỉnh, TỚI MFE OFF; LẶP mặc định ON.
+  DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
+  Giữ tham số đã lưu, không ép về mặc định. Bước LẶP chung nằm trong BẢO VỆ,
+  tách khỏi SL/TP; ARM có LẶP ĐÓNG và LẶP DƯỚI ARM khi còn lãi.
   Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,
@@ -69,8 +70,8 @@
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
-- E/M hiện TSL/ARM và DYNAMIC, mức đóng cố định, LẶP; ATR/giữ lãi chỉ đọc,
-  không giấu trong nâng cao hoặc thêm option. Giữ hint và cùng cỡ hai cửa sổ.
+- E/M hiện TSL/ARM và DYNAMIC, mức đóng cố định, LẶP; ATR14 nguồn chỉ đọc,
+  hệ số DYNAMIC chỉnh trực tiếp, không giấu trong nâng cao. Giữ hint và cùng cỡ hai cửa sổ.
 - Preview và RULE cùng hiện ATR14, phiên nến, START/lùi tính ra từ nguồn thực thi;
   thiếu nến/khác mã hiện CHỜ. Giá cũ vẫn khóa tín hiệu; ATR nến đã đóng hiển thị
   riêng với ngày phiên, không lấy nến hôm nay hoặc dựng số mẫu trong app thật.
@@ -84,6 +85,9 @@
 - Chọn PAPER/REAL không tự mở KẾT NỐI. REAL xác minh tài khoản/gói qua GET worker;
   thiếu cấu hình hoặc nhiều lựa chọn thì báo ngay MAIN, giữ sổ cũ. Bỏ kết quả cũ
   khi đổi ý/kết nối; chỉ dừng sổ cũ sau khi xác minh, sổ mới luôn BOT OFF.
+- GET số dư/sức mở không cần OTP; không gộp quyền đọc với token giao dịch.
+  Sổ lệnh đọc NORMAL, pageIndex từ 0, pageSize 100, đủ mọi trang mới đối soát.
+  Số dư đã đọc được vẫn hiện khi endpoint khác lỗi; không cấp sức mở từ snapshot thiếu.
 - Thay đổi tiền/vị thế/lệnh cần kiểm thử có ý nghĩa trong `support/tests/`.
   Test offline chặn mạng; không gửi lệnh thật hoặc Telegram để thử.
 - `../RAT-CKVN-reference/sources/` chỉ đối chiếu local, không import và không đưa vào gói bán.

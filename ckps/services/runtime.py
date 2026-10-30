@@ -174,6 +174,12 @@ class Runtime:
                  "events": self.store.events()}
         views['market_cache'] = self.quote_cache.value
         broker = self.engine.broker
+        if self.settings.mode == 'REAL':
+            # Display a successful balance read even if another endpoint fails.
+            # This read-only view grants no trading capacity or reconciliation.
+            views['market_connection'] = {'configured': True, 'connected': self.engine.healthy,
+                                          'error': self.engine.error}
+            views['account'] = dict(getattr(broker, 'account_view', {}))
         until = getattr(broker, 'token_until', 0.)
         views['trading_auth'] = {'required': self.settings.mode == 'REAL', 'until': until,
             'valid': bool(getattr(broker, 'token', '') and until > time.time())}
@@ -191,6 +197,8 @@ class Runtime:
             views["atr14_pct"] = views['atr14']['pct']
             views["account"] = {name: getattr(snapshot, name) for name in (
                 "nav", "remaining_margin", "used_margin", "margin_per_contract", "pending_margin", "qmax_long", "qmax_short", "observed_at", "source", "paper_capital", "total_money", "collateral_total", "margin_reference_price", 'package_fees')}
+            if self.settings.mode == 'REAL' and not self.engine.healthy:
+                views['account'] = dict(getattr(broker, 'account_view', {}))
         for side in ("LONG", "SHORT"):
             try:
                 views[side] = asdict(self.engine.preview(side))

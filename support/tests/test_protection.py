@@ -40,7 +40,7 @@ def test_long_percent_adapter_matches_original_mayintien(mfe):
     p.best = 100 + mfe
     rule = ExitSettings(distance_unit="PERCENT", sl_enabled=True, sl_distance=3,
         arm_enabled=True, arm_gain=7, trail_gap=2.8, dynamic_enabled=True,
-        retention_until=4.5)
+        atr_start_multiplier=.55, retention_pct=72, retention_until_enabled=True, retention_until=4.5)
     actual = levels(p, rule, 2.4)
     original = protect_level(100, mfe, 7, 2.8, dynamic_enabled=True, sl_price=97,
         atr_pct=2.4, atr_multiplier=.8, atr_activation_multiplier=.55,
@@ -90,7 +90,7 @@ def test_dynamic_no_atr_does_not_invent_start():
 def test_dynamic_retention_without_atr_start_is_supported():
     p = Position.create("VN30F1M", "LONG", 1, 2000, history_verified=True)
     rule = ExitSettings(distance_unit='POINTS', dynamic_enabled=True, atr_start_enabled=False,
-                        atr_trail_enabled=False, retention_until_enabled=False)
+                        atr_trail_enabled=False, retention_pct=72, retention_until_enabled=False)
     evaluate(p, 2020, rule)
     assert p.floor == pytest.approx(2014.4)
     assert evaluate(p, 2014, rule).policy == "ALERT"

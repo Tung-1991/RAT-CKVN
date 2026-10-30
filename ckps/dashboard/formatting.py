@@ -1,7 +1,7 @@
 from datetime import datetime
 
 def money(value):
-    return "—" if value is None else f"{value:,.0f} đ"
+    return "—" if value is None else f"{0 if value == 0 else value:,.0f} đ"
 
 def price(value):
     return "—" if not value else f"{value:,.1f}"

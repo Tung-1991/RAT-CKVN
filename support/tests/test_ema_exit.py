@@ -42,30 +42,30 @@ def test_e_uses_opposite_ema_relationship_for_each_direction(side, price, hit):
         assert decision.reason == 'E' and decision.quantity == 2
 
 
-def test_closed_mode_does_not_use_live_daily_close():
+def test_legacy_closed_mode_is_normalized_to_live_daily_close():
     now = datetime(2026, 10, 27, 10, tzinfo=VN_TZ)
     snapshot = market(now, 1990)
     observer = EMAExit()
     closed = observer.observe(snapshot, policy(signal_mode='CLOSED'), snapshot.contract, now=now)
-    assert closed['ready'] and closed['fast'] == closed['slow'] == 2000
+    assert closed['ready'] and closed['fast'] < closed['slow']
     realtime = observer.observe(snapshot, policy(), snapshot.contract, now=now)
     assert realtime['fast'] < realtime['slow']
 
 
 @pytest.mark.parametrize('minutes', [1, 2, 5])
-def test_interval_uses_last_price_of_completed_bucket_and_resets_after_gap(minutes):
+def test_legacy_interval_uses_each_fresh_price_immediately_even_after_gap(minutes):
     now = datetime(2026, 10, 27, 10, 0, 10, tzinfo=VN_TZ)
     settings = policy(realtime_indicator_interval=f'{minutes}M')
     observer = EMAExit()
     snapshot = market(now, 1990)
-    assert not observer.observe(snapshot, settings, snapshot.contract, now=now)['ready']
+    assert observer.observe(snapshot, settings, snapshot.contract, now=now)['fast'] < 2000
     after = now + timedelta(minutes=minutes)
     snapshot.quotes[snapshot.contract] = Quote(snapshot.contract, 2010, at=after.timestamp())
     view = observer.observe(snapshot, settings, snapshot.contract, now=after)
-    assert view['ready'] and view['fast'] < view['slow']
+    assert view['ready'] and view['fast'] > view['slow']
     gap = after + timedelta(minutes=minutes*3)
     snapshot.quotes[snapshot.contract] = Quote(snapshot.contract, 1990, at=gap.timestamp())
-    assert not observer.observe(snapshot, settings, snapshot.contract, now=gap)['ready']
+    assert observer.observe(snapshot, settings, snapshot.contract, now=gap)['fast'] < 2000
 
 
 def test_e_waits_for_valid_quote_bars_and_matching_contract():

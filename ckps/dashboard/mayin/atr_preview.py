@@ -1,14 +1,28 @@
-"""Read-only ATR provenance and the fixed early-protection distances."""
+"""Completed-candle ATR provenance and configured protection distances."""
 from datetime import date
 from math import isfinite
 
-from ckps.rules.defaults import shared_exit_settings
+from ckps.rules.defaults import default_exit_settings, shared_exit_settings
 
 
-def atr_preview(view):
+def atr_preview(view, rules=None):
     data = view.get('atr14') or {}
-    settings = shared_exit_settings({})
-    waiting = ('ATR14 · CHỜ NẾN 1D', 'Bắt đầu 0,5 ATR · lùi 0,8 ATR · giữ 70% lãi', False)
+    settings = shared_exit_settings({**default_exit_settings(), **(rules or {})})
+    def description(value=None):
+        parts=[]
+        number=lambda n:f'{n:.2f}'.replace('.', ',')
+        if settings['atr_start_enabled']:
+            parts.append(f"Bắt đầu +{number(value*settings['atr_start_multiplier'])}%" if value is not None
+                         else f"Bắt đầu {settings['atr_start_multiplier']:g} ATR".replace('.',','))
+        else:parts.append('Bắt đầu khi có lãi')
+        if settings['atr_trail_enabled']:
+            parts.append(f"lùi ATR {number(value*settings['atr_trail_multiplier'])}%" if value is not None
+                         else f"lùi {settings['atr_trail_multiplier']:g} ATR".replace('.',','))
+        if settings['retention_enabled']:
+            parts.append(f"giữ {settings['retention_pct']:g}% lãi")
+            if settings['retention_until_enabled']:parts.append(f"tới MFE {settings['retention_until']:g}% giá vốn")
+        return ' · '.join(parts)
+    waiting = ('ATR14 · CHỜ NẾN 1D', description(), False)
     try:
         value = float(data['pct'])
         if (not view.get('contract') or data.get('contract') != view['contract']
@@ -19,10 +33,8 @@ def atr_preview(view):
             session = 'MẪU'
         else:
             session = date.fromisoformat(data['as_of']).strftime('%d/%m/%Y')
-        start = value * settings['atr_start_multiplier']
-        trail = value * settings['atr_trail_multiplier']
         number = lambda n: f'{n:.2f}'.replace('.', ',')
         return (f'ATR14 · {number(value)}% · phiên {session}',
-                f'Bắt đầu +{number(start)}% · lùi ATR {number(trail)}% · giữ 70% lãi', True)
+                description(value), True)
     except (ValueError, TypeError, KeyError):
         return waiting

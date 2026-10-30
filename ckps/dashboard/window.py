@@ -118,6 +118,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
             self.connection_profile = dict(credentials)
             write_settings(settings)
             self.view = {}
+            self.ui_status = None
             self.mode_requested = None
             self.mode_choice.set(settings.mode)
             self.status.configure(text="Đang kết nối và đối soát…")

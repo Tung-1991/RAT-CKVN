@@ -368,7 +368,7 @@ def _rule_adapter_scenario():
         window=app.settings_dialog('E/M');app.update()
         from ckps.rules.defaults import shared_exit_settings
         expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT'}
-        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap'):
+        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
             expected[key]=getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
@@ -381,7 +381,7 @@ def _rule_adapter_scenario():
         window.save()
         assert len(saved)==1 and saved[0].exit==expected
         assert saved[0].paper_balance==settings.paper_balance
-        assert saved[0].signals==signals.to_dict()
+        assert saved[0].signals==signals.validate().to_dict()
         assert not sent
         # A legacy PNL policy still needs its actual margin basis, even though
         # modern price rules can be edited and used without that basis.
@@ -479,7 +479,7 @@ def _position_protection_scenario(scale):
             assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
             assert editor.dynamic_settings_card.winfo_ismapped() and editor.dynamic_atr_value.winfo_ismapped()
-            assert not hasattr(editor,'below_arm_switch')
+            assert hasattr(editor,'below_arm')
             canvas = editor.exit_body._parent_canvas
             for widget in controls(editor.protection_host):
                 offset = widget.winfo_rooty() - editor.exit_body.winfo_rooty()

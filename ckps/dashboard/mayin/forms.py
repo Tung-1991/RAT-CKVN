@@ -115,12 +115,12 @@ class OriginalRuleForms:
         body = self._content(frame, columns=2)
         self.exit_body=body
         compact=not include_signals
-        take = self._card(body, 'SL / TP / LẶP', '', 1, 0, span=2,compact=compact)
+        take = self._card(body, 'SL / TP', '', 1, 0, span=2,compact=compact)
         limits = ctk.CTkFrame(take, fg_color='transparent')
         limits.pack(fill='x', padx=4, pady=(0, 2 if compact else 6))
-        limits.grid_columnconfigure((0, 1, 2), weight=1, uniform='exit-limits')
+        limits.grid_columnconfigure((0, 1), weight=1, uniform='exit-limits')
         limit_cells = []
-        for column in range(3):
+        for column in range(2):
             cell = ctk.CTkFrame(limits, fg_color='transparent')
             cell.grid(row=0, column=column, sticky='nsew')
             cell._viking_compact=compact
@@ -128,8 +128,8 @@ class OriginalRuleForms:
         self.exit_limit_cells=limit_cells
         self.initial_sl = self._field(limit_cells[0], 'SL (% GIÁ)', self.params.initial_sl_pct, 'Mức cắt lỗ theo % giá vốn bình quân. Nhập 0,25 hoặc -0,25: app dùng khoảng cách 0,25%. Giá vốn 2.000: Long cắt tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. Không tính trên tiền hoặc NAV.')
         self.take_profit = self._field(limit_cells[1], 'TP (% GIÁ)', self.params.take_profit_pct, 'Chốt toàn bộ theo % giá vốn. Giá vốn 2.000, TP 1%: Long chốt tại 2.020, Short tại 1.980. Chỉ tự đóng khi TP, BOT và quyền vị thế ON.')
-        self.reentry_sl = self._field(limit_cells[2], 'LẶP (% GIÁ)', self.params.reentry_sl_pct, 'Khoảng giá giữa các lượt đóng = giá vốn × bước LẶP / 100. Chờ lệnh trước kết thúc, không gửi lặp cùng lượt; không phụ thuộc ký quỹ.')
         self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Khi BOT và quyền quản lý ON, mỗi lượt tự đóng 50% số HĐ còn lại, làm tròn xuống và tối thiểu 1 HĐ. Ví dụ 4 → 2 → 1 → 0 HĐ qua các lượt LẶP, không gửi liên tục cùng một mốc.', 2, 0, span=2,compact=compact)
+        self.reentry_sl = self._field(self.protect_card, 'BƯỚC LẶP CHUNG (% GIÁ VỐN)', self.params.reentry_sl_pct, 'Khoảng cách giữa các lượt đóng tiếp của ARM và DYNAMIC = giá vốn × bước LẶP / 100. ARM là ngưỡng bắt đầu TSL, không phải khoảng lặp. LẶP chỉ giảm vị thế còn lại sau khi lượt trước kết thúc; không vào lại lệnh. Công tắc từng nhánh ở bên dưới.')
         groups = ctk.CTkFrame(self.protect_card, fg_color='transparent')
         groups.pack(fill='x', padx=4, pady=(0, 0 if compact else 2))
         groups.grid_columnconfigure((0,1,2) if include_signals else (0,1), weight=1, uniform='protect-groups')
@@ -140,8 +140,9 @@ class OriginalRuleForms:
         self.normal_giveback = self._field(normal, 'Lùi (% GIÁ)', self.params.normal_giveback_pct, 'Khoảng lùi = giá vốn × % Lùi / 100. Giá vốn 2.000, Lùi 0,25% là khoảng giá 5: Long đỉnh 2.020 thì mốc 2.015; Short đáy 1.980 thì mốc 1.985.')
         ctk.CTkLabel(normal, text='Đóng 50% HĐ còn lại', font=('Segoe UI',12), text_color=self.TITLE, anchor='w').pack(fill='x',padx=12,pady=4)
         self.normal_repeat = self._switch(normal, 'LẶP ĐÓNG', self.params.normal_repeat_enabled, 'Cho phép đóng tiếp sau khi lệnh trước kết thúc, theo Bước LẶP hoặc đỉnh/đáy mới.')
+        self.below_arm = self._switch(normal, 'LẶP DƯỚI ARM', self.params.arm_repeat_below_arm, 'Sau lượt ARM đầu: ON cho phép đóng tiếp khi lãi hiện tại thấp hơn ngưỡng ARM nhưng vẫn còn lãi trước phí, mỗi lượt cách đủ bước LẶP. OFF chờ giá còn đạt ARM. Ví dụ giá vốn 2.000, ARM 1%, đóng lần đầu tại 2.023, bước lặp 0,25%: ON cho phép các lượt tiếp tại 2.018 rồi 2.013. Short tính đối xứng.')
         self.repeat_switch = next((child for child in self.normal_repeat._viking_row.winfo_children() if isinstance(child, ctk.CTkSwitch)))
-        dynamic_box = self._card(groups, 'DYNAMIC', 'Bảo vệ sớm trước ARM. ATR14 đo dao động của 14 nến ngày đã đóng. Bắt đầu khi lãi đạt 0,5 ATR; lùi theo 0,8 ATR và giữ 70% lãi đỉnh. Giá vốn 2.000, đỉnh 2.012: mốc giữ lãi là 2.008,4. Bộ này được chọn sẵn; khi đạt ARM thì TSL tiếp quản. Thiếu ATR thì CHỜ, không dựng số 0. Mỗi lượt đóng 50% HĐ còn lại khi đủ quyền.', 0, 1,compact=compact)
+        dynamic_box = self._card(groups, 'DYNAMIC', 'Bảo vệ trước ARM bằng ATR14 nến ngày đã đóng và/hoặc giữ lãi đỉnh. START quyết định lúc bắt đầu; Lùi ATR và Giữ lãi cùng bật thì chọn mốc bảo vệ chặt hơn. Tới MFE chỉ giới hạn nhánh giữ lãi; OFF giữ tới ARM. Mốc đã bảo vệ không tự nới khi đổi tham số. Mỗi lượt đóng 50% HĐ còn lại khi đủ quyền.', 0, 1,compact=compact)
         self.dynamic_settings_card = dynamic_box
         dynamic_header = dynamic_box._viking_header
         dynamic_header.pack_configure(padx=10, pady=(6, 4))
@@ -149,6 +150,22 @@ class OriginalRuleForms:
         dynamic_title.configure(font=('Segoe UI', 13, 'bold'))
         self.normal_dynamic = tk.BooleanVar(value=self.params.normal_dynamic_enabled)
         ctk.CTkSwitch(dynamic_header, text='', width=36, variable=self.normal_dynamic, font=('Segoe UI', 12, 'bold'), progress_color=self.GREEN, button_color=self.TEXT, text_color=self.TEXT).pack(side='left', before=dynamic_title, padx=(0, 4))
+        for key,label,hint in (
+            ('atr_start','START (× ATR)','Lãi đỉnh đạt hệ số này × ATR14 thì DYNAMIC bắt đầu. Tắt START: bắt đầu từ khi có lãi; nhánh Lùi ATR vẫn cần ATR hợp lệ.'),
+            ('atr_trail','Lùi (× ATR)','Khoảng lùi từ đỉnh Long / đáy Short = hệ số × ATR14 (%). Dùng ATR từ nến ngày đã đóng, không dùng nến hôm nay.'),
+            ('retention','Giữ lãi (%)','Giữ tỷ lệ % lãi đỉnh, không phải % giá vốn. Lãi đỉnh 10 điểm, giữ 70% đặt mốc còn lãi 7 điểm.'),
+            ('retention_until','Tới MFE (% giá)','Giới hạn nhánh Giữ lãi khi lãi đỉnh chưa tới mức % giá vốn này. OFF: giữ lãi tới ARM. Mốc bảo vệ đã hình thành vẫn được giữ, không tự nới.')):
+            attr={'atr_start':'atr_start_multiplier','atr_trail':'atr_trail_multiplier','retention':'retention_pct','retention_until':'retention_until'}[key]
+            entry=self._field(dynamic_box,label,getattr(self.params,attr),hint)
+            setattr(self,attr,entry)
+            row=entry.master
+            caption=next(w for w in row.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text'))
+            caption.destroy()
+            variable=tk.BooleanVar(value=getattr(self.params,key+'_enabled'))
+            setattr(self,key+'_enabled',variable)
+            ctk.CTkCheckBox(row,text=label,variable=variable,width=1,checkbox_width=18,checkbox_height=18,
+                font=('Segoe UI',14,'bold'),text_color=self.TITLE,command=self.render_atr).grid(row=0,column=0,sticky='w')
+            entry.bind('<KeyRelease>',lambda _:self.render_atr(),add='+')
         dynamic_groups = ctk.CTkFrame(dynamic_box, fg_color='transparent')
         dynamic_groups.pack(fill='x', padx=8, pady=(0, 2 if compact else 6))
         dynamic_groups.grid_columnconfigure(0, weight=1)

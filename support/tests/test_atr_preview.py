@@ -64,7 +64,7 @@ def test_preview_requires_matching_contract_and_completed_candle_provenance(chan
     assert not atr_preview({'contract': 'VN30F1M', 'atr14_pct': 1.})[2]
 
 
-def test_fixed_dynamic_internals_replace_old_controls_without_changing_user_thresholds(system):
+def test_dynamic_settings_and_repeat_below_arm_survive_save_restart_and_execution(system):
     engine, _, store = system
     original = asdict(ExitSettings(sl_enabled=False, sl_distance=.35, arm_enabled=False,
         arm_gain=1.2, trail_gap=.2, repeat_gap=.3, arm_repeat=False, arm_repeat_below_arm=False,
@@ -77,12 +77,18 @@ def test_fixed_dynamic_internals_replace_old_controls_without_changing_user_thre
     for key in ('sl_enabled', 'sl_distance', 'arm_enabled', 'arm_gain', 'trail_gap',
                 'repeat_gap', 'arm_repeat', 'dynamic_enabled', 'dynamic_repeat'):
         assert actual[key] == original[key]
-    fixed = {'tp_enabled': False, 'tp_distance': 0, 'atr_start_enabled': True,
-             'atr_start_multiplier': .5, 'atr_trail_enabled': True, 'atr_trail_multiplier': .8,
-             'retention_enabled': True, 'retention_pct': 70,
-             'retention_until_enabled': False, 'retention_until': 0, 'arm_repeat_below_arm': True}
-    assert {key: actual[key] for key in fixed} == fixed
+    for key in ('atr_start_enabled','atr_start_multiplier','atr_trail_enabled','atr_trail_multiplier',
+                'retention_enabled','retention_pct','retention_until_enabled','retention_until','arm_repeat_below_arm'):
+        assert actual[key] == original[key]
     assert not engine.enabled.is_set() and not store.orders()
+
+
+def test_atr_preview_uses_saved_or_draft_thresholds_and_flags():
+    view={'contract':'VN30F1M','atr14':{'contract':'VN30F1M',**completed_atr_snapshot(candles(),NOW)}}
+    rules={**Settings().exit,'atr_start_multiplier':.2,'atr_trail_multiplier':1.2,'retention_pct':60}
+    assert atr_preview(view,rules)[1]=='Bắt đầu +0,20% · lùi ATR 1,20% · giữ 60% lãi'
+    rules.update(atr_start_enabled=False,atr_trail_enabled=False,retention_until_enabled=True,retention_until=.9)
+    assert atr_preview(view,rules)[1]=='Bắt đầu khi có lãi · giữ 60% lãi · tới MFE 0.9% giá vốn'
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])

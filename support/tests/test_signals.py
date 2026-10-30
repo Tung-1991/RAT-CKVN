@@ -116,11 +116,11 @@ def test_history_failure_is_unknown_and_does_not_break_live_va(analysis):
     assert value["buy_alert"] and value["xp"]["up"] is None and not value["xp"]["ready"]
 
 
-def test_closed_mode_does_not_use_intraday_price_for_indicators(analysis):
+def test_legacy_closed_mode_is_realtime_for_indicators(analysis):
     service, _ = analysis
     settings = config(signal_mode="CLOSED", buy_signal_require_ema_cross=False, buy_signal_use_rsi=False)
     value = service.observe(payload(2200), settings, now=NOW)
-    assert value["p2"]["indicators"]["buy_ema_fast"] == 2000
+    assert value["p2"]["indicators"]["buy_ema_fast"] == 2100
     assert value["p1"]["state"] == "ABOVE"
 
 
@@ -139,17 +139,17 @@ def test_backend_ma200_matches_preview_previous_completed_daily_candles(analysis
     assert result['p1']['ma'] is None and result['p1']['samples'] == 199
 
 
-def test_minute_interval_uses_completed_bucket_and_keeps_live_memory(analysis):
+def test_legacy_minute_interval_observes_each_tick_and_keeps_live_memory(analysis):
     service, _ = analysis
     settings = config(realtime_indicator_interval="1M")
     first = service.observe(payload(1990), settings, now=NOW)["p2"]
-    assert "CHỜ ĐÓNG NHỊP" in first["status"]
-    when = NOW + timedelta(minutes=1)
-    below = service.observe(payload(2002, when), settings, now=when)["p2"]
-    assert below["indicators"]["buy_ema_fast"] < 2000
-    when += timedelta(minutes=1)
+    assert first['indicators']['buy_ema_fast'] < 2000 and 'CHỜ ĐÓNG NHỊP' not in first['status']
+    when = NOW + timedelta(seconds=1)
+    crossed = service.observe(payload(2002, when), settings, now=when)["p2"]
+    assert crossed['indicators']['buy_ema_fast']==2001 and crossed['buy_alert']
+    when += timedelta(seconds=1)
     above = service.observe(payload(2003, when), settings, now=when)["p2"]
-    assert above["indicators"]["buy_ema_fast"] == 2001
+    assert above["indicators"]["buy_ema_fast"] == 2001.5
     assert above["memory"]["valid"] and above["buy_alert"]
 
 

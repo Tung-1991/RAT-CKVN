@@ -34,7 +34,7 @@ def test_custom_ema_periods_and_clock_are_independent_of_alert_settings():
     settings.exit.update(ema_exit_fast=5,ema_exit_slow=13,ema_exit_mode='CLOSED',ema_exit_interval='5M')
     view=EMAExit().observe(snapshot,settings,snapshot.contract,now=now)
     assert view['ready'] and view['fast_period']==5 and view['slow_period']==13
-    assert view['fast']==pytest.approx(2000) and view['slow']==pytest.approx(2000)
+    assert view['fast']<view['slow'] and view['mode']=='REALTIME' and view['interval']=='TICK'
     settings.exit['ema_exit_mode']='REALTIME'
     settings.exit['ema_exit_interval']='TICK'
     settings.signals.update(enabled=False,signal_mode='CLOSED',realtime_indicator_interval='5M')
@@ -45,7 +45,7 @@ def test_custom_ema_periods_and_clock_are_independent_of_alert_settings():
 
 
 @pytest.mark.parametrize('values',[dict(ema_exit_fast=6,ema_exit_slow=3),dict(ema_exit_fast=3.5),
-    dict(ema_exit_slow=0),dict(ema_exit_mode='1M'),dict(ema_exit_interval='15M'),dict(tp_enabled=True,tp_distance=0)])
+    dict(ema_exit_slow=0),dict(tp_enabled=True,tp_distance=0)])
 def test_invalid_e_or_tp_cannot_be_saved(values):
     with pytest.raises(ValueError):ExitSettings(**values).validate()
 
@@ -63,12 +63,19 @@ def _rule_and_history_scenario():
         rule.ema_exit_enabled.set(True)
         for entry,value in ((rule.ema_exit_fast,'5'),(rule.ema_exit_slow,'13')):
             entry.delete(0,'end');entry.insert(0,value)
-        rule.ema_exit_mode.set('CLOSED');rule.ema_exit_interval.set('2M')
+        assert not hasattr(rule,'ema_mode_control') and not hasattr(rule,'ema_interval_control')
+        for entry,value in ((rule.atr_start_multiplier,'.3'),(rule.atr_trail_multiplier,'1.1'),(rule.retention_pct,'65'),(rule.retention_until,'.9')):
+            entry.delete(0,'end');entry.insert(0,value)
+        rule.retention_until_enabled.set(True)
+        rule.below_arm.set(False)
         sent=[];app.send=lambda *args,**kw:sent.append(args)
         rule.save()
         assert app.settings.exit['tp_enabled'] and app.settings.exit['tp_distance']==1.25
         assert app.settings.exit['ema_exit_fast']==5 and app.settings.exit['ema_exit_slow']==13
-        assert app.settings.exit['ema_exit_mode']=='CLOSED' and app.settings.exit['ema_exit_interval']=='2M'
+        assert app.settings.exit['ema_exit_mode']=='REALTIME' and app.settings.exit['ema_exit_interval']=='TICK'
+        assert app.settings.exit['atr_start_multiplier']==.3 and app.settings.exit['atr_trail_multiplier']==1.1
+        assert app.settings.exit['retention_pct']==65 and app.settings.exit['retention_until']==.9
+        assert app.settings.exit['retention_until_enabled'] and not app.settings.exit['arm_repeat_below_arm']
         assert len(sent)==1 and sent[0][0]=='settings'
         long=Position.create('VN30F1M','LONG',1,2000,closed_at=1)
         short=Position.create('41I1GB000','SHORT',1,2000,closed_at=2)

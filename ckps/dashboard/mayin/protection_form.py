@@ -8,7 +8,6 @@ from ckps.models import ExitSettings, Quote, load_record
 from ckps.rules.distances import price_percent_rules, reference_margin
 from ckps.rules.defaults import shared_exit_settings
 from .forms import OriginalRuleForms
-from .widgets import choice_bar
 
 
 class ProtectionFormMixin(OriginalRuleForms):
@@ -36,6 +35,9 @@ class ProtectionFormMixin(OriginalRuleForms):
         mapping = {'initial_sl_pct':'sl_distance','take_profit_pct':'tp_distance','reentry_sl_pct':'repeat_gap',
             'normal_arm_pct':'arm_gain','normal_giveback_pct':'trail_gap','normal_repeat_enabled':'arm_repeat',
             'normal_dynamic_enabled':'dynamic_enabled','dynamic_repeat_enabled':'dynamic_repeat'}
+        for key in ('arm_repeat_below_arm','atr_start_enabled','atr_start_multiplier','atr_trail_enabled',
+                    'atr_trail_multiplier','retention_enabled','retention_pct','retention_until_enabled','retention_until'):
+            mapping[key]=key
         values.update({name:getattr(exits,key) for name,key in mapping.items()})
         self.params = SimpleNamespace(**values)
         self._exit_manager_tab(parent,include_signals=False)
@@ -67,8 +69,6 @@ class ProtectionFormMixin(OriginalRuleForms):
             switch=ctk.CTkSwitch(cell,text=label,variable=variable,font=('Segoe UI',13,'bold'),progress_color=color,
                 button_color='#E0E8F1',fg_color='#3A4553')
             switch.pack(fill='x',padx=8,pady=(4,5),before=cell.winfo_children()[0])
-        spacer=ctk.CTkLabel(self.exit_limit_cells[2],text='BƯỚC ĐÓNG TIẾP',font=('Segoe UI',13,'bold'),text_color='#B5C4D5')
-        spacer.pack(fill='x',padx=8,pady=(4,5),before=self.exit_limit_cells[2].winfo_children()[0])
         self.arm_enabled=tk.BooleanVar(value=exits.arm_enabled)
         header=self.protect_trail_card._viking_header
         ctk.CTkSwitch(header,text='',width=36,variable=self.arm_enabled,progress_color='#4A9FE8',button_color='#E0E8F1').pack(side='left',before=header.winfo_children()[0],padx=(0,5))
@@ -76,7 +76,7 @@ class ProtectionFormMixin(OriginalRuleForms):
 
     def _ema_controls(self,body,exits):
         card=self._card(body,'E · THOÁT THEO EMA',
-            'Long đóng toàn bộ khi EMA nhanh < EMA chậm; Short khi EMA nhanh > EMA chậm. Khung nến 1D; REALTIME dùng giá đang chạy, CLOSED dùng nến đã đóng. Nhịp phút dùng mẫu cuối nhịp hoàn thành. E độc lập tín hiệu/RSI/Telegram, chỉ thực thi khi E + BOT + quyền vị thế ON.',3,0,span=2,compact=True)
+            'Long đóng toàn bộ khi EMA nhanh < EMA chậm; Short khi EMA nhanh > EMA chậm. EMA nến 1D cập nhật theo từng giá mới hợp lệ. E độc lập tín hiệu/RSI/Telegram, chỉ thực thi khi E + BOT + quyền vị thế ON.',3,0,span=2,compact=True)
         card.configure(fg_color='#202938',border_color='#415876')
         self.ema_exit_enabled=tk.BooleanVar(value=exits.ema_exit_enabled)
         header=card._viking_header
@@ -87,20 +87,15 @@ class ProtectionFormMixin(OriginalRuleForms):
         self.ema_exit_fast=self._field(numbers,'EMA nhanh',exits.ema_exit_fast,'Số phiên của EMA nhanh; phải nhỏ hơn EMA chậm.')
         self.ema_exit_slow=self._field(numbers,'EMA chậm',exits.ema_exit_slow,'Số phiên của EMA chậm. Thiếu ít nhất EMA chậm + 1 mẫu hợp lệ thì CHỜ.')
         clock=ctk.CTkFrame(content,fg_color='transparent');clock.grid(row=0,column=1,sticky='nsew',padx=4)
-        ctk.CTkLabel(clock,text='NẾN 1D · QUAN SÁT',font=('Segoe UI',13,'bold'),anchor='w',text_color='#C5D5E9').pack(fill='x')
-        self.ema_exit_mode=tk.StringVar(value=exits.ema_exit_mode)
-        self.ema_mode_control=choice_bar(clock,values=['REALTIME','CLOSED'],variable=self.ema_exit_mode,height=32,font=('Segoe UI',13,'bold'),selected_color='#6250A8')
-        self.ema_mode_control.pack(fill='x',pady=(1,4))
-        self.ema_exit_interval=tk.StringVar(value=exits.ema_exit_interval)
-        self.ema_interval_control=choice_bar(clock,values=['TICK','1M','2M','5M'],variable=self.ema_exit_interval,height=32,font=('Segoe UI',13,'bold'),selected_color='#6250A8')
-        self.ema_interval_control.pack(fill='x')
+        ctk.CTkLabel(clock,text='NẾN 1D · REALTIME',font=('Segoe UI',14,'bold'),anchor='w',text_color='#B9D9FA').pack(fill='x',pady=8)
+        ctk.CTkLabel(clock,text='Cập nhật theo giá mới',font=('Segoe UI',14),anchor='w',text_color='#C5D5E9').pack(fill='x')
         self.ema_exit_value=ctk.CTkLabel(card,text='',font=('Segoe UI',14),anchor='w',justify='left')
         self.ema_exit_value.pack(fill='x',padx=12,pady=(4,8))
         self.ema_exit_value.bind('<Configure>',lambda _:self.ema_exit_value.configure(wraplength=max(120,int(self.ema_exit_value.winfo_width()/self.ema_exit_value._get_widget_scaling())-4)),add='+')
 
     def _update_units(self):
         suffix='% GIÁ'
-        for entry,title in ((self.initial_sl,'SL'),(self.take_profit,'TP'),(self.reentry_sl,'LẶP'),
+        for entry,title in ((self.initial_sl,'SL'),(self.take_profit,'TP'),
                 (self.normal_arm,'ARM'),(self.normal_giveback,'Lùi')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')),None)
             if label:
@@ -113,7 +108,10 @@ class ProtectionFormMixin(OriginalRuleForms):
             'trail_gap':'normal_giveback','arm_repeat':'normal_repeat',
             'dynamic_enabled':'normal_dynamic','dynamic_repeat':'dynamic_repeat',
             'sl_enabled':'sl_enabled','tp_enabled':'tp_enabled','arm_enabled':'arm_enabled','ema_exit_enabled':'ema_exit_enabled',
-            'ema_exit_fast':'ema_exit_fast','ema_exit_slow':'ema_exit_slow','ema_exit_mode':'ema_exit_mode','ema_exit_interval':'ema_exit_interval'}
+            'ema_exit_fast':'ema_exit_fast','ema_exit_slow':'ema_exit_slow','arm_repeat_below_arm':'below_arm'}
+        for key in ('atr_start_enabled','atr_start_multiplier','atr_trail_enabled','atr_trail_multiplier',
+                    'retention_enabled','retention_pct','retention_until_enabled','retention_until'):
+            mapping[key]=key
         for key,name in mapping.items():
             raw=getattr(self,name).get()
             old=values[key]
@@ -124,7 +122,9 @@ class ProtectionFormMixin(OriginalRuleForms):
 
     def render_atr(self):
         from .atr_preview import atr_preview
-        value,detail,ready=atr_preview(self.app.view)
+        try:rules=self._exits()
+        except (ValueError,AttributeError):rules=asdict(self.values)
+        value,detail,ready=atr_preview(self.app.view,rules)
         self.dynamic_atr_value.configure(text=value,text_color='#60A5FA' if ready else '#FBBF24')
         self.dynamic_atr_detail.configure(text=detail)
         view=self.app.view.get('ema_exit',{})

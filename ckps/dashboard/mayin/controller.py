@@ -190,7 +190,7 @@ class MayinController(OriginalPanels):
         self.preview_authentication.configure(fg_color='#193129' if tone=='green' else '#342D20' if tone=='amber' else '#202C37',
             border_color='#39694E' if tone=='green' else '#77623B' if tone=='amber' else '#3E566C')
         from .atr_preview import atr_preview
-        value,detail,ready=atr_preview(self.view)
+        value,detail,ready=atr_preview(self.view,self.settings.exit)
         self.preview_atr_value.configure(text=value,text_color=COL_ACCENT_BLUE if ready else COL_WARN)
         self.preview_atr_detail.configure(text=detail)
         popup=self.popups.get('rule')

@@ -18,9 +18,8 @@ class SignalForm(OriginalRuleForms, ctk.CTkFrame):
         self.body = self._content(self, columns=2)
         mode = self._card(self.body, 'QUAN SÁT 1D', '', 0, 0, span=2, compact=True)
         row = self.row(mode)
-        self.choice(row, 'signal_mode', ('REALTIME', 'CLOSED'))
-        self.choice(row, 'realtime_indicator_interval', ('TICK', '1M', '2M', '5M'))
-        self._hint_icon(row, 'EMA/RSI luôn tính trên nến ngày. REALTIME cập nhật nến hôm nay; CLOSED chỉ dùng nến đã đóng. TICK/1M/2M/5M là nhịp cập nhật, không phải khung nến phút. MA200 và ATR14 dùng nến ngày đã đóng.').pack(side='right')
+        ctk.CTkLabel(row,text='REALTIME · cập nhật theo giá mới',font=('Segoe UI',14,'bold'),text_color=self.TITLE).pack(side='left')
+        self._hint_icon(row, 'EMA/RSI dùng nến ngày đang chạy và cập nhật theo từng giá mới hợp lệ. MA200 và ATR14 vẫn dùng nến ngày đã đóng.').pack(side='right')
         ema = self._card(self.body, 'EMA / RSI · CHỈ TÍN HIỆU', '', 1, 0, compact=True)
         for prefix, title in (('buy', 'ĐIỂM VÀO'), ('sell', 'E · CẢNH BÁO')):
             row = self.row(ema)

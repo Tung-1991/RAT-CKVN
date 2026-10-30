@@ -38,6 +38,7 @@ class DNSEBroker:
         self.bars, self.bars_at = [], 0.0
         self.packages, self.packages_at = [], 0.0
         self.history_worker = None
+        self.account_view = {}
         from ckps.connections.dnse.stream import MarketFeed
         self.feed = MarketFeed(key, secret)
 
@@ -138,11 +139,16 @@ class DNSEBroker:
         return self.bars
 
     def snapshot(self):
-        contract = self.resolve()
+        self.account_view = {}  # Never display an old balance as a new successful read.
         balance = unwrap(self.request("GET", f"/accounts/{self.account_no}/balances"))
         derivative = balance.get("derivative") if isinstance(balance, dict) else None
         if not isinstance(derivative, dict):
             raise BrokerError("Thiếu ví ký quỹ phái sinh; không dùng tiền CKCS thay thế.")
+        funds = balances(derivative)
+        stock = balance.get('stock')
+        total_money = amount(stock.get('totalCash')) if isinstance(stock, dict) else None
+        self.account_view = {**funds, 'total_money': total_money, 'observed_at': time.time(), 'source': 'DNSE'}
+        contract = self.resolve()
         raw_positions = rows(self.request("GET", f"/accounts/{self.account_no}/positions",
                                          params={"marketType": "DERIVATIVE", "pageSize": 1000}), "positions")
         positions = []
@@ -161,8 +167,8 @@ class DNSEBroker:
             positions.append({"symbol": symbol, "side": side, "quantity": qty, "entry": entry,
                               "broker_id": str(first(row, "id", "positionId", default="")),
                               "loan_package_id": str(row.get("loanPackageId", ""))})
-        raw_orders = rows(self.request("GET", f"/accounts/{self.account_no}/orders",
-                                      params={"marketType": "DERIVATIVE", "pageSize": 1000}), "orders")
+        from .order_book import intraday_orders
+        raw_orders = intraday_orders(self)
         orders = [normalize_order(row) for row in raw_orders if is_vn30(row.get("symbol", ""))]
         symbols = {contract, *(p["symbol"] for p in positions)}
         self.feed.start(symbols)

@@ -54,8 +54,7 @@ class SignalSettings:
             setattr(self, key, int(value))
         if self.buy_ema_fast >= self.buy_ema_slow or self.sell_ema_fast >= self.sell_ema_slow:
             raise ValueError("EMA nhanh phải nhỏ hơn EMA chậm.")
-        if self.signal_mode not in {"REALTIME", "CLOSED"} or self.realtime_indicator_interval not in {"TICK", "1M", "2M", "5M"}:
-            raise ValueError("Chế độ nến / nhịp EMA không hợp lệ.")
+        self.signal_mode, self.realtime_indicator_interval = 'REALTIME', 'TICK'
         if self.buy_ema_cross_mode not in {"VA", "SESSIONS"}:
             raise ValueError("Giao cắt chỉ có VA hoặc X PHIÊN.")
         if not isfinite(self.buy_volume_min_ratio) or self.buy_volume_min_ratio <= 0:
