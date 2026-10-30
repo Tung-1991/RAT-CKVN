@@ -24,11 +24,14 @@
 - TSL và DYNAMIC cố định tự đóng 50% HĐ còn lại mỗi lượt khi đủ quyền.
   Không AUTO / ALERT, GỐC / CÒN LẠI hoặc ô nhập tỷ lệ đóng trong E/M;
   chỉ hiển thị dòng 50% HĐ còn lại và giải thích làm tròn trong hint.
-  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ ngưỡng giá và
+  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ bốn ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
   ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
-  DYNAMIC AUTO: ATR START 0,5, ATR trail 0,8, giữ 70% lãi, LẶP ON.
+  DYNAMIC cố định ATR14 nến ngày đã đóng: START 0,5 ATR, trail 0,8 ATR,
+  giữ 70% lãi đỉnh, không TỚI MFE riêng; LẶP mặc định ON.
+  Chỉ bốn ô số SL/ARM/Lùi/LẶP; bỏ ô chỉnh ATR/giữ lãi/TỚI MFE và lặp dưới ARM.
+  Cấu hình cũ cũng dùng các hệ số cố định này; vẫn giữ cờ nhánh/LẶP đã lưu.
   Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,
@@ -58,8 +61,11 @@
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
-- E/M phải hiện đầy đủ TSL/ARM và DYNAMIC (ATR, giữ lãi, mức đóng cố định, LẶP),
-  không giấu trong nâng cao. Giữ hint giải thích và cùng kích thước hai cửa sổ.
+- E/M hiện TSL/ARM và DYNAMIC, mức đóng cố định, LẶP; ATR/giữ lãi chỉ đọc,
+  không giấu trong nâng cao hoặc thêm option. Giữ hint và cùng cỡ hai cửa sổ.
+- Preview và RULE cùng hiện ATR14, phiên nến, START/lùi tính ra từ nguồn thực thi;
+  thiếu nến/khác mã hiện CHỜ. Giá cũ vẫn khóa tín hiệu; ATR nến đã đóng hiển thị
+  riêng với ngày phiên, không lấy nến hôm nay hoặc dựng số mẫu trong app thật.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ hiện CHỜ; không suy ngược điểm Short. Ẩn PNL
   và trạng thái lặp trên màn hình chính. Nội dung 14, kết quả 18, giá/vốn 24;

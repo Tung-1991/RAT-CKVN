@@ -183,6 +183,12 @@ class MayinController(OriginalPanels):
         from .connection_status import otp_status
         text,tone=otp_status(self.view,self.settings.mode)
         self.preview_connection_status.configure(text=text,text_color=COL_GREEN if tone=='green' else COL_WARN if tone=='amber' else COL_MUTED)
+        from .atr_preview import atr_preview
+        value,detail,ready=atr_preview(self.view)
+        self.preview_atr_value.configure(text=value,text_color=COL_ACCENT_BLUE if ready else COL_WARN)
+        self.preview_atr_detail.configure(text=detail)
+        popup=self.popups.get('rule')
+        if popup and popup.winfo_exists():popup.render_atr()
 
     def _render_management_milestones(self, arm, dynamic):
         for value, detail, milestone in ((self.preview_normal_value,self.preview_normal_detail,arm),

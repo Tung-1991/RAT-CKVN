@@ -290,7 +290,10 @@ def test_dashboard_atr_uses_execution_completed_candles(system):
     # A live candle's extreme must not change the completed daily ATR.
     engine.latest.bars.append({'time':today.isoformat(),'high':2300,'low':1700,'close':2100,'closed':False})
     runtime._publish()
-    assert runtime.events.get()[1]['atr14_pct']==engine._atr(engine.latest.contract)==1.0
+    view=runtime.events.get()[1]
+    assert view['atr14_pct']==engine._atr(engine.latest.contract)==1.0
+    assert view['atr14']=={'contract':engine.latest.contract,'period':14,'pct':1.0,
+        'count':20,'as_of':(today-timedelta(days=11)).isoformat()}
     assert store.orders()==[]
 
 

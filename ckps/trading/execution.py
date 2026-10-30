@@ -415,8 +415,12 @@ class Engine:
                 if o.action == "CLOSE" and o.position_id == position_id and o.id != exclude]
 
     def _atr(self, symbol):
-        from ckps.services.technical_notifications import completed_atr_pct
-        return completed_atr_pct(self.latest.bars) if self.latest and symbol == self.latest.contract else 0.0
+        return self.atr_snapshot(symbol)['pct'] or 0.0
+
+    def atr_snapshot(self, symbol):
+        from ckps.services.technical_notifications import completed_atr_snapshot
+        rows=self.latest.bars if self.latest and symbol==self.latest.contract else []
+        return {'contract':symbol,**completed_atr_snapshot(rows)}
 
     def preview(self, side, price=0.0, exits=None, *, refresh=False):
         self._ready()

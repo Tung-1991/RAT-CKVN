@@ -10,6 +10,8 @@ E/M chỉ nhập % giá vốn bình quân hợp đồng, không tính trên ký 
 
 TSL/ARM và DYNAMIC tự đóng 50% HĐ còn lại mỗi lượt khi BOT và quyền quản lý ON. Không có lựa chọn AUTO/ALERT, GỐC/CÒN LẠI hay nhập tỷ lệ đóng trong E/M. Cấu hình cũ cũng dùng các lựa chọn cố định này; các ngưỡng và cờ bật/tắt nhánh được giữ. Một HĐ còn lại thì đóng một; LẶP vẫn cần mốc giá mới và lệnh trước đã kết thúc.
 
+E/M chỉ còn bốn ô số SL/ARM/Lùi/LẶP. DYNAMIC dùng cố định bắt đầu 0,5 ATR14, lùi 0,8 ATR14, giữ 70% lãi đỉnh; không nhập ATR/giữ lãi/TỚI MFE. Các hệ số cũ cũng được chuẩn hóa về bộ này, giữ cờ bật/tắt nhánh và LẶP đã lưu. Preview chính và RULE hiện ATR14 từ nến ngày đã đóng, phiên dữ liệu và khoảng bắt đầu/lùi tính được; thiếu dữ liệu hiện CHỜ. ATR không dùng nến hôm nay và không làm giá cũ trở thành tín hiệu mới.
+
 Telegram giữ ba nhóm Biến động VN30, Nhắc đáo hạn, Tín hiệu / Lệnh. Nhóm thứ ba báo tín hiệu tham khảo và trạng thái mở/đóng/giảm, gồm SL/TP/TSL/DYNAMIC, số HĐ khớp và còn lại. Backend chỉ nhận biên nhận rút gọn đã ghi sổ, không có quyền giao dịch; lỗi Telegram không chặn quản lý E/M.
 
 PAPER dùng giá DNSE và tiền ảo; REAL cần tài khoản phái sinh và OTP. SL hiện do app thực thi, cần app và BOT đang hoạt động; chưa nghiệm thu REAL. Chi tiết: [nghiệp vụ CKPS](support/docs/CKPS.md).

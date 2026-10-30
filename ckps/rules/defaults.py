@@ -7,7 +7,12 @@ def shared_exit_settings(values):
     return {**values, 'tp_enabled': False, 'tp_distance': 0.0,
             'arm_policy': 'AUTO', 'dynamic_policy': 'AUTO',
             'arm_basis': 'REMAINING', 'dynamic_basis': 'REMAINING',
-            'arm_close_pct': 50.0, 'dynamic_close_pct': 50.0}
+            'arm_close_pct': 50.0, 'dynamic_close_pct': 50.0,
+            'atr_start_enabled': True, 'atr_start_multiplier': .5,
+            'atr_trail_enabled': True, 'atr_trail_multiplier': .8,
+            'retention_enabled': True, 'retention_pct': 70.0,
+            'retention_until_enabled': False, 'retention_until': 0.0,
+            'arm_repeat_below_arm': True}
 
 
 def default_exit_settings():

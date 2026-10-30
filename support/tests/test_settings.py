@@ -178,7 +178,7 @@ def _consolidated_scenario(scale):
         assert set(rule.tabs._tab_dict) == {'E/M', 'TÍN HIỆU'}
         if scale == 1.:
             canvas = rule.exit_body._parent_canvas
-            assert rule.below_arm_switch.winfo_rooty()+rule.below_arm_switch.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
+            assert rule.dynamic_atr_detail.winfo_rooty()+rule.dynamic_atr_detail.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
         common = dict(app.settings.exit)
         assert not hasattr(rule, 'scope_selector') and not hasattr(rule, 'inherit_switch')
         for name in ('normal_policy_menu','dynamic_policy_menu','normal_sell_basis','dynamic_sell_basis_selector','normal_sell','dynamic_sell'):
@@ -188,11 +188,16 @@ def _consolidated_scenario(scale):
         assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
         assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
         assert rule._exits()['arm_close_pct']==50 and rule._exits()['dynamic_close_pct']==50
+        for name in ('take_profit','normal_atr_multiplier','normal_atr_activation_multiplier',
+                     'normal_retention_pct','normal_retention_until_pct','below_arm_switch'):
+            assert not hasattr(rule,name),name
+        assert sum(isinstance(w,ctk.CTkEntry) for w in controls(rule.protection_host))==4
+        assert '1,00%' in rule.dynamic_atr_value.cget('text')
         assert rule.primary.cget('text') == 'LƯU RULE'
         settle()
         if scale == 1.:
             canvas = rule.exit_body._parent_canvas
-            assert rule.below_arm_switch.winfo_rooty()+rule.below_arm_switch.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
+            assert rule.dynamic_atr_detail.winfo_rooty()+rule.dynamic_atr_detail.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
         rule.request_management()
         assert rule.confirmation.winfo_manager() == 'grid' and app.view['positions'][0]['managed']
         rule.confirm_management()

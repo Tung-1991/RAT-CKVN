@@ -229,10 +229,18 @@ class OriginalPanels:
             label(card,'preview_'+prefix+'_value','CHỜ',size=18,bold=True,row=1,column=0,padx=13,pady=3)
             label(card,'preview_'+prefix+'_detail','Chờ dữ liệu',size=14,row=2,column=0,padx=13,pady=(0,8))
             self.preview_signal_cards.append(card)
+        atr=ctk.CTkFrame(data,width=1,fg_color=COL_PANEL_BODY,corner_radius=5)
+        atr.grid(row=1,column=0,sticky='ew',pady=(0,5))
+        atr.grid_columnconfigure(0,weight=1)
+        atr.grid_columnconfigure(1,weight=2)
+        self.preview_atr=atr
+        label(atr,'preview_atr_value','ATR14 · CHỜ NẾN 1D',size=14,color=COL_WARN,bold=True,row=0,column=0,padx=10,pady=5)
+        label(atr,'preview_atr_detail','',size=14,row=0,column=1,padx=10,pady=5)
+        atr._hover_hint=_HoverHint(atr,lambda:'ATR14 lấy cùng nến 1D đã đóng mà backend dùng cho DYNAMIC; ngày phiên đi kèm số ATR. Không lấy nến đang chạy. Bắt đầu = 0,5 × ATR%; lùi ATR = 0,8 × ATR%, giữ 70% lãi đỉnh. Các mốc vào/thoát chỉ tham khảo; BOT và quyền quản lý vẫn quyết định có gửi lệnh hay không.',click_to_toggle=True,hover=False)
         self.preview_connection=label(data,'preview_connection_status',size=14,color=COL_MUTED,
-            row=1,column=0,padx=8,pady=(0,6))
+            row=2,column=0,padx=8,pady=(0,6))
         management=ctk.CTkFrame(data,width=1,fg_color='transparent')
-        management.grid(row=2,column=0,sticky='new')
+        management.grid(row=3,column=0,sticky='new')
         management.grid_columnconfigure(0,weight=1)
         self.preview_management=management
         header=ctk.CTkFrame(management,fg_color='transparent')

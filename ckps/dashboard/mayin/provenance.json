@@ -57,7 +57,7 @@
     "source": "rules/window.py",
     "line": 826,
     "sha256": "09a9736eb76f2a69e1606b5eeb0134091987e3d22f539255b186d0497aeb1022",
-    "adaptation": "One shared RULE; automatic close of 50% remaining contracts. Action/basis selectors and editable close ratios removed; original cards, thresholds, ATR and repeat controls retained."
+    "adaptation": "One shared RULE; four editable price thresholds and branch/repeat switches in the original cards. Fixed automatic closes of 50% remaining contracts, ATR start/trail and profit retention replace internal selectors and numeric controls. Read-only ATR preview includes completed-session provenance."
   },
   "management_preview.py": {
     "source": "dashboard/position_em.py",

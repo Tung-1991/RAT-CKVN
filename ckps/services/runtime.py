@@ -183,7 +183,8 @@ class Runtime:
             views['market_connection']=getattr(self.engine.broker,'market_view',{'configured':True,'connected':self.engine.healthy})
             # Expose the same completed-candle ATR used by protection; the UI
             # must not recompute it from realtime prices or placeholder bars.
-            views["atr14_pct"] = self.engine._atr(snapshot.contract) or None
+            views['atr14'] = self.engine.atr_snapshot(snapshot.contract)
+            views["atr14_pct"] = views['atr14']['pct']
             views["account"] = {name: getattr(snapshot, name) for name in (
                 "nav", "remaining_margin", "used_margin", "margin_per_contract", "pending_margin", "qmax_long", "qmax_short", "observed_at", "source", "paper_capital", "total_money", "collateral_total", "margin_reference_price", 'package_fees')}
         for side in ("LONG", "SHORT"):

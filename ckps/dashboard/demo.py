@@ -41,7 +41,8 @@ class DemoApp(App):
     def show_sample(self,stage):
         position,current=long_sample(stage)
         self.view={'mode':'PAPER','contract':position.symbol,'armed':False,'healthy':True,'consistent':True,
-            'atr14_pct':1.,'quotes':{position.symbol:asdict(Quote(position.symbol,current,source='MẪU'))},
+            'atr14_pct':1.,'atr14':{'period':14,'pct':1.,'sample':True,'count':14,'contract':position.symbol},
+            'quotes':{position.symbol:asdict(Quote(position.symbol,current,source='MẪU'))},
             'positions':[asdict(position)],'orders':[],'history':[],
             'account':{'nav':100_000_000+position.realized+position.pnl(current),'total_money':100_000_000,'collateral_total':100_000_000,
                 'qmax_long':1,'qmax_short':1,'used_margin':40_000_000,'pending_margin':0,'remaining_margin':50_000_000,

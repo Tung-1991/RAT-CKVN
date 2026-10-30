@@ -57,7 +57,8 @@ def _layout_scenario(scale):
         assert app.preview_entry_value.cget('text')=='CHỜ'
         assert app.preview_trend_value.cget('text')=='CHỜ'
         assert not hasattr(app,'preview_rule_ema') and not hasattr(app,'preview_rule_phase1_card') and not hasattr(app,'preview_rule_phase3_card')
-        assert not hasattr(app,'preview_atr')
+        assert app.preview_atr.winfo_ismapped()
+        assert 'CHỜ NẾN 1D' in app.preview_atr_value.cget('text')
         assert not app.view.get('quotes')  # Configuration Preview does not invent prices.
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.4
@@ -247,7 +248,7 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
             "analysis":{"signal_history":[{"id":"s1","at":1,"symbol":"VN30F1M","kind":"BUY","reason":"ALERT"}]},
             "LONG":{"maximum":2}, "SHORT":{"maximum":2}}
         app.render()
-        assert not hasattr(app,'preview_atr')
+        assert app.preview_atr.winfo_ismapped()
         app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview()
         assert position.symbol in app._preview_position_context and '2/2 HĐ' in app._preview_position_context
@@ -281,7 +282,7 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
                 else:
                     yield from controls(child)
         assert rule.initial_sl.cget('state') == 'normal'
-        assert rule.take_profit.cget('state') == 'disabled'
+        assert not hasattr(rule,'take_profit')
         rule.sl_enabled.set(True)
         rule.initial_sl.delete(0, 'end')
         rule.initial_sl.insert(0, '10')
@@ -365,8 +366,8 @@ def _rule_adapter_scenario():
         window=app.settings_dialog('E/M');app.update()
         from ckps.rules.defaults import shared_exit_settings
         expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT'}
-        for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=0.0 if key=='tp_distance' else getattr(exits,key)/2000*100
+        for key in ('sl_distance','repeat_gap','arm_gain','trail_gap'):
+            expected[key]=getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
             window.initial_sl.delete(0,'end');window.initial_sl.insert(0,signed)
@@ -475,7 +476,8 @@ def _position_protection_scenario(scale):
             assert editor._exits() == expected
             assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
-            assert editor.dynamic_settings_card.winfo_ismapped() and editor.below_arm_switch.winfo_ismapped()
+            assert editor.dynamic_settings_card.winfo_ismapped() and editor.dynamic_atr_value.winfo_ismapped()
+            assert not hasattr(editor,'below_arm_switch')
             canvas = editor.exit_body._parent_canvas
             for widget in controls(editor.protection_host):
                 offset = widget.winfo_rooty() - editor.exit_body.winfo_rooty()
@@ -511,7 +513,7 @@ def _position_protection_scenario(scale):
             app.view['positions'][0]['exit_overrides'] = {'sl_enabled':True,'sl_distance':999}
             app.position_exit()
             assert editor._exits() == expected and editor.initial_sl.cget('state')=='normal'
-            assert editor.take_profit.cget('state')=='disabled'
+            assert not hasattr(editor,'take_profit')
             editor.destroy();app.update()
             saved.clear()
         assert not errors, errors
@@ -789,7 +791,7 @@ def _split_app_scenario(kind,scale):
                 assert entry.winfo_rooty()+entry.winfo_height()<=canvas.winfo_rooty()+canvas.winfo_height()+2,entry.get()
             canvas.yview_moveto(0);settle()
             assert rule.dynamic_settings_card.winfo_ismapped()
-            assert rule.below_arm_switch.winfo_ismapped()
+            assert rule.dynamic_atr_value.winfo_ismapped() and not hasattr(rule,'below_arm_switch')
             assert rule.initial_sl._hint_icon.cget('text')=='?'
             icon=rule.initial_sl._hint_icon
             icon._label.event_generate('<Enter>')
