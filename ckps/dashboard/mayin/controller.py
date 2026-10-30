@@ -271,6 +271,7 @@ class MayinController(OriginalPanels):
         requested=self.mode_requested or (self.switch_pending[0].mode if self.switch_pending else None)
         self.mode_choice.set(requested or mode)
         self.mode_selector.configure(selected_color=COL_WARN if requested else COL_GREEN if mode=='PAPER' else COL_RED,
+            selected_hover_color='#D97706' if requested else '#16A34A' if mode=='PAPER' else '#C53030',
             state='disabled' if self.switch_pending else 'normal')
         self.lbl_equity_title.configure(text='KÝ QUỸ ẢO · PAPER' if mode=='PAPER' else 'KÝ QUỸ · REAL')
         self.lbl_equity.configure(text=money(account.get('collateral_total')))

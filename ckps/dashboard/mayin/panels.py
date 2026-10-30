@@ -4,7 +4,7 @@ from math import ceil
 from typing import Any
 import customtkinter as ctk
 from .tokens import *
-from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_entry_text, fit_label_text, option_menu
+from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_entry_text, fit_label_text, option_menu, choice_bar
 from .hover_hint import _HoverHint
 APP_NAME = 'RAT VN30'
 APP_VERSION = '0.1.0'
@@ -50,34 +50,36 @@ class OriginalPanels:
         account_footer.bind('<Configure>', fit_stats, add='+')
         control = ctk.CTkFrame(self.left, fg_color=COL_SURFACE, corner_radius=10, border_width=1, border_color=COL_BORDER)
         control.pack(fill='x', padx=6, pady=4)
-        control.columnconfigure(0, minsize=55)
+        control.columnconfigure(0, minsize=64)
         control.columnconfigure(1, weight=1)
 
         def setting_row(index: int, label: str) -> ctk.CTkFrame:
-            ctk.CTkLabel(control, text=label, font=FONT_KEY, text_color=COL_TITLE, anchor='w', justify='left').grid(row=index, column=0, sticky='ew', padx=(7, 6), pady=3)
-            frame = ctk.CTkFrame(control, width=1, height=34, fg_color='transparent')
-            frame.grid(row=index, column=1, sticky='ew', padx=(0, 7), pady=1)
+            padding = (8 if index == 0 else 3, 8 if index == 2 else 3)
+            ctk.CTkLabel(control, text=label, font=FONT_KEY, text_color=COL_TITLE, anchor='w', justify='left').grid(row=index, column=0, sticky='ew', padx=(10, 8), pady=padding)
+            frame = ctk.CTkFrame(control, width=1, height=36, fg_color='transparent')
+            frame.grid(row=index, column=1, sticky='ew', padx=(0, 10), pady=padding)
             frame.grid_propagate(False)
+            frame.grid_rowconfigure(0, weight=1)
             return frame
         symbol_row = setting_row(0, 'HĐTL')
         symbol_row.grid_columnconfigure(0, weight=1)
         self.symbol = tk.StringVar(value='VN30F1M')
-        self.symbol_entry = ctk.CTkLabel(symbol_row, text='VN30F1M', font=FONT_BOLD, height=32, corner_radius=7, fg_color=COL_SURFACE_2)
-        self.symbol_entry.grid(row=0, column=0, sticky='ew')
+        self.symbol_entry = ctk.CTkLabel(symbol_row, text='VN30F1M', font=FONT_BOLD, height=36, corner_radius=7, fg_color=COL_SURFACE_2)
+        self.symbol_entry.grid(row=0, column=0, sticky='nsew')
         mode_row = setting_row(1, 'MODE')
-        mode_row.grid_columnconfigure(0, weight=4)
-        mode_row.grid_columnconfigure(1, weight=1)
+        mode_row.grid_columnconfigure(0, weight=2, uniform='mode-action')
+        mode_row.grid_columnconfigure(1, weight=1, uniform='mode-action')
         self.mode = tk.StringVar(value='PAPER')
-        self.mode_selector = ctk.CTkSegmentedButton(mode_row, values=['PAPER', 'REAL'], variable=self.mode, command=self._mode_changed, height=34, font=('Segoe UI', 14, 'bold'), width=1, dynamic_resizing=False, selected_color=COL_GREEN, selected_hover_color='#16A34A', unselected_color=COL_GRAY, unselected_hover_color='#4B515B', text_color=COL_TEXT, corner_radius=7)
-        self.mode_selector.grid(row=0, column=0, sticky='ew', padx=(0, 5))
-        self.bot_button = ctk.CTkButton(mode_row, text='BOT · OFF', height=32, font=('Segoe UI', 13, 'bold'), width=1, fg_color=COL_GRAY, hover_color='#4B515B', corner_radius=7, command=self._toggle_bot)
-        self.bot_button.grid(row=0, column=1, sticky='ew')
+        self.mode_selector = choice_bar(mode_row, values=['PAPER', 'REAL'], variable=self.mode, command=self._mode_changed, width=1, selected_color=COL_GREEN, selected_hover_color='#16A34A')
+        self.mode_selector.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
+        self.bot_button = ctk.CTkButton(mode_row, text='BOT · OFF', height=36, font=('Segoe UI', 14, 'bold'), width=1, fg_color=COL_GRAY, hover_color='#4B515B', border_width=1, border_color='#47505D', corner_radius=7, command=self._toggle_bot)
+        self.bot_button.grid(row=0, column=1, sticky='nsew')
         tools_row = setting_row(2, 'TOOLS')
-        tool_specs = [('⚙  RULE', self._rule_settings), ('⛓  KẾT NỐI', self._advanced)]
+        tool_specs = [('RULE', self._rule_settings), ('KẾT NỐI', self._advanced)]
         for column, (text, command) in enumerate(tool_specs):
             tools_row.grid_columnconfigure(column, weight=1, uniform='tool')
-            button = ctk.CTkButton(tools_row, text=text, height=32, font=('Segoe UI', 13, 'bold'), width=1, fg_color=COL_GRAY, hover_color='#4B515B', corner_radius=7, command=command)
-            button.grid(row=0, column=column, sticky='ew', padx=(0 if column == 0 else 3, 0))
+            button = ctk.CTkButton(tools_row, text=text, height=36, font=('Segoe UI', 14, 'bold'), width=1, fg_color='#24384C', hover_color='#2F4F70', text_color='#C5DDF7', border_width=1, border_color='#38536F', corner_radius=7, command=command)
+            button.grid(row=0, column=column, sticky='nsew', padx=(0 if column == 0 else 3, 3 if column == 0 else 0))
             if column == 0:
                 self.rule_button = button
             else:
