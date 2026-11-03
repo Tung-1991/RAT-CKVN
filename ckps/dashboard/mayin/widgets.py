@@ -42,6 +42,16 @@ FONT_TABLE_HEADING = ("Segoe UI", 16, "bold", "italic")
 FONT_TABLE_VALUE = ("Segoe UI", 14)
 
 
+def configure_changed(widget, **kwargs):
+    """Keep periodic rendering from repainting unchanged CTk options."""
+    # CTkSegmentedButton supports configure(state=...) but omits cget('state').
+    changed = {key: value for key, value in kwargs.items()
+               if (widget._state if key == 'state' and isinstance(widget, ctk.CTkSegmentedButton)
+                   else widget.cget(key)) != value}
+    if changed:
+        widget.configure(**changed)
+
+
 class StatusLabel(ctk.CTkLabel):
     """Avoid redrawing unchanged text and colours on periodic UI refreshes."""
 
@@ -197,7 +207,7 @@ class _StableToplevel(ctk.CTkToplevel):
         super().destroy()
 
 
-def size_popup(window, width=860, height=740):
+def size_popup(window, width=780, height=600):
     """Use one centered logical size for RULE/KẾT NỐI without going off-screen at high DPI."""
     scale = max(.5, window._get_window_scaling())
     # Tk caches the screen size before CTk enables Windows DPI awareness.

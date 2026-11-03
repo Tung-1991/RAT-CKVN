@@ -40,17 +40,17 @@ def _path():
     return runtime_root() / 'connection.dpapi'
 
 
-def _read():
+def _read(path=None):
     try:
-        value = json.loads(_crypt(_path().read_bytes(), decrypt=True))
+        value = json.loads(_crypt((path or _path()).read_bytes(), decrypt=True))
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError, TypeError):
         return {}
 
 
-def _write(value):
+def _write(value, path=None):
     encrypted = _crypt(json.dumps(value, allow_nan=False).encode('utf-8'))
-    path = _path()
+    path = path or _path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
     temporary.write_bytes(encrypted)
@@ -82,6 +82,22 @@ def remember_connection(credentials):
 def forget_connection():
     with _lock:
         _path().unlink(missing_ok=True)
+
+
+def load_telegram_token():
+    """Notification credentials are independent of DNSE API/trading sessions."""
+    with _lock:
+        token=_read(runtime_root()/'telegram.dpapi').get('telegram_token')
+        return token if isinstance(token,str) else ''
+
+
+def remember_telegram_token(token):
+    if not isinstance(token,str):raise ValueError('Bot token cần là chuỗi ký tự.')
+    token=token.strip()
+    with _lock:
+        path=runtime_root()/'telegram.dpapi'
+        if token:_write({'telegram_token':token},path)
+        else:path.unlink(missing_ok=True)
 
 
 def save_trading_session(account, credentials, token, until):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from math import floor, isfinite
+from dataclasses import replace
 
 from ckps.models import Decision, ExitSettings, Position
 from ckps.rules.calculations import protect_level
@@ -101,7 +102,13 @@ def observe_repeat(position: Position, price: float, settings: ExitSettings):
 def evaluate(position: Position, price: float, settings: ExitSettings, atr_pct=0.0):
     if price <= 0 or position.entry <= 0 or position.quantity <= 0:
         return None
-    settings = price_rules(settings, position.entry, position.margin_per_contract)
+    try:
+        settings = price_rules(settings, position.entry, position.margin_per_contract)
+    except ValueError:
+        # Missing PNL basis pauses trailing only; price-based SL/TP still protect.
+        if settings.distance_unit!='PRICE_PERCENT' or settings.trailing_unit!='PNL_PERCENT':raise
+        settings = price_rules(replace(settings, trailing_unit='POINTS', arm_enabled=False,
+            dynamic_enabled=False, arm_gain=0, trail_gap=0, repeat_gap=0), position.entry, position.margin_per_contract)
     sign = position.sign
     position.best = max(position.best or position.entry, price) if sign > 0 else min(position.best or position.entry, price)
     position.worst = min(position.worst or position.entry, price) if sign > 0 else max(position.worst or position.entry, price)

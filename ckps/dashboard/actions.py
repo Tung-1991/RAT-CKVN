@@ -38,6 +38,9 @@ class DashboardActionsMixin(ModeSwitchMixin):
         try:
             if self.mode_requested or self.switch_pending:
                 raise ValueError("Hoàn tất hoặc hủy cấu hình sổ giao dịch trước khi gửi lệnh.")
+            from .scheduled_orders import scheduled_ticket,request_scheduled
+            queued=scheduled_ticket(self.view)
+            if queued:return request_scheduled(self,side,queued)
             qty = None if not self.qty.get().strip() else quantity(self.qty.get())
             px = float(self.limit.get()) if self.kind.get() == "LO" else 0.0
             if qty == 0:

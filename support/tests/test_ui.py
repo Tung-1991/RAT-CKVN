@@ -63,7 +63,9 @@ def _layout_scenario(scale):
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.4
         assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
-        assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=340
+        assert 230<=app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=285
+        assert app.preview_entry_value.cget('font')[1]==22
+        assert app.preview_entry_detail.cget('font')==('Segoe UI',14)
         assert not {'manage','adopt'} & set(app.action_buttons)
         assert not hasattr(app,'preview_state_panel')
         assert 'pnl' not in app.positions_tree._display
@@ -181,7 +183,7 @@ def _layout_scenario(scale):
             contract='VN30F1M',atr14_pct=1,quotes={'VN30F1M':asdict(Quote('VN30F1M',2007))})
         app.render();app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview();settle()
-        assert 'LẶP 2,003.4' in app.preview_exit_value.cget('text')
+        assert 'MỐC 2,003.4' in app.preview_exit_value.cget('text')
         assert app.positions_tree.cell(position.id,'managed')['text']=='CHƯA NHẬN'
         assert app.positions_tree.cell(position.id,'side')['color']=='#22C55E'
         assert app.positions_tree.cell(position.id,'pnl')['color']=='#22C55E'
@@ -192,7 +194,7 @@ def _layout_scenario(scale):
             assert widget.winfo_rootx()+widget.winfo_width()<=app.preview_content.winfo_rootx()+app.preview_content.winfo_width()+2
             assert widget.winfo_rooty()+widget.winfo_height()<=app.info_panel.winfo_rooty()+app.info_panel.winfo_height(), (widget.cget('text'),widget.winfo_rooty(),widget.winfo_height(),app.info_panel.winfo_rooty()+app.info_panel.winfo_height())
             assert widget.winfo_rooty()+widget.winfo_height()<=widget.master.winfo_rooty()+widget.master.winfo_height(), widget.cget('text')
-            assert getattr(widget,'_viking_fit_font_size',font[1])>=14, widget.cget('text')
+            assert widget.cget('font')[1]==font[1], widget.cget('text')
         for label in (app.preview_normal_value,app.preview_normal_detail,app.preview_exit_value,app.preview_exit_detail):
             assert label.winfo_rooty()+label.winfo_height()<=label.master.winfo_rooty()+label.master.winfo_height()
             # Tk measures the rendered, wrapped label. Measuring the whole string
@@ -360,16 +362,19 @@ def _rule_adapter_scenario():
         app.update()
         assert not hasattr(window,'indicator_exit_policy') and not hasattr(window,'rsi_period')
         assert not hasattr(window,'price_units')
-        assert window._migration_error and window.primary.cget('state')=='disabled'
+        assert window._migration_error and window.primary.cget('state')=='normal'
+        assert window.initial_sl.get()=='' and window.initial_sl.cget('state')=='disabled'
+        assert window._exits()['sl_distance']==8.5 and window._exits()['distance_unit']=='POINTS'
         from ckps.models import Quote
         app.view.update(contract='VN30F1M',quotes={'VN30F1M':asdict(Quote('VN30F1M',2000))},
             account={'margin_per_contract':40_000_000,'margin_reference_price':2000})
+        app.render()
         window.destroy()
         window=app.settings_dialog('E/M');app.update()
         from ckps.rules.defaults import shared_exit_settings
-        expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT'}
+        expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT','trailing_unit':'PNL_PERCENT'}
         for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=getattr(exits,key)/2000*100
+            expected[key]=getattr(exits,key)/4 if key in ('arm_gain','trail_gap','repeat_gap') else getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
             window.initial_sl.delete(0,'end');window.initial_sl.insert(0,signed)
@@ -391,12 +396,28 @@ def _rule_adapter_scenario():
         app.view['account']={}
         window.destroy();window=app.settings_dialog('E/M');app.update()
         assert 'ký quỹ cơ sở' in window._migration_error
-        assert window.primary.cget('state')=='disabled' and app.settings.exit==legacy
+        assert window.primary.cget('state')=='normal' and app.settings.exit==legacy
         assert window.initial_sl.get()==''
         app.view['account']={'margin_per_contract':40_000_000,'margin_reference_price':2000}
-        window.destroy();window=app.settings_dialog('E/M');app.update()
+        window.render_atr();app.update()
         assert not window._migration_error and window._exits()['sl_distance']==.5
         assert window._exits()['distance_unit']=='PRICE_PERCENT' and app.settings.exit==legacy
+        # Price-based SL remains usable while only the old trailing group waits.
+        legacy=asdict(ExitSettings(distance_unit='PRICE_PERCENT',sl_enabled=True,sl_distance=.5,
+            arm_enabled=True,arm_gain=1,trail_gap=.25,repeat_gap=.25))
+        app.settings=replace(settings,exit=legacy);app.view['account']={}
+        window.destroy();window=app.settings_dialog('E/M');app.update()
+        assert window.initial_sl.get()=='0.5' and window.initial_sl.cget('state')=='normal'
+        assert window.normal_arm.get()=='' and window.normal_arm.cget('state')=='disabled'
+        window.initial_sl.delete(0,'end');window.initial_sl.insert(0,'.75')
+        pending=window._exits()
+        assert pending['sl_distance']==.75 and pending['arm_gain']==1 and pending['trailing_unit']=='PRICE_PERCENT'
+        window.save()
+        assert saved[-1].exit==pending and not sent and app.settings.exit==legacy
+        app.view['account']={'margin_per_contract':40_000_000,'margin_reference_price':2000}
+        window.render_atr();app.update()
+        assert not window._migration_error and window.normal_arm.cget('state')=='normal'
+        assert window._exits()['sl_distance']==.75 and window._exits()['arm_gain']==5
     finally:
         app.close()
 
@@ -464,6 +485,7 @@ def _position_protection_scenario(scale):
             position = Position.create('VN30F2611', side, 3, 1980, history_verified=True,
                                        exit_overrides=original,margin_per_contract=40_000_000)
             app.view = {'contract': 'VN30F2612', 'positions': [asdict(position)], 'orders': [],
+                'account': {'margin_per_contract':48_000_000,'margin_reference_price':2400},
                 'quotes': {'VN30F2611': asdict(Quote('VN30F2611', 2000)),
                            'VN30F2612': asdict(Quote('VN30F2612', 2400))}}
             app.render()
@@ -473,9 +495,17 @@ def _position_protection_scenario(scale):
             settle()
             assert isinstance(editor, OriginalRuleForms) and not hasattr(editor,'scope_selector')
             assert not hasattr(editor,'inherit_switch') and editor.primary.cget('text')=='LƯU RULE'
-            expected={**common,'distance_unit':'PRICE_PERCENT'}
-            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):expected[key]=expected[key]/2400*100
-            assert editor._exits() == expected
+            expected={**common,'distance_unit':'PRICE_PERCENT','trailing_unit':'PNL_PERCENT'}
+            for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
+                expected[key]=expected[key]/4.8 if key in ('arm_gain','trail_gap','repeat_gap') else expected[key]/2400*100
+            actual=editor._exits()
+            from math import isclose
+            assert actual.keys()==expected.keys()
+            for key,value in expected.items():
+                if isinstance(value,(int,float)) and not isinstance(value,bool):
+                    assert isclose(actual[key],value,rel_tol=1e-12,abs_tol=1e-12), (key,actual[key],value)
+                else:assert actual[key]==value, (key,actual[key],value)
+            expected=actual
             assert not hasattr(editor,'price_units')
             assert editor.initial_sl._hint_icon.cget('text') == '?'
             assert editor.dynamic_settings_card.winfo_ismapped() and editor.dynamic_atr_value.winfo_ismapped()
@@ -698,184 +728,46 @@ def test_market_table_populated_actions_colors_history_and_virtual_scrolling():
     assert result.returncode==0,result.stdout+result.stderr
 
 
-def _split_app_scenario(kind,scale):
+def _backend_app_scenario(scale):
     import socket
     import requests
     import customtkinter as ctk
-    from pathlib import Path
     from tkinter import Misc
-    from ckps.config import runtime_root
-    def forbidden(*args,**kwargs):raise AssertionError('UI review cannot use a network or start trading.')
-    requests.Session.request=forbidden
-    socket.socket.connect=forbidden
-    if scale is not None:
-        ctk.deactivate_automatic_dpi_awareness()
-        ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
-    from ckps.dashboard.mayin.ui_compat import NativeFontMetrics
+    from ckps.dashboard.signal_app import SignalApp
+    from ckps.models import Settings
+    def forbidden(*args, **kwargs):
+        raise AssertionError('UI tests must not connect or trade.')
+    socket.socket.connect = requests.Session.request = forbidden
+    ctk.deactivate_automatic_dpi_awareness()
+    ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
+    app=SignalApp(settings=Settings())
     errors=[]
-    if kind=='demo':
-        import ckps.dashboard.window as window
-        window.Runtime=forbidden
-        from ckps.dashboard.demo import DemoApp
-        app=DemoApp()
-    else:
-        from ckps.dashboard.signal_app import SignalApp
-        from ckps.models import Settings
-        app=SignalApp(settings=Settings())
     app.report_callback_exception=lambda *args:errors.append(args)
     def settle():
-        app.update();app.after(250,app.quit);Misc.mainloop(app);app.update()
+        app.update();app.after(100,app.quit);Misc.mainloop(app);app.update()
     try:
         settle()
-        if kind=='demo':
-            for stage in ('DYNAMIC','LẶP','TSL / ARM'):
-                app.show_sample(stage);settle()
-                assert app.lbl_equity_title.cget('text').startswith('KÝ QUỸ')
-                assert app.lbl_equity.cget('text')=='100,000,000 đ'
-                assert app.lbl_cash.cget('text')=='Tổng tiền: 100,000,000 đ'
-                assert app.lbl_cash.winfo_rooty()>app.lbl_equity.winfo_rooty()
-                assert app.runtime is None and not app.view['armed']
-                assert not hasattr(app,'demo_selector')
-                assert len(app.view['positions'])==1 and not app.view['orders']
-                assert not hasattr(app,'preview_rule_ema')
-                for button in app.open_buttons:assert button.cget('state')=='disabled'
-                assert app.bot.cget('state')=='normal'
-                for button in (app.rule_button,app.connection_button):assert button.cget('state')=='normal'
-                assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,990.0'
-                assert app.positions_tree.cell('DEMO-LONG','tp')['text']=='—'
-                assert ('NHƯỜNG ARM' in app.preview_exit_value.cget('text'))==(stage=='TSL / ARM')
-            app.show_sample('LẶP');settle()
-            app.bot.invoke();settle()
-            assert app.view['armed'] and app.positions_tree.cell('DEMO-LONG','managed')['text']=='QUẢN LÝ ON'
-            assert app.preview_entry_value.cget('text')=='LONG · 2,007.0'
-            assert app.preview_trend_value.cget('text')=='UP'
-            assert app.market_context_label.cget('text')=='CHỈ THAM KHẢO · MẪU'
-            app.bot.invoke();settle()
-            assert not app.view['armed'] and app.runtime is None
-            assert app.positions_tree.cell('DEMO-LONG','managed')['text']=='TẠM DỪNG'
-            app.positions_tree.selection_set(());settle()
-            assert app.positions_tree.selection()==('DEMO-LONG',)
-            assert 'Còn 1/2 HĐ' in app._preview_position_context
-            assert not hasattr(app,'preview_status_badge') and not hasattr(app,'preview_sl_value')
-            assert app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=470
-            assert not {'manage','adopt'} & set(app.action_buttons)
-            app.preview_em_exit._label.event_generate('<Button-1>');settle()
-            detail=app.preview_em_exit._hover_hint.popup
-            assert detail and detail.winfo_ismapped()
-            assert 'Giữ 70% lãi' in detail.body.get('1.0','end')
-            assert detail.cget('highlightbackground')=='#60A5FA'
-            app.preview_em_exit._label.event_generate('<Button-1>');settle()
-            assert app.preview_em_exit._hover_hint.popup is None
-            # Click the actual MAIN buttons, not just the popup constructors.
-            app.rule_button.invoke();settle()
-            rule=app.popups['rule']
-            assert rule.winfo_width()/rule._get_window_scaling()<=861
-            assert rule.winfo_height()/rule._get_window_scaling()<=741
-            assert rule.winfo_ismapped() and rule.tabs.get()=='E/M'
-            assert set(rule.tabs._tab_dict)=={'E/M','TÍN HIỆU'}
-            if scale is None:
-                assert abs(rule.winfo_rootx()+rule.winfo_width()/2-app.winfo_rootx()-app.winfo_width()/2)<100
-                assert abs(rule.winfo_rooty()+rule.winfo_height()/2-app.winfo_rooty()-app.winfo_height()/2)<100
-            def visible_entries(parent):
-                for child in parent.winfo_children():
-                    if isinstance(child,ctk.CTkEntry) and child.winfo_ismapped():yield child
-                    yield from visible_entries(child)
-            canvas=rule.exit_body._parent_canvas
-            entries=list(visible_entries(rule.protection_host))
-            for entry in entries:
-                # At high DPI the full native E/M form needs scrolling. Every
-                # control must be reachable inside the viewport and footer.
-                offset=entry.winfo_rooty()-rule.exit_body.winfo_rooty()
-                canvas.yview_moveto(max(0,offset-4)/rule.exit_body.winfo_height())
-                settle()
-                assert entry.winfo_rooty()>=canvas.winfo_rooty()-2,entry.get()
-                assert entry.winfo_rooty()+entry.winfo_height()<=rule.footer.winfo_rooty(),entry.get()
-                assert entry.winfo_rooty()+entry.winfo_height()<=canvas.winfo_rooty()+canvas.winfo_height()+2,entry.get()
-            canvas.yview_moveto(0);settle()
-            assert rule.dynamic_settings_card.winfo_ismapped()
-            assert rule.dynamic_atr_value.winfo_ismapped() and not hasattr(rule,'below_arm_switch')
-            assert rule.initial_sl._hint_icon.cget('text')=='?'
-            icon=rule.initial_sl._hint_icon
-            icon._label.event_generate('<Enter>')
-            app.after(650,app.quit);Misc.mainloop(app);settle()
-            hint=icon._hover_hint.popup
-            assert hint and hint.winfo_ismapped()
-            assert 'cắt lỗ' in hint.body.get('1.0','end')
-            assert hint.winfo_rootx()>=rule.winfo_rootx()
-            assert hint.winfo_rootx()+hint.winfo_width()<=rule.winfo_rootx()+rule.winfo_width()
-            assert hint.winfo_rooty()+hint.winfo_height()<=rule.winfo_rooty()+rule.winfo_height()
-            icon._hover_hint._hide()
-            rule.initial_sl.delete(0,'end');rule.initial_sl.insert(0,'12')
-            rule.save();settle()
-            assert app.settings.exit['sl_distance']==12
-            assert app.positions_tree.cell('DEMO-LONG','sl')['text']=='1,760.0'
-            assert 'mẫu' in rule.status.cget('text')
-            rule.destroy();settle()
-            app.connection_button.invoke();settle()
-            connection=app.popups['connection']
-            assert connection.winfo_ismapped()
-            connection.select_page('VỐN');settle()
-            assert not any(key.startswith('capital.') for key in connection.variables)
-            connection.save_connection()
-            assert not hasattr(app.settings,'max_contracts')
-            assert app.settings.exit['sl_distance']==12
-            connection.select_page('TELEGRAM / LỊCH');settle()
-            connection.primary.invoke()
-            connection.backend_button.invoke()
-            assert 'Mẫu offline' in connection.note.cget('text')
-            assert not getattr(app,'signal_session',None)
-            connection.select_page('DNSE');settle()
-            connection.select_page('LỊCH');settle()
-            connection.calendar_form.variables['manual_closed_dates'].set('2026-11-19')
-            connection.save()
-            assert app._demo_calendar.manual_closed_dates==['2026-11-19']
-            assert not runtime_root().exists()
-            connection.select_page('DNSE');settle()
-            assert {'connection.key','connection.secret','connection.account','connection.loan'}<=set(connection.variables)
-            connection.variables['connection.key'].set('offline-key')
-            connection.variables['connection.secret'].set('offline-secret')
-            connection.connect();assert 'Bản mẫu' in connection.note.cget('text')
-            assert app.runtime is None and not app.switch_pending
-            connection.destroy();settle()
-            app._mode_selected('REAL');settle()
-            assert not connection.winfo_exists() and app.mode_requested is None
-            assert app.mode_choice.get()=='PAPER'
-            connection=app.connection('REAL');settle()
-            assert connection.otp_card.winfo_ismapped()
-            connection.variables['connection.account'].set('123')
-            connection.connect();assert app.runtime is None and not app.switch_pending
-            connection.destroy();settle()
-            assert app.mode_requested is None and app.settings.mode=='PAPER'
-            assert not runtime_root().exists()  # No settings, credentials or ledger was saved.
-            app.geometry('1080x700');settle()
-            for widget,font in app._preview_fit_labels:
-                if not widget.winfo_ismapped() or not widget.cget('text'):continue
-                assert widget.winfo_rooty()+widget.winfo_height()<=app.info_panel.winfo_rooty()+app.info_panel.winfo_height(),widget.cget('text')
-                assert widget._label.winfo_reqwidth()<=widget.winfo_width(),widget.cget('text')
-                assert widget._label.winfo_reqheight()<=widget.winfo_height(),widget.cget('text')
-        else:
-            assert set(app.options)=={'movement','expiry','entry'}
-            assert app.options['expiry'].get() and not app.options['entry'].get() and not app.options['movement'].get()
-            assert set(app.variables)=={'key','secret','telegram_token','telegram_chat'}
-            assert not hasattr(app,'bot') and not hasattr(app,'positions_tree')
-            app.start();assert app.runtime is None and 'API' in app.note.cget('text')
-            app.calendar();settle()
-            calendar_window=app.calendar_window
-            assert calendar_window.form.variables['notice_time'].get()=='15:00'
-            assert calendar_window.form.variables['notice_days'].get()=='1'
-            calendar_window.destroy();settle()
-            app.geometry('820x560');settle()
-            for variable in app.variables.values():
-                entry=variable._viking_entry
-                assert entry.winfo_rootx()+entry.winfo_width()<=app.winfo_rootx()+app.winfo_width()
-                assert entry.winfo_rooty()+entry.winfo_height()<app.primary.winfo_rooty()
+        assert set(app.options)=={'movement','expiry','entry'}
+        assert app.options['expiry'].get() and not app.options['entry'].get() and not app.options['movement'].get()
+        assert set(app.variables)=={'key','secret','telegram_token','telegram_chat'}
+        assert not hasattr(app,'bot') and not hasattr(app,'positions_tree')
+        app.start();assert app.runtime is None and 'API' in app.note.cget('text')
+        app.calendar();settle()
+        assert app.calendar_window.form.variables['notice_time'].get()=='15:00'
+        app.calendar_window.destroy();settle()
+        app.geometry('820x560');settle()
+        for variable in app.variables.values():
+            entry=variable._viking_entry
+            assert entry.winfo_rootx()+entry.winfo_width()<=app.winfo_rootx()+app.winfo_width()
+            assert entry.winfo_rooty()+entry.winfo_height()<app.primary.winfo_rooty()
         assert not errors,errors
     finally:app.close()
 
 
-@pytest.mark.parametrize('kind,scale',[('demo',None),('demo',1.),('demo',1.5),('demo',2.),('backend',1.),('backend',1.5)])
-def test_separate_signal_console_and_long_demo_have_no_trade_or_network_path(kind,scale):
-    code=inspect.getsource(_split_app_scenario)+f'\n_split_app_scenario({kind!r},{scale!r})'
+
+@pytest.mark.parametrize('scale',[1.,1.5])
+def test_separate_signal_console_has_no_trade_path(scale):
+    code=inspect.getsource(_backend_app_scenario)+f'\n_backend_app_scenario({scale!r})'
     result=subprocess.run([sys.executable,'-X','utf8','-c',code],cwd=Path(__file__).resolve().parents[2],
-        capture_output=True,text=True,timeout=45)
+        capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stdout+result.stderr

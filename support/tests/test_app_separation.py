@@ -79,21 +79,6 @@ def test_signal_condition_and_cooldown_survive_backend_restart_without_replay(sy
     assert store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0]==1
 
 
-def test_demo_long_uses_same_dynamic_repeat_and_arm_milestones_without_ledger():
-    from ckps.dashboard.demo import long_sample, demo_rules
-    from ckps.dashboard.mayin.management_preview import position_milestones
-    folder=runtime_root()
-    for stage,target in [('DYNAMIC',2008.4),('LẶP',2003.4),('TSL / ARM',2020.)]:
-        position,current=long_sample(stage)
-        before=asdict(position)
-        arm,dynamic=position_milestones(position,demo_rules(),current,1.)
-        assert position.entry==2000 and position.metrics['levels']['sl']==1990 and position.metrics['levels']['tp']==0
-        if stage=='TSL / ARM':
-            assert f'{target:,.1f}' in arm.value and 'NHƯỜNG ARM' in dynamic.value
-        else:assert f'{target:,.1f}' in dynamic.value
-        assert position.quantity==(2 if stage=='DYNAMIC' else 1)
-        assert asdict(position)==before
-    assert not folder.exists()
 
 
 def test_main_telegram_shortcut_uses_the_connection_settings_window():

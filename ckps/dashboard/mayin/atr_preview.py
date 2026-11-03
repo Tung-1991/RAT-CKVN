@@ -12,11 +12,11 @@ def atr_preview(view, rules=None):
         parts=[]
         number=lambda n:f'{n:.2f}'.replace('.', ',')
         if settings['atr_start_enabled']:
-            parts.append(f"Bắt đầu +{number(value*settings['atr_start_multiplier'])}%" if value is not None
+            parts.append(f"Bắt đầu +{number(value*settings['atr_start_multiplier'])}% giá" if value is not None
                          else f"Bắt đầu {settings['atr_start_multiplier']:g} ATR".replace('.',','))
         else:parts.append('Bắt đầu khi có lãi')
         if settings['atr_trail_enabled']:
-            parts.append(f"lùi ATR {number(value*settings['atr_trail_multiplier'])}%" if value is not None
+            parts.append(f"lùi ATR {number(value*settings['atr_trail_multiplier'])}% giá" if value is not None
                          else f"lùi {settings['atr_trail_multiplier']:g} ATR".replace('.',','))
         if settings['retention_enabled']:
             parts.append(f"giữ {settings['retention_pct']:g}% lãi")
@@ -29,12 +29,9 @@ def atr_preview(view, rules=None):
                 or data.get('period') != 14 or not 14 <= data.get('count', 0)
                 or not isfinite(value) or value <= 0):
             return waiting
-        if data.get('sample'):
-            session = 'MẪU'
-        else:
-            session = date.fromisoformat(data['as_of']).strftime('%d/%m/%Y')
+        session = date.fromisoformat(data['as_of']).strftime('%d/%m/%Y')
         number = lambda n: f'{n:.2f}'.replace('.', ',')
-        return (f'ATR14 · {number(value)}% · phiên {session}',
+        return (f'ATR14 · {number(value)}% giá · {session}',
                 description(value), True)
     except (ValueError, TypeError, KeyError):
         return waiting

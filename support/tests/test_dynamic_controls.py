@@ -8,7 +8,7 @@ from ckps.models import Settings
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
 def test_custom_dynamic_start_and_retention_drive_real_decisions(system,side,sign):
     engine,broker,store=system
-    values={**Settings().exit,'arm_gain':2,'atr_start_multiplier':.9,
+    values={**Settings().exit,'arm_gain':10,'atr_start_multiplier':.9,
             'atr_trail_multiplier':1.2,'retention_pct':50,'dynamic_repeat':False}
     write_settings(Settings(exit=values))
     engine.settings=read_settings()

@@ -27,7 +27,7 @@ def test_new_rules_have_one_price_percent_default_and_old_untagged_data_keeps_it
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
-def test_preview_only_shows_price_percent_even_for_old_rules_without_mutating_them(side,sign):
+def test_trailing_preview_shows_pnl_even_for_old_rules_without_mutating_them(side,sign):
     from ckps.dashboard.mayin.management_preview import position_milestones
     from ckps.dashboard.mayin.controller import MayinController
     old=ExitSettings(distance_unit='PNL_PERCENT',arm_enabled=True,arm_gain=5,trail_gap=1.25,
@@ -37,15 +37,14 @@ def test_preview_only_shows_price_percent_even_for_old_rules_without_mutating_th
     modern=load_record(ExitSettings,price_percent_rules(asdict(old),position.entry,position.margin_per_contract))
     old_preview=position_milestones(position,old,2000+sign*10,1)
     assert old_preview==position_milestones(position,modern,2000+sign*10,1)
-    assert '% giá' in old_preview[0].detail
+    assert 'PNL +5%' in old_preview[0].detail
     help_view=SimpleNamespace(_preview_help={})
     MayinController._render_management_config(help_view,old,position.entry,position.margin_per_contract)
-    assert 'ARM 1 % giá vốn' in help_view._preview_help['arm']
-    assert 'Lùi 0.25 % giá vốn' in help_view._preview_help['arm']
-    assert 'PNL' not in str(help_view._preview_help)
+    assert 'ARM 5 % PNL' in help_view._preview_help['arm']
+    assert 'Lùi 1.25 điểm % PNL' in help_view._preview_help['arm']
     assert (asdict(position),asdict(old))==before
     MayinController._render_management_config(help_view,old,position.entry,None)
-    assert 'Chờ dữ liệu' in help_view._preview_help['arm'] and 'PNL' not in str(help_view._preview_help)
+    assert 'ARM 5 % PNL' in help_view._preview_help['arm']
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])

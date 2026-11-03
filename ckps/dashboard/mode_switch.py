@@ -38,13 +38,10 @@ class ModeSwitchMixin:
         if mode==self.mode_requested and getattr(self,'_mode_probe',None):return
         self._cancel_mode_probe()
         self.clear_confirmation()
-        if mode==self.settings.mode and (self.runtime is not None or getattr(self,'preview_only',False)):
+        if mode==self.settings.mode and self.runtime is not None:
             self.mode_requested=None
             self.mode_choice.set(mode)
             self.render()
-            return
-        if getattr(self,'preview_only',False):
-            self._mode_failure('Mẫu offline chỉ dùng PAPER; mở app giao dịch để chọn REAL.')
             return
         if self.order_busy:
             self._mode_failure('Chờ thao tác lệnh hiện tại hoàn tất trước khi đổi sổ.')

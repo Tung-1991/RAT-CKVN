@@ -10,7 +10,7 @@ from ..theme import BG, GREEN, RED, MUTED, BLUE, WARN
 from ckps.rules.market_alerts import MarketAlertSettings
 from .connection_status import otp_status
 from .connection_preview import ConnectionPreviewMixin
-from ..settings_state import signal_settings, save_signal_settings, start_signal_backend
+from ..settings_state import signal_settings, save_signal_settings, start_signal_backend, telegram_token
 
 
 class ConnectionFields(OriginalRuleForms):
@@ -107,7 +107,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
     def _connection(self,page):
         page.grid_columnconfigure((0,1),weight=1,uniform='dnse')
         api=self.api_card=self.form.card(page,'API DNSE')
-        self.read_api_button=ctk.CTkButton(api._viking_header,text='ĐỌC MẪU' if getattr(self.app,'preview_only',False) else 'ĐỌC API',
+        self.read_api_button=ctk.CTkButton(api._viking_header,text='ĐỌC API',
             width=88,height=27,font=('Segoe UI',12,'bold'),command=self.read_api)
         self.read_api_button.pack(side='right')
         self.key_visibility=ctk.CTkButton(api._viking_header,text='HIỆN',width=50,height=27,
@@ -162,17 +162,16 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.notification_body=self.form._content(page,columns=1)
         card=self.form.card(self.notification_body,'TELEGRAM · MỘT KÊNH')
         settings=signal_settings(self.app)
-        credentials=getattr(self.app,'signal_credentials',{})
-        self.form.field(card,'telegram.token','Bot token',credentials.get('telegram_token',''),secret=True)
+        self.form.field(card,'telegram.token','Bot token',telegram_token(self.app),secret=True)
         self.form.field(card,'telegram.chat','Chat ID',settings.telegram_chat)
         self.backend_button=ctk.CTkButton(card._viking_header,text='CHẠY',width=100,height=26,
             font=('Segoe UI',12,'bold'),command=self.toggle_backend)
         self.backend_button.pack(side='right')
-        self.form._hint_icon(card._viking_header,'Dùng chung API DNSE ở DNSE / VỐN; Telegram cần Bot token/Chat ID riêng. Tín hiệu / Lệnh gồm gợi ý P1/P2/E và trạng thái gửi/khớp/hủy/lỗi của lệnh mở, đóng/giảm, SL/TP/TSL/DYNAMIC. Chỉ thông báo, không nhận lệnh từ Telegram. Tắt nhóm vẫn phân tích, không gửi bù tin cũ.').pack(side='left',padx=5)
+        self.form._hint_icon(card._viking_header,'LƯU hoặc CHẠY ghi nhớ Bot token bằng mã hóa Windows; mở lại vẫn che token, backend không tự chạy. Xóa token rồi LƯU để bỏ ghi nhớ, độc lập API DNSE. Tín hiệu / Lệnh gồm gợi ý P1/P2/E và biên nhận mở/đóng/giảm. Tắt nhóm vẫn phân tích, không gửi bù tin cũ.').pack(side='left',padx=5)
         self.backend_state=ctk.CTkLabel(card,text='CHƯA CHẠY',font=('Segoe UI',12),text_color=MUTED,anchor='w')
         self.backend_state.pack(fill='x',padx=10,pady=(2,4))
         from .calendar_form import CalendarForm
-        self.calendar_form=CalendarForm(self.notification_body,settings=getattr(self.app,'_demo_calendar',None),notice_toggle=False)
+        self.calendar_form=CalendarForm(self.notification_body,notice_toggle=False)
         self.calendar_form.grid(row=1,column=0,sticky='ew')
         market=MarketAlertSettings.from_dict(settings.market_alerts)
         self.options={'movement':tk.BooleanVar(value=market.movement_enabled),
@@ -197,18 +196,17 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
 
     def save_notifications(self):
         settings,schedule,credentials=self.notification_values()
+        from ckps.connections.secure_session import remember_telegram_token
+        remember_telegram_token(credentials['telegram_token'])
         from ckps.services import calendar
-        if getattr(self.app,'preview_only',False):self.app._demo_calendar=schedule
-        else:calendar.write_settings(schedule)
+        calendar.write_settings(schedule)
         self.app.signal_credentials=credentials
         save_signal_settings(self.app,settings)
-        self.note.configure(text='Đã áp dụng thông báo/lịch vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
-            else 'Đã lưu Telegram/lịch; tắt thông báo vẫn phân tích.',text_color=GREEN)
+        self.note.configure(text='Đã lưu Telegram/lịch · Token mã hóa Windows.' if credentials['telegram_token']
+            else 'Đã lưu Telegram/lịch · Đã xóa token ghi nhớ.',text_color=GREEN)
 
     def toggle_backend(self):
         try:
-            if getattr(self.app,'preview_only',False):
-                raise ValueError('Mẫu offline chỉ rà UI; không kết nối hoặc gửi Telegram.')
             session=getattr(self.app,'signal_session',None)
             if session and session.running:
                 session.close()
@@ -226,8 +224,6 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
     def remember_values(self, credentials):
-        if getattr(self.app,'preview_only',False):
-            return
         from ckps.connections.secure_session import remember_connection, forget_connection
         if self.remember.get():remember_connection(credentials)
         else:forget_connection()
@@ -247,8 +243,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
             self.app.save_config(settings)
             self.app.connection_profile=credentials
             if self.remember.get():self.app.send('remember_session')
-            self.note.configure(text='Đã áp dụng vào mẫu trong phiên.' if getattr(self.app,'preview_only',False)
-                else 'Đã lưu cấu hình và ghi nhớ kết nối bằng Windows.' if self.remember.get()
+            self.note.configure(text='Đã lưu cấu hình và ghi nhớ kết nối bằng Windows.' if self.remember.get()
                 else 'Đã lưu cấu hình · Kết nối chỉ dùng trong phiên.',text_color=GREEN)
         except Exception as exc:self.note.configure(text=str(exc),text_color=RED)
 
@@ -261,7 +256,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         self.note.configure(text='Đang yêu cầu DNSE gửi email OTP…',text_color=MUTED)
 
     def otp_ready(self):
-        if getattr(self.app,'preview_only',False) or self.variables['connection.mode'].get()!='REAL' or self.app.settings.mode!='REAL' or not self.app.runtime or self.app.mode_requested or self.app.switch_pending:
+        if self.variables['connection.mode'].get()!='REAL' or self.app.settings.mode!='REAL' or not self.app.runtime or self.app.mode_requested or self.app.switch_pending:
             self.note.configure(text='Kết nối sổ REAL trước khi xác thực OTP.',text_color=RED)
             return False
         if not self.otp_matches_active():
@@ -292,8 +287,6 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
 
     def apply_capital(self):
         try:
-            if getattr(self.app,'preview_only',False):
-                raise ValueError('Bản mẫu không thay vốn thật; chỉnh tại app giao dịch PAPER.')
             if self.app.settings.mode!='PAPER' or self.app.mode_requested or self.app.switch_pending:
                 raise ValueError('Chọn sổ PAPER đang chạy trước khi chỉnh vốn.')
             value=float(self.variables['paper_balance'].get().replace(',','').replace(' ',''))
@@ -327,12 +320,9 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         page,mode=self.tabs.get(),self.variables['connection.mode'].get()
         self.primary.configure(text='KẾT NỐI DNSE' if page=='DNSE / VỐN' else 'LƯU THAY ĐỔI')
         self.save_button.grid() if page=='DNSE / VỐN' else self.save_button.grid_remove()
-        text='MẪU OFFLINE' if getattr(self.app,'preview_only',False) else ''
-        self.note.configure(text=text,text_color=MUTED)
+        self.note.configure(text='',text_color=MUTED)
     def connect(self):
         try:
-            if getattr(self.app,'preview_only',False):
-                raise ValueError('Bản mẫu chỉ rà DNSE/API; mở app giao dịch để kết nối thật.')
             if self.app.switch_pending:raise ValueError('Đang kết nối; chờ hoàn tất.')
             values={key:self.variables['connection.'+key].get().strip() for key in ('mode','key','secret','account','loan')}
             if not all(values[key] or os.environ.get('CKPS_DNSE_API_'+key.upper()) for key in ('key','secret')):
@@ -379,7 +369,7 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         session=getattr(self.app,'signal_session',None)
         self.backend_button.configure(text='DỪNG' if session and session.running else 'CHẠY')
         if session:self.backend_state.configure(text=session.status)
-        otp_enabled=(not getattr(self.app,'preview_only',False) and self.variables['connection.mode'].get()=='REAL'
+        otp_enabled=(self.variables['connection.mode'].get()=='REAL'
             and self.app.settings.mode=='REAL' and self.app.runtime and not self.app.mode_requested and not self.app.switch_pending
             and self.otp_matches_active())
         for button in self.otp_buttons:button.configure(state='normal' if otp_enabled else 'disabled')

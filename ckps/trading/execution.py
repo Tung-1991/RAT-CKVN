@@ -13,9 +13,10 @@ from ckps.rules.distances import reference_margin, price_rules
 from ckps.rules.defaults import shared_exit_settings
 from ckps.rules.ema_exit import EMAExit
 from ckps.trading.exit_requests import FULL_EXITS, requested_exit, request_exit
+from .scheduled_entries import ScheduledEntriesMixin
 
 
-class Engine:
+class Engine(ScheduledEntriesMixin):
     """Serialized manual execution and optional position protection. No auto entry."""
 
     def __init__(self, store, broker, settings: Settings):
@@ -26,6 +27,8 @@ class Engine:
         self.consistent = False
         self.error = "Chưa đồng bộ tài khoản."
         self.suspended = set()
+        self.suspended_entries=set()
+        self.entry_stopping=threading.Event()
         self.ema_exit = EMAExit()
         feed = getattr(broker, 'feed', None)
         if feed:
@@ -101,6 +104,7 @@ class Engine:
             self._complete_full_exits()
             if manage:
                 self._manage()
+                self._dispatch_scheduled()
             return snapshot
         except Exception as exc:
             self.healthy = False
@@ -674,13 +678,17 @@ class Engine:
     def _handoff_allowed(self, order):
         if order.action=='OPEN':
             try:
+                if self.entry_stopping.is_set() or order.id in self.suspended_entries:return False
+                if order.scheduled_for:
+                    from ckps.services.entry_schedule import session_hold
+                    if session_hold():return False
                 # This order is already SUBMITTING. Exclude its own durable
                 # marker while checking the final permission before broker I/O.
                 if not self.healthy or not self.consistent or not self.latest:return False
                 if time.time()-self.latest.observed_at>self.settings.max_quote_age:return False
                 if any(row.id!=order.id and row.status in {'UNKNOWN','SUBMITTING','REPLACE_PENDING'} for row in self.store.orders(pending=True)):return False
                 self._quote(order.symbol)
-                own = [row for row in self.store.orders(pending=True) if row.id != order.id]
+                own = self._entry_capacity_orders(order)
                 exits = self.exits()
                 limit = capacity(self.settings, self.latest, self.store.positions(), own, order.side,
                                  order.price or self._quote(order.symbol).last, exits)
@@ -720,7 +728,15 @@ class Engine:
             quote = self._quote(position.symbol)
             if position.closed_at:
                 raise ValueError("Vị thế đã đóng.")
-            price_rules(self.exits(position),position.entry,position.margin_per_contract)
+            rules=self.exits(position)
+            try:price_rules(rules,position.entry,position.margin_per_contract)
+            except ValueError:
+                # Missing trailing ROI basis must not deny valid price SL/TP/E.
+                partial=(rules.distance_unit=='PRICE_PERCENT' and rules.trailing_unit=='PNL_PERCENT'
+                    and reference_margin(position.entry,position.entry,position.entry)
+                    and not reference_margin(position.margin_per_contract,position.entry,position.entry)
+                    and any((rules.sl_enabled,rules.tp_enabled,rules.ema_exit_enabled)))
+                if not partial:raise
             if not position.history_verified:
                 feed = getattr(self.broker, "feed", None)
                 if feed:
@@ -760,6 +776,10 @@ class Engine:
 
     def cancel(self, order_id, *, protective=False):
         order = self.store.order(order_id)
+        if order.status=='SCHEDULED' or order.status=='CANCELLED' and order.scheduled_for and not order.broker_id:
+            self.suspended_entries.add(order.id)
+            self._scheduled_message(order,'Đã hủy lệnh chờ chưa gửi',status='CANCELLED')
+            return
         if not order.pending or not order.broker_id:
             raise ValueError("Chưa thể hủy: lệnh đã kết thúc hoặc chưa xác định ID DNSE.")
         if protective:

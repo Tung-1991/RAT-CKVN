@@ -1,16 +1,22 @@
 """Native MayinTien controls for the one shared protection rule."""
 from dataclasses import asdict
 from types import SimpleNamespace
+from math import isfinite
 import tkinter as tk
 import customtkinter as ctk
 
-from ckps.models import ExitSettings, Quote, load_record
-from ckps.rules.distances import price_percent_rules, reference_margin
+from ckps.models import ExitSettings, load_record, quantity
+from ckps.rules.distances import pnl_rule_draft
 from ckps.rules.defaults import shared_exit_settings
 from .forms import OriginalRuleForms
+from .hover_hint import _HoverHint
+from .widgets import configure_changed
+from .pnl_preview import ProtectionReference, protection_reference, pnl_preview, dynamic_pnl_preview
 
 
 class ProtectionFormMixin(OriginalRuleForms):
+    _distance_fields={'sl_distance':'initial_sl','tp_distance':'take_profit','repeat_gap':'reentry_sl',
+        'arm_gain':'normal_arm','trail_gap':'normal_giveback','retention_until':'retention_until'}
     @staticmethod
     def set_protection_enabled(parent, enabled):
         for widget in parent.winfo_children():
@@ -22,13 +28,9 @@ class ProtectionFormMixin(OriginalRuleForms):
     def _init_protection(self, parent, values):
         values=shared_exit_settings(values)
         self._migration_error=''
-        self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT'
-        try:
-            entry,margin=self._price_reference()
-            values=price_percent_rules(values,entry,margin)
-        except ValueError as exc:
-            self._migration_error=str(exc)
-            values={**values,'distance_unit':'PRICE_PERCENT'}
+        self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT' or values.get('trailing_unit')!='PNL_PERCENT'
+        entry,margin=self._price_reference()
+        values,self._pending_fields=pnl_rule_draft(values,entry,margin)
         exits = load_record(ExitSettings, values)
         self.values = exits
         values = {}
@@ -41,37 +43,76 @@ class ProtectionFormMixin(OriginalRuleForms):
         values.update({name:getattr(exits,key) for name,key in mapping.items()})
         self.params = SimpleNamespace(**values)
         self._exit_manager_tab(parent,include_signals=False)
+        self.dynamic_atr_detail.configure(font=('Segoe UI',12),cursor='hand2')
+        self.dynamic_atr_detail._hover_hint=_HoverHint(self.dynamic_atr_detail,
+            lambda:getattr(self,'_dynamic_pnl_help',''),click_to_toggle=True,hover=False)
         self._execution_controls(self.exit_body,exits)
+        self._set_pending_fields()
+        self.pnl_distances_preview.configure(cursor='hand2')
+        self.pnl_distances_preview._hover_hint=_HoverHint(self.pnl_distances_preview,
+            lambda:getattr(self,'_pnl_help',''),click_to_toggle=True,hover=False)
         self._update_units()
         self.render_atr()
-        if self._migration_error:
-            for entry in (self.initial_sl,self.take_profit,self.reentry_sl,self.normal_arm,self.normal_giveback):
-                entry.delete(0,'end')
-                entry.configure(placeholder_text='CHỜ')
-            self.set_protection_enabled(parent,False)
+        for widget in (self.normal_arm,self.normal_giveback,self.reentry_sl):
+            widget.bind('<KeyRelease>',lambda _:self.render_atr(),add='+')
+
+    def _set_pending_fields(self):
+        self._migration_error=('Chờ giá vốn/ký quỹ cơ sở để đổi các ô CHỜ; giá trị đã lưu vẫn giữ nguyên.'
+            if self._pending_fields else '')
+        for key in self._pending_fields:
+            widget=getattr(self,self._distance_fields[key])
+            widget.delete(0,'end')
+            widget.configure(placeholder_text='CHỜ',state='disabled')
+
+    def _resolve_pending_fields(self,reference):
+        if not self._pending_fields:return
+        try:
+            values,pending=pnl_rule_draft(self._exits(),reference.entry,reference.margin)
+        except ValueError:return
+        for key in self._pending_fields-pending:
+            widget=getattr(self,self._distance_fields[key])
+            widget.configure(state='normal',placeholder_text='')
+            widget.delete(0,'end');widget.insert(0,str(values[key]))
+        self.values=load_record(ExitSettings,values)
+        self._pending_fields=pending
+        self._migration_error=('Chờ giá vốn/ký quỹ cơ sở để đổi các ô CHỜ; giá trị đã lưu vẫn giữ nguyên.' if pending else '')
+        if hasattr(self,'status'):
+            configure_changed(self.status,text=self._migration_error,text_color='#FBBF24' if pending else self.TEXT)
 
     def _price_reference(self):
-        symbol=self.app.view.get('contract','VN30F1M')
-        quote=self.app.view.get('quotes',{}).get(symbol,{})
-        if not quote or quote.get('symbol')!=symbol or not load_record(Quote,quote).fresh(self.app.settings.max_quote_age):return None,None
-        account=self.app.view.get('account',{})
-        entry=quote.get('last')
-        return entry,reference_margin(account.get('margin_per_contract'),account.get('margin_reference_price') or entry,entry)
+        ref=self._pnl_reference()
+        return ref.entry,ref.margin
+
+    def _pnl_reference(self):
+        ref=protection_reference(self.app.view,self.app.settings.max_quote_age)
+        if ref.source=='VỊ THẾ':return ref
+        try:
+            qty_text=self.app.qty.get().strip()
+            qty=quantity(qty_text) if qty_text else None
+        except (AttributeError,ValueError):qty=-1
+        try:
+            entry=float(self.app.limit.get()) if self.app.kind.get()=='LO' else None
+            if entry is not None and (not isfinite(entry) or entry<=0):return ProtectionReference()
+        except (AttributeError,ValueError):return ProtectionReference()
+        return protection_reference(self.app.view,self.app.settings.max_quote_age,entry=entry,quantity=qty)
 
     def _execution_controls(self,body,exits):
         bar=ctk.CTkFrame(body,fg_color='#1C2B3B',border_width=1,border_color='#344D66',corner_radius=7)
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=4,pady=(2,5))
-        ctk.CTkLabel(bar,text='RULE CHUNG',font=('Segoe UI',14,'bold'),text_color='#B9D9FA').pack(side='left',padx=12,pady=7)
-        ctk.CTkLabel(bar,text='% GIÁ VỐN',font=('Segoe UI',14,'bold'),text_color=self.TEXT).pack(side='right',padx=12)
+        ctk.CTkLabel(bar,text='RULE CHUNG',height=22,font=('Segoe UI',12,'bold'),text_color='#B9D9FA').pack(side='left',padx=8,pady=3)
+        ctk.CTkLabel(bar,text='SL/TP: % GIÁ · ARM/TSL/LẶP: % PNL',height=22,font=('Segoe UI',12),text_color=self.TEXT).pack(side='right',padx=8)
         for index,key,label,color in ((0,'sl_enabled','BẬT SL','#EF6B73'),(1,'tp_enabled','BẬT TP','#36C997')):
-            cell=self.exit_limit_cells[index]
+            entry=(self.initial_sl,self.take_profit)[index]
+            row=entry.master
             variable=tk.BooleanVar(value=getattr(exits,key));setattr(self,key,variable)
-            switch=ctk.CTkSwitch(cell,text=label,variable=variable,font=('Segoe UI',13,'bold'),progress_color=color,
+            caption=next(w for w in row.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text'))
+            caption.destroy()
+            switch=ctk.CTkSwitch(row,text=('SL' if index==0 else 'TP')+' (% GIÁ)',width=1,variable=variable,font=('Segoe UI',12,'bold'),progress_color=color,
                 button_color='#E0E8F1',fg_color='#3A4553')
-            switch.pack(fill='x',padx=8,pady=(4,5),before=cell.winfo_children()[0])
+            switch.grid(row=0,column=0,sticky='w')
         self.arm_enabled=tk.BooleanVar(value=exits.arm_enabled)
         header=self.protect_trail_card._viking_header
-        ctk.CTkSwitch(header,text='',width=36,variable=self.arm_enabled,progress_color='#4A9FE8',button_color='#E0E8F1').pack(side='left',before=header.winfo_children()[0],padx=(0,5))
+        ctk.CTkSwitch(header,text='',width=36,variable=self.arm_enabled,progress_color='#4A9FE8',button_color='#E0E8F1',command=self.render_atr).pack(side='left',before=header.winfo_children()[0],padx=(0,5))
         self._ema_controls(body,exits)
 
     def _ema_controls(self,body,exits):
@@ -83,26 +124,22 @@ class ProtectionFormMixin(OriginalRuleForms):
         ctk.CTkSwitch(header,text='',width=36,variable=self.ema_exit_enabled,progress_color='#9B8AFB',button_color='#E0E8F1').pack(side='left',before=header.winfo_children()[0],padx=(0,5))
         content=ctk.CTkFrame(card,fg_color='transparent');content.pack(fill='x',padx=6,pady=3)
         content.grid_columnconfigure((0,1),weight=1,uniform='ema-controls')
-        numbers=ctk.CTkFrame(content,fg_color='transparent');numbers.grid(row=0,column=0,sticky='nsew',padx=(0,8));numbers._viking_compact=True
-        self.ema_exit_fast=self._field(numbers,'EMA nhanh',exits.ema_exit_fast,'Số phiên của EMA nhanh; phải nhỏ hơn EMA chậm.')
-        self.ema_exit_slow=self._field(numbers,'EMA chậm',exits.ema_exit_slow,'Số phiên của EMA chậm. Thiếu ít nhất EMA chậm + 1 mẫu hợp lệ thì CHỜ.')
-        clock=ctk.CTkFrame(content,fg_color='transparent');clock.grid(row=0,column=1,sticky='nsew',padx=4)
-        ctk.CTkLabel(clock,text='NẾN 1D · REALTIME',font=('Segoe UI',14,'bold'),anchor='w',text_color='#B9D9FA').pack(fill='x',pady=8)
-        ctk.CTkLabel(clock,text='Cập nhật theo giá mới',font=('Segoe UI',14),anchor='w',text_color='#C5D5E9').pack(fill='x')
-        self.ema_exit_value=ctk.CTkLabel(card,text='',font=('Segoe UI',14),anchor='w',justify='left')
-        self.ema_exit_value.pack(fill='x',padx=12,pady=(4,8))
+        ctk.CTkLabel(header,text='1D · REALTIME',height=20,font=('Segoe UI',11),text_color='#B9D9FA').pack(side='right')
+        for column,name,label,value,hint in ((0,'ema_exit_fast','EMA nhanh',exits.ema_exit_fast,'Số phiên của EMA nhanh; phải nhỏ hơn EMA chậm.'),
+                (1,'ema_exit_slow','EMA chậm',exits.ema_exit_slow,'Số phiên của EMA chậm. Thiếu ít nhất EMA chậm + 1 mẫu hợp lệ thì CHỜ.')):
+            cell=ctk.CTkFrame(content,fg_color='transparent');cell.grid(row=0,column=column,sticky='ew');cell._viking_compact=True
+            setattr(self,name,self._field(cell,label,value,hint))
+        self.ema_exit_value=ctk.CTkLabel(card,text='',height=1,font=('Segoe UI',12),anchor='w',justify='left')
         self.ema_exit_value.bind('<Configure>',lambda _:self.ema_exit_value.configure(wraplength=max(120,int(self.ema_exit_value.winfo_width()/self.ema_exit_value._get_widget_scaling())-4)),add='+')
 
     def _update_units(self):
-        suffix='% GIÁ'
-        for entry,title in ((self.initial_sl,'SL'),(self.take_profit,'TP'),
-                (self.normal_arm,'ARM'),(self.normal_giveback,'Lùi')):
-            label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')),None)
+        for entry,title,suffix in ((self.initial_sl,'SL','% GIÁ'),(self.take_profit,'TP','% GIÁ'),
+                (self.normal_arm,'ARM','% PNL'),(self.normal_giveback,'Lùi','điểm % PNL')):
+            label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w is not entry._hint_icon and w.cget('text')),None)
             if label:
                 label.configure(text=f'{title} ({suffix})')
 
     def _exits(self):
-        if self._migration_error:raise ValueError(self._migration_error)
         values=asdict(self.values)
         mapping={'sl_distance':'initial_sl','tp_distance':'take_profit','repeat_gap':'reentry_sl','arm_gain':'normal_arm',
             'trail_gap':'normal_giveback','arm_repeat':'normal_repeat',
@@ -113,24 +150,38 @@ class ProtectionFormMixin(OriginalRuleForms):
                     'retention_enabled','retention_pct','retention_until_enabled','retention_until'):
             mapping[key]=key
         for key,name in mapping.items():
+            if key in self._pending_fields:continue
             raw=getattr(self,name).get()
             old=values[key]
             values[key]=bool(raw) if isinstance(old,bool) else str(raw) if isinstance(old,str) else float(str(raw).strip().removesuffix('%').replace(',','.'))
         values['sl_distance']=abs(values['sl_distance'])
-        values['distance_unit']='PRICE_PERCENT'
         return asdict(load_record(ExitSettings,shared_exit_settings(values)).validate())
 
     def render_atr(self):
         from .atr_preview import atr_preview
+        ref=self._pnl_reference()
+        self._resolve_pending_fields(ref)
         try:rules=self._exits()
         except (ValueError,AttributeError):rules=asdict(self.values)
         value,detail,ready=atr_preview(self.app.view,rules)
-        self.dynamic_atr_value.configure(text=value,text_color='#60A5FA' if ready else '#FBBF24')
-        self.dynamic_atr_detail.configure(text=detail)
+        self._dynamic_pnl_help=value+'\n'+detail
+        if ready:
+            converted=dynamic_pnl_preview(self.app.view,rules,ref,self.app.view['atr14']['pct'])
+            if converted:
+                detail,self._dynamic_pnl_help=converted
+        configure_changed(self.dynamic_atr_value,text=value,text_color='#60A5FA' if ready else '#FBBF24')
+        configure_changed(self.dynamic_atr_detail,text=detail)
         view=self.app.view.get('ema_exit',{})
         enabled=self.app.settings.exit.get('ema_exit_enabled',False)
-        text='E · OFF'
+        text=''
         if enabled:
             text=(f"E · EMA{view.get('fast_period',3)} {view['fast']:,.2f} / EMA{view.get('slow_period',6)} {view['slow']:,.2f} · 1D {view['mode']} / {view['interval']}"
                   if view.get('ready') else 'E · CHỜ GIÁ / NẾN 1D')
-        self.ema_exit_value.configure(text=text)
+        configure_changed(self.ema_exit_value,text=text)
+        if text and not self.ema_exit_value.winfo_manager():self.ema_exit_value.pack(fill='x',padx=12,pady=(2,4))
+        elif not text and self.ema_exit_value.winfo_manager():self.ema_exit_value.pack_forget()
+        self._pnl_help='\n'.join(pnl_preview(rules,ref))
+        base,detail=pnl_preview(rules,ref,compact=True)
+        if self._pending_fields:base,detail='CHỜ CƠ SỞ QUY ĐỔI', 'Chỉ các ô CHỜ giữ nguyên cấu hình cũ.'
+        configure_changed(self.pnl_basis_preview,text=base)
+        configure_changed(self.pnl_distances_preview,text=detail)

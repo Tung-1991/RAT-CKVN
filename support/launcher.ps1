@@ -1,4 +1,4 @@
-param([ValidateSet('Start', 'Backend', 'Demo', 'Install', 'Check')][string]$Action = 'Start')
+param([ValidateSet('Start', 'Backend', 'Install', 'Check')][string]$Action = 'Start')
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 Set-Location -LiteralPath $projectRoot
@@ -24,8 +24,6 @@ try {
         & $projectPython -X utf8 -m pytest (Join-Path $projectRoot 'support\tests') -q -p no:cacheprovider --tb=short
     } elseif ($Action -eq 'Backend') {
         & $projectPython -X utf8 -m ckps.signal_app
-    } elseif ($Action -eq 'Demo') {
-        & $projectPython -X utf8 -m ckps --demo
     } else {
         & $projectPython -X utf8 -m ckps
     }

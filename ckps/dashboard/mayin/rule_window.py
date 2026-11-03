@@ -92,8 +92,8 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
         if not hasattr(self, 'primary'):
             return
         signal = self.tabs.get() == 'TÍN HIỆU'
-        self.status.configure(text='' if signal else self._migration_error,text_color='#EF4444' if self._migration_error else self.TEXT)
-        self.primary.configure(state='normal' if signal or not self._migration_error else 'disabled')
+        self.status.configure(text='' if signal else self._migration_error,text_color='#FBBF24' if self._migration_error else self.TEXT)
+        self.primary.configure(state='normal')
         self.primary.configure(text='LƯU TÍN HIỆU' if signal else 'LƯU RULE')
         self.manage_button.grid_remove()
         if not signal and self.position_id:
@@ -125,7 +125,7 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
     def _management_snapshot(self, raw):
         policy=self.app.settings.exit
         return deepcopy((raw['side'], raw['symbol'], raw['quantity'], raw['entry'],
-            raw.get('margin_per_contract') if policy.get('distance_unit')=='PNL_PERCENT' else None,
+            raw.get('margin_per_contract') if policy.get('distance_unit')=='PNL_PERCENT' or policy.get('trailing_unit')=='PNL_PERCENT' else None,
             policy, bool(self.app.view.get('armed'))))
 
     def confirm_management(self):
@@ -154,6 +154,6 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
                 if self.book != self._book() or self.app.mode_requested or self.app.switch_pending:
                     raise ValueError('Sổ giao dịch đã thay đổi; mở lại RULE để kiểm tra.')
                 self.app.save_config(replace(self.app.settings, exit=self._exits()).validate())
-            self.status.configure(text='Đã áp dụng vào mẫu trong phiên.' if getattr(self.app, 'preview_only', False) else 'Đã lưu cấu hình.', text_color=self.GREEN)
+            self.status.configure(text='Đã lưu cấu hình.', text_color=self.GREEN)
         except Exception as exc:
             self.status.configure(text=str(exc), text_color='#EF4444')

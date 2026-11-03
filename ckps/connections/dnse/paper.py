@@ -76,11 +76,21 @@ class PaperBroker:
         fees=self.market_view.get('account_profile',{}).get('fees',{})
         # PAPER uses the higher published close rate for its estimate.
         value=fees.get('close' if action=='CLOSE' else 'open')
+        if value is None:value=fees.get('estimated_close' if action=='CLOSE' else 'estimated_open')
         return self.settings.estimated_fee_per_contract if value is None else value
 
     def _fill(self, row):
         if row["status"] in FINAL:
             return
+        if row.get('scheduled_for'):
+            from ckps.services.calendar import local_now
+            from ckps.rules.p2.market import exchange_close_minute
+            now=local_now()
+            if now.date().isoformat()>row['scheduled_for'] or (now.date().isoformat()==row['scheduled_for']
+                    and now.hour*60+now.minute>=exchange_close_minute('VN30')):
+                row['status']='EXPIRED'
+                self.store.put('paper_order',row['id'],row)
+                return
         quote = self._quote(row["symbol"])
         if not quote or not quote.fresh(self.settings.max_quote_age):
             return

@@ -17,6 +17,10 @@ from ckps.models import ExitSettings, Quote, Settings
 PACKAGE={'id':2279,'name':'Gói thử','initialRate':.2,'tradingFee':{
     'schemaType':'FIXED','fixedTradingFee':2000,'fixedDailyCloseTradingFee':1500}}
 
+TIERS=[{'fromQuantity':a,'toQuantity':b,'fee':fee} for a,b,fee in
+    ((1,99,1000),(100,999,800),(1000,1499,500),(1500,9999999,300))]
+TIER_PACKAGE={'tradingFee':{'schemaType':'PROGRESSIVE','progressTradingFee':TIERS,'progressDailyCloseTradingFee':TIERS}}
+
 
 def account_data(accounts=None, packages=None):
     return {'/accounts':{'accounts':accounts if accounts is not None else [
@@ -157,6 +161,39 @@ def test_paper_uses_api_fees_without_mutating_settings_or_real_wallet(system):
     assert sum(row.fees for row in store.positions(closed=True))==4000
 
 
+def test_progressive_preview_uses_published_upper_rate_without_claiming_the_actual_tier(system):
+    from ckps.connections.dnse.fees import fee_pair
+    from ckps.trading.portfolio import capacity
+    engine,broker,store=system
+    fees=package_fees(TIER_PACKAGE)
+    assert fees['open'] is None and fees['close'] is None
+    assert fees['estimated_open']==fees['estimated_close']==1000
+    assert '300–1,000' in fees['text'] and 'chưa xác định bậc thực tế' in fees['text']
+    snapshot=replace(engine.latest,package_fees=fees)
+    settings=replace(engine.settings,mode='REAL',estimated_fee_per_contract=999_999)
+    assert fee_pair(settings,snapshot)==(1000,1000)
+    result=capacity(settings,snapshot,[],[],'LONG',2000,ExitSettings(distance_unit='POINTS',sl_enabled=True,sl_distance=10))
+    assert result.risk_per_contract==1_002_000 and result.maximum==2
+    broker.market_view={'account_profile':{'fees':fees}}
+    assert broker._fee('OPEN')==broker._fee('CLOSE')==1000
+    # Full simulated round trip debits both estimated package fees.
+    engine.open_manual('LONG',1,'MOK');engine.poll()
+    engine.close_position(store.positions()[0].id,1);engine.poll()
+    assert store.get('paper','account')['cash']==100_000_000-2000
+    assert sum(p.fees for p in store.positions(closed=True))==2000
+
+
+@pytest.mark.parametrize('rows',[[],None,[{}],
+    [{'fromQuantity':1,'toQuantity':99,'fee':float('nan')}],
+    [{'fromQuantity':True,'toQuantity':99,'fee':1000}],
+    [{'fromQuantity':1.5,'toQuantity':99,'fee':1000}],
+    [{'fromQuantity':2,'toQuantity':99,'fee':1000}],
+    [TIERS[0],TIERS[2]], [TIERS[0],TIERS[0]]])
+def test_incomplete_or_invalid_tier_schedule_never_becomes_free_or_verified(rows):
+    fees=package_fees({'tradingFee':{'schemaType':'PROGRESSIVE','progressTradingFee':rows,'progressDailyCloseTradingFee':rows}})
+    assert all(fees[key] is None for key in ('open','close','estimated_open','estimated_close'))
+
+
 def test_paper_reconnect_reads_another_account_fee_without_switching_simulated_ledger(monkeypatch):
     from ckps.services.runtime import Runtime
     settings=Settings()
@@ -172,6 +209,7 @@ def test_paper_reconnect_reads_another_account_fee_without_switching_simulated_l
     seen=[]
     class Reader:
         def __init__(self,*args):pass
+        def close(self):pass
     class Market:
         feed=None
         def __init__(self,*args,**kwargs):seen.append(kwargs)

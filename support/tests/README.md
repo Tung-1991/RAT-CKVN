@@ -1,7 +1,19 @@
 # Kiểm thử CKPS
 
-Chạy bằng `START_SYSTEM.bat → 5` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
+Chạy bằng `START_SYSTEM.bat → 4` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
 Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay Telegram thật.
+
+`test_previous_close.py` / `test_quote_header_ui.py`: close đúng mã/G1/ngày, qua cuối tuần/ngày trống, cache và rollover không so nhầm, màu/điểm/% không sửa dữ liệu; GET chậm không chặn UI và bỏ phản hồi cũ. Native header vừa DPI 100–200%, không còn badge mã, hover ký quỹ chờ 500ms, hint giữ số tiền đầy đủ.
+
+`test_scheduled_entries.py` / `test_scheduled_ticket.py`: LO xác nhận ngoài phiên lưu local, gửi theo đúng mã/giá/HĐ, sống qua restart; giữ chỗ/FIFO, hủy local, đổi vé phải xác nhận lại; phiên/ngày nghỉ/ATO/ATC, OTP REAL, giá cũ, hủy/đóng app trong GET, timeout không gửi lại; quá phiên/rollover hết hiệu lực, PAPER không khớp cache. Runtime và UI xác nhận/bảng/hủy chạy trên các đường thật, không gửi mạng.
+
+`test_dashboard_refresh.py`: gộp snapshot chờ thành một lượt hiển thị mới nhất; dữ liệu không đổi không vẽ lại widget, giá thay đổi và giá cũ vẫn cập nhật ngay, không cấp quyền lệnh từ giá cũ.
+
+`test_pnl_trailing.py`: ARM/TSL/LẶP theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, chốt 4→2→1→0, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP.
+
+`test_preview_analysis.py`: Preview chỉ đọc tự chạy, Telegram luôn OFF; tham chiếu đóng phiên tự tính từ nến thật kể cả chưa có cache backend, dùng cho bản nháp RULE nhưng không làm giá mới/cấp LONG hoặc quyền giao dịch.
+
+`test_connection_state.py`: DPAPI Windows cho API/phiên giao dịch và Bot token riêng; token không plaintext, đọc được sau restart tiến trình, đổi/quên DNSE không xóa Telegram; xóa token rồi LƯU không ảnh hưởng API. Mở lại form che token và không tự chạy backend.
 
 `test_execution_safety.py`: SL/E với lệnh đóng đang chờ, khớp trong lúc hủy, timeout,
 restart/BOT OFF, giữ chỗ, quyền quản lý và khối lượng broker bị thay đổi.
@@ -16,10 +28,10 @@ thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, 
 
 | File | Phạm vi |
 | --- | --- |
-| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; bản mẫu dùng chung preset; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
+| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
 | `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL, fill muộn, restart giữ mốc/LẶP; TP OFF; cấu hình cũ ALERT/ORIGINAL/tỷ lệ khác vẫn tự đóng 50% số còn lại sau giảm tay, không spam LẶP và không tự bật nhánh đã tắt |
 | `test_trade_notifications.py` | Biên nhận Long/Short SL/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
-| `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; thiếu sức mở không dựng phí hoặc lỗ SL bằng 0 |
+| `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; AUTO 0/thiếu sức mở hiển thị SL/phí theo 1 HĐ, không cấp sức mở; phí ước, thiếu và 0 phân biệt rõ |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |
 | `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; mốc LẶP qua gap/hồi giá, handoff, khớp từng phần và restart |
 | `test_capital.py` | Sức mở/ký quỹ tự lấy từ broker, giữ chỗ lệnh local không trừ hai lần, kiểm tra lại trước gửi; SL chỉ ước tính lỗ, không thêm hạn mức; chỉnh vốn PAPER giữ lãi/phí/lịch sử, chặn giảm dưới ký quỹ và tách REAL |
@@ -27,12 +39,12 @@ thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, 
 | `test_stream_and_runtime.py` | Tick, ATR, restart, một kênh Telegram; PAPER giá DNSE/tiền ảo, áp dụng/lưu vốn, chặn giá thiếu/cũ/sai mã và API tài khoản/giao dịch, tải nến không chặn SL |
 | `test_signals.py` | MA200, VA/X phiên, fill/restart, nhịp phút, bộ lọc, GET-only và lịch sử tín hiệu |
 | `test_ui.py` | Hai tab Preview/Log, mốc E/M chỉ đọc, một form RULE chung MayinTien, không scope/kế thừa/ghi đè trên vé; TP OFF, quy đổi RULE chung cũ sang % giá từ dữ liệu đã xác minh, nhập SL âm/thập phân, chặn thiếu cơ sở/ngưỡng lỗi; DNSE/VỐN/Telegram/LỊCH, ba nhóm thông báo, DPI 100–200%, bảng/lịch sử |
-| `test_account_preview.py` | GET-only đọc tài khoản CKPS ACTIVE, chọn gói đúng tài khoản, không chọn bừa khi nhiều kết quả, chặn gói CKCS/trùng ID; phí cố định 0 khác thiếu/bậc thang; worker bỏ phản hồi cũ; REAL dùng phí API, PAPER chỉ đổi tiền mô phỏng |
+| `test_account_preview.py` | GET-only đọc tài khoản CKPS ACTIVE, chọn gói đúng tài khoản, không chọn bừa khi nhiều kết quả, chặn gói CKCS/trùng ID; phí cố định 0 khác thiếu; bậc thang hợp lệ ước mức cao nhất, chặn biểu lỗi/trùng/hở; PAPER trừ phí mở/đóng, REAL dùng phí API; worker bỏ phản hồi cũ |
 | `test_price_rules.py` | RULE mới dùng % giá vốn; Preview/hint cùng đơn vị; tương thích bản ghi cũ. Công thức Long/Short, 0,25% khác 2,5%, độc lập ký quỹ; bỏ qua policy riêng/vé cũ, đổi từ PNL giữ mốc lặp; vào thêm/giảm/restart |
 | `test_pnl_rules.py` | Tương thích cấu hình % PNL cũ trên ký quỹ cơ sở, Long/Short SL/TP/ARM/DYNAMIC/LẶP; giảm lệnh không đổi tỷ lệ, vào thêm bình quân theo fill, restart không đổi cơ sở; thiếu ký quỹ không dựng ngưỡng, đóng tay vẫn được; quy đổi E/M cũ, bỏ hạn mức tài khoản cũ khi nạp/lưu |
 | `test_connection_state.py` | DPAPI thực trên Windows, không lưu passcode, phiên ràng buộc API/tài khoản/hạn dùng; từ chối auth xóa phiên; khôi phục vẫn BOT OFF; snapshot không có secrets; cache giá chỉ xem, không tạo tín hiệu |
 | `test_settings.py` | RULE hai tab, một E/M chung, KẾT NỐI hai tab cùng kích thước; xác nhận quyền BOT độc lập thông số, lưu EMA/RSI và Telegram/lịch; pipe backend không nhận tài khoản/OTP/lệnh; token ngoài argv; tắt thông báo không phát lại; DPI và trường cuộn tới được |
-| `test_app_separation.py` | Backend không có quyền giao dịch; hai app chạy cùng lúc với sổ/cấu hình riêng; chống phát lại qua restart; Long mẫu không ghi sổ |
+| `test_app_separation.py` | Backend không có quyền giao dịch; hai app chạy cùng lúc với sổ/cấu hình riêng; chống phát lại qua restart |
 | `test_market_alerts.py` | MA200, biến động VN30, thông báo độc lập, chống trùng và Telegram không chặn E/M |
 | `test_semi_auto.py` | Số tiền lỗi, sức mở theo giá vé, fill mâu thuẫn, hủy lệnh mở dư, ARM/LẶP Long/Short, nhắc đáo hạn và biên nhận Telegram |
 

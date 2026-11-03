@@ -32,7 +32,7 @@ def snapshot_status(value, settings, *, token_available):
 
 
 class SignalProcess:
-    def __init__(self, settings, credentials):
+    def __init__(self, settings, credentials, *, preview_only=False):
         self.status = 'Đang kết nối dữ liệu…'
         self.process = subprocess.Popen([sys.executable, '-X', 'utf8', '-m', 'ckps.signal_app', '--headless'],
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -43,6 +43,7 @@ class SignalProcess:
         self.writer.start()
         self.reader.start()
         self.pending.put({'command': 'start', 'settings': public_settings(settings),
+            'preview_only': preview_only,
             'credentials': {key: credentials.get(key, '') for key in ('key', 'secret', 'telegram_token')}})
 
     @property
@@ -122,7 +123,8 @@ def serve(source, target, *, runtime_factory=None):
                     if name == 'start' and runtime is None:
                         credentials = {key: str(request.get('credentials', {}).get(key, ''))
                                        for key in ('key', 'secret', 'telegram_token')}
-                        runtime = runtime_factory(settings, credentials)
+                        runtime = (runtime_factory(settings, credentials, preview_only=True) if request.get('preview_only') is True
+                                   else runtime_factory(settings, credentials))
                         runtime.persist_settings = False
                         emit('Đang phân tích · Chờ giá DNSE')
                     elif name == 'settings' and runtime:

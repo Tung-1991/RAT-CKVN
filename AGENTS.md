@@ -4,6 +4,10 @@
 - Sản phẩm chỉ CKPS VN30. Đọc `support/docs/CKPS.md` trước khi sửa nghiệp vụ.
 - Một agent, trừ khi Kaiser yêu cầu rõ dùng subagent.
 - Entry chỉ từ thao tác tay. P1 so giá hợp đồng đang giao dịch với MA200.
+  Ngoài phiên có thể xác nhận LO lưu tại app (SCHEDULED), giữ nguyên mã/giá/HĐ,
+  chờ phiên hợp lệ rồi mới gửi bằng giá mới/sức mở/OTP REAL đã xác minh.
+  Cache chỉ phục vụ vé, không làm mới quote hoặc tạo fill. Lệnh chờ sống qua restart,
+  hủy local không gọi broker; quá phiên hẹn/đổi mã thì hết hiệu lực, không tự chuyển.
 - Backend riêng giữ P1/P2 MayinTien để phân tích; Telegram gồm biến động VN30,
   nhắc trước đáo hạn và Tín hiệu / Lệnh (gợi ý, biên nhận mở/đóng/giảm).
   Không có quyền mở/đóng lệnh.
@@ -19,14 +23,20 @@
   tắt chỉ ngừng thông báo, vẫn phân tích.
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
-  E/M mới dùng duy nhất % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa
-  ký quỹ hoặc NAV. Giá vốn 2.000, SL 0,25% là khoảng giá 5. TP mặc định OFF,
+  SL/TP dùng % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa NAV.
+  ARM/TSL/LẶP dùng PNL % trên ký quỹ cơ sở/HĐ đã lưu (trailing_unit=PNL_PERCENT).
+  Cơ sở không chạy theo số dư/nạp rút; vào thêm bình quân theo fill, giảm HĐ giữ cơ sở/HĐ.
+  Giá vốn 2.000, SL 0,25% là khoảng giá 5. TP mặc định OFF,
   có công tắc và mức % giá vốn tại RULE; bật thì chốt toàn bộ. Giữ cấu hình TP đã lưu.
-  TSL/LẶP bám đỉnh Long/đáy Short, khoảng lùi quy ra từ cùng % giá vốn.
-  RULE tạo mới trong code cũng mặc định PRICE_PERCENT. Preview/hint chỉ hiện
-  % giá vốn; đơn vị dữ liệu cũ chỉ xử lý nội bộ, không trình bày thành mode.
-  Không chọn đơn vị. Điểm/% PNL cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
-  giữ nguyên và báo CHỜ. Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
+  TSL/LẶP bám đỉnh Long/đáy Short; lùi và LẶP là điểm phần trăm PNL,
+  tiền/HĐ = ký quỹ cơ sở × mức nhập / 100, điểm giá = tiền/HĐ / 100.000.
+  Preview RULE và vị thế hiện PNL, điểm và tiền theo HĐ còn giữ; không dùng tổng lãi đã chốt.
+  Thiếu ký quỹ thì ARM/TSL/LẶP CHỜ; SL/TP theo giá và E vẫn độc lập.
+  Không chọn đơn vị. RULE cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
+  chỉ khóa ô cần quy đổi; phần còn lại vẫn chỉnh/lưu được. Giữ số và đơn vị nguồn
+  của nhóm CHỜ, tự hoàn tất bản nháp khi có cơ sở; không tự áp dụng trước LƯU.
+  Giá đóng DNSE hợp lệ dùng được để xem trước/quy đổi, vẫn khóa giao dịch.
+  Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
   lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
   Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
 - TSL và DYNAMIC cố định tự đóng 50% HĐ còn lại mỗi lượt khi đủ quyền.
@@ -35,17 +45,20 @@
   Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
-  ARM 1%, TSL lùi/LẶP 0,25%, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
+  ARM 5% PNL, TSL lùi/LẶP 1,25 điểm % PNL, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
   giữ 70% lãi đỉnh, TỚI MFE OFF; LẶP mặc định ON.
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
   Giữ tham số đã lưu, không ép về mặc định. Bước LẶP chung nằm trong BẢO VỆ,
   tách khỏi SL/TP; ARM có LẶP ĐÓNG và LẶP DƯỚI ARM khi còn lãi.
   Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
-- BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công. BOT mẫu bật/tắt trong RAM.
+- Chỉ có app chính PAPER/REAL, không có bản mẫu/offline hoặc `--demo`.
+  BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,
   Ngài tự quyết định giao dịch, không chặn mở mới theo đáo hạn.
   Chỉ chặn mở mới/vào thêm; E/M và đóng/giảm không bị cổng lịch chặn.
+  Né ATO/ATC mặc định ON cũng áp dụng trước gửi LO chờ phiên.
+  LO đã được broker nhận vẫn có thể khớp trong phiên định kỳ.
 - Xét đúng Long/Short, mã hợp đồng, khối lượng khớp và lệnh đang chờ. Không coi
   số liệu thiếu là 0, không dùng tiền CKCS thay ký quỹ phái sinh.
 - Fill, vị thế, queue cùng transaction. Timeout là UNKNOWN, không tự POST lại.
@@ -62,6 +75,11 @@
   Không danh mục CKCS, không tab BOT, không tooltip/legend/preview trùng lặp.
 - DNSE dùng chung một cặp API key/secret; ĐỌC API hiển thị tài khoản CKPS/gói/phí,
   tự chọn khi duy nhất, có nhiều thì chọn từ API. Không nhập ID/phí tay; phí gói không đồng nghĩa tổng thuế/phí Sở.
+  PROGRESSIVE hợp lệ dùng bậc cao nhất để ước phí, ghi rõ ƯỚC/≤; chưa xác nhận bậc thực tế.
+  AUTO chưa có HĐ hợp lệ hiện SL/TP/phí theo 1 HĐ, không dựng tổng bằng 0 hoặc cấp sức mở.
+- Bot token Telegram ghi nhớ bằng Windows DPAPI riêng khi LƯU/CHẠY; mở lại che token,
+  backend vẫn chưa chạy. Không phụ thuộc ghi nhớ/đổi API DNSE; xóa token rồi LƯU để quên.
+  Không ghi plaintext, không đưa token vào cache giá/JSON tham số hoặc Preview chỉ đọc.
 - Đóng/giảm, hủy/sửa/đối soát lệnh dùng vùng thao tác trong màn hình; chỉ hiện nút phù hợp
   dòng đang chọn. Xác nhận gửi lệnh vẫn cần nhưng nằm trong app, không popup.
 - Hướng dẫn/công thức đưa vào hint; lịch ngày nghỉ DNSE tự động, ngày bổ sung thu gọn
@@ -69,19 +87,38 @@
   không thêm hạn mức tài khoản bắt người dùng nhập.
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
-  MayinTien. RULE và KẾT NỐI là hai cửa sổ; giữ font/DPI và các nhóm gốc.
+  MayinTien. RULE/KẾT NỐI tối đa 780×600 logic, cùng DPI; E/M nhãn 12, số 14, giữ các nhóm gốc.
+  SL/TP gom công tắc và ô số cùng hàng; bước LẶP nằm trên hàng tiêu đề BẢO VỆ.
 - E/M hiện TSL/ARM và DYNAMIC, mức đóng cố định, LẶP; ATR14 nguồn chỉ đọc,
   hệ số DYNAMIC chỉnh trực tiếp, không giấu trong nâng cao. Giữ hint và cùng cỡ hai cửa sổ.
 - Preview và RULE cùng hiện ATR14, phiên nến, START/lùi tính ra từ nguồn thực thi;
   thiếu nến/khác mã hiện CHỜ. Giá cũ vẫn khóa tín hiệu; ATR nến đã đóng hiển thị
   riêng với ngày phiên, không lấy nến hôm nay hoặc dựng số mẫu trong app thật.
+- Preview tự chạy backend chỉ đọc khi có API, cache riêng signals/preview;
+  không cần CHẠY Telegram, ép Telegram OFF/token rỗng cả khi cấu hình/môi trường có sẵn.
+  Đổi API chờ tiến trình cũ dừng; backend này không nhận tài khoản/OTP/E/M.
+- Header giá bỏ badge mã; chênh lệch điểm/% so đóng phiên trước cùng mã và KQ/HĐ rút gọn.
+  Mã, ký quỹ đầy đủ, giá/ngày phiên so sánh nằm trong hint ký quỹ, hover đứng 0,5 giây.
+  Giá đóng trước lấy GET trades G1 cuối ngày trước ngày của quote, qua worker đọc riêng;
+  không lấy basicPrice/tham chiếu hoặc nến nối kỳ thay close đúng mã. Cache chỉ để hiển thị.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
-  hợp đồng so MA200. Thiếu/giá cũ hiện CHỜ; không suy ngược điểm Short. Ẩn PNL
-  và trạng thái lặp trên màn hình chính. Chi tiết chính 16 đậm, kết quả 22, giá/vốn 24;
+  hợp đồng so MA200. Thiếu/giá cũ trong phiên hiện CHỜ; không suy ngược điểm Short.
+  Bảng chính ẩn PNL; Preview bảo vệ vị thế được hiện PNL/điểm/tiền.
+  Preview: nhãn 12–13, kết quả 22, chi tiết 13–14; OTP 14 đậm, giá/vốn 24.
+  Hai ô kết quả cao tối thiểu 96, vùng Preview tối thiểu 230 logic; căn lề 10,
+  giãn dòng rõ, vẫn để bảng lệnh giãn phần còn lại và kiểm tra DPI 100–200%.
+  Dòng bảo vệ chỉ hiện mốc, PNL/tiền và HĐ giảm; khoảng còn lại/LẶP chi tiết đưa vào hint.
+  DYNAMIC giữ ATR/giữ lãi, Preview quy đổi PNL theo cơ sở thật; không đổi thuật toán vì cách trình bày.
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
   Trạng thái bảng xét cả BOT chung và dữ liệu; bỏ nút BẢO VỆ LỆNH/NHẬN/BỎ QUẢN LÝ khỏi bảng,
   chọn dòng rồi mở RULE → E/M để nhận/bỏ quyền BOT. Backend chỉ nhận tham số tín hiệu qua pipe, không nhận tài khoản/OTP.
+- Giá đóng DNSE từ 14:45 cùng ngày được hiện tham chiếu cuối phiên: ĐÓNG PHIÊN,
+  EMA/RSI đã tính và thị trường so MA200, kèm giờ giá. Không cấp điểm LONG mới,
+  không cập nhật giao cắt/xác nhận hay độ mới giao dịch từ tham chiếu này.
+  Màu UP/Long xanh, DOWN đỏ, CHỜ/đóng phiên vàng; trạng thái nguồn đóng phiên xanh nhạt.
+  LONG/SHORT bị khóa phải hiện lý do ngay dưới nút; PAPER vẫn chờ giá DNSE mới,
+  không dùng giá đóng phiên/cache làm giá mới để khớp lệnh.
 - Chọn PAPER/REAL không tự mở KẾT NỐI. REAL xác minh tài khoản/gói qua GET worker;
   thiếu cấu hình hoặc nhiều lựa chọn thì báo ngay MAIN, giữ sổ cũ. Bỏ kết quả cũ
   khi đổi ý/kết nối; chỉ dừng sổ cũ sau khi xác minh, sổ mới luôn BOT OFF.

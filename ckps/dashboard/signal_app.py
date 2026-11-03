@@ -28,7 +28,8 @@ class SignalApp(ctk.CTk):
         self.settings=settings or read_signal_settings()
         self.runtime=None
         self.closing=False
-        self.credentials={}
+        from ckps.connections.secure_session import load_connection,load_telegram_token
+        self.credentials={**load_connection(),'telegram_token':load_telegram_token()}
         self.variables={}
         self.grid_columnconfigure(0,weight=1)
         self.grid_rowconfigure(3,weight=1)
@@ -43,10 +44,10 @@ class SignalApp(ctk.CTk):
         connections.grid_columnconfigure((0,1),weight=1,uniform='connections')
         form=ConnectionFields(self.variables)
         api=form.card(connections,'DNSE · CHỈ ĐỌC GIÁ / NẾN')
-        form.field(api,'key','API key','',secret=True,width=260)
-        form.field(api,'secret','API secret','',secret=True,width=260)
+        form.field(api,'key','API key',self.credentials.get('key',''),secret=True,width=260)
+        form.field(api,'secret','API secret',self.credentials.get('secret',''),secret=True,width=260)
         tele=form.card(connections,'TELEGRAM · MỘT KÊNH',1)
-        form.field(tele,'telegram_token','Bot token','',secret=True,width=260)
+        form.field(tele,'telegram_token','Bot token',self.credentials['telegram_token'],secret=True,width=260)
         form.field(tele,'telegram_chat','Chat ID',self.settings.telegram_chat,width=260)
         options=ctk.CTkFrame(self,fg_color=COL_SURFACE_2,corner_radius=6)
         options.grid(row=2,column=0,sticky='ew',padx=16,pady=10)
@@ -116,6 +117,8 @@ class SignalApp(ctk.CTk):
             if any(variable.get() for variable in self.options.values()) and not (values['telegram_token'] and values['telegram_chat']):
                 raise ValueError('Nhập Bot token và Chat ID để gửi tín hiệu.')
             self.apply_options()
+            from ckps.connections.secure_session import remember_telegram_token
+            remember_telegram_token(values['telegram_token'])
             self.credentials=values
             self.runtime=SignalRuntime(self.settings,values)
             write_signal_settings(self.settings)

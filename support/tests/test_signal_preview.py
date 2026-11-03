@@ -19,13 +19,13 @@ def test_entry_is_confirmed_result_not_ready_badge_or_notification_switch():
     assert value==before
     assert entry_context(analysis(buy_alert=False),'VN30F1M',now=1000)=={'state':'WAIT'}
     assert entry_context(value,'41I1GB000',now=1000)=={'state':'WAIT_SOURCE'}
-    assert entry_context(value,'VN30F1M',now=1011)=={'state':'WAIT_SOURCE'}
+    assert entry_context(value,'VN30F1M',now=1011)=={'state':'WAIT_SOURCE','reason':'ANALYSIS_STALE'}
     value['quote_at']=900
-    assert entry_context(value,'VN30F1M',now=1000)=={'state':'WAIT_SOURCE'}
+    assert entry_context(value,'VN30F1M',now=1000)=={'state':'WAIT_SOURCE','reason':'PRICE_STALE'}
     value=analysis();value['quote_at']=995
     assert entry_context(value,'VN30F1M',now=1000)['observed_at']==995
     assert entry_context(analysis(badge='OFF'),'VN30F1M',now=1000)=={'state':'OFF'}
-    assert entry_context(analysis(indicators={}), 'VN30F1M',now=1000)=={'state':'WAIT_SOURCE'}
+    assert entry_context(analysis(indicators={}), 'VN30F1M',now=1000)=={'state':'WAIT_SOURCE','reason':'ANALYSIS_PENDING'}
 
 
 def test_shared_preview_uses_same_contract_fresh_analysis_and_local_ma200_only():
@@ -68,3 +68,24 @@ def test_stale_or_invalid_shared_entry_cannot_survive_a_fresh_market_quote():
         path=runtime_root()/'signals'/'market-context.json';path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text(json.dumps({'contract':quote.symbol,'observed_at':1000,'entry':candidate}),encoding='utf-8')
         assert context(snapshot,now=1000)['entry']=={'state':'WAIT_SOURCE'}
+
+
+def test_wait_reason_distinguishes_history_backend_failure_and_old_analysis():
+    quote=Quote('VN30F1M',1813.4,at=1000)
+    snapshot=SimpleNamespace(contract=quote.symbol,quotes={quote.symbol:quote},bars=[])
+    cases=[(analysis(indicators={},status='THIẾU LỊCH SỬ 1D'),'HISTORY','Chưa đủ nến 1D'),
+           ({**analysis(),'p2':{'status':'THIẾU LỊCH SỬ 1D','badge':'WAIT'}},'HISTORY','Chưa đủ nến 1D'),
+           ({**analysis(),'error':'private diagnostic'},'ANALYSIS_ERROR','Phân tích lỗi'),
+           (analysis(now=980),'ANALYSIS_STALE','Chờ kết quả phân tích mới')]
+    for raw,reason,detail in cases:
+        entry=entry_context(raw,quote.symbol,now=1000)
+        assert entry=={'state':'WAIT_SOURCE','reason':reason}
+        assert 'private diagnostic' not in str(entry)
+        publish_context({'contract':quote.symbol,'observed_at':1000,'entry':entry},preview=True)
+        shared=context(snapshot,now=1000,preview=True)
+        assert shared['entry']==entry
+        view={'contract':quote.symbol,'quotes':{quote.symbol:asdict(quote)},'market_context':shared}
+        assert signal_preview(view,now=1000)[0][1].startswith(detail)
+    view['market_context']['entry']={'state':'WAIT_SOURCE'}
+    view['analysis_running']=True
+    assert signal_preview(view,now=1000)[0][1]=='Chờ kết quả phân tích'

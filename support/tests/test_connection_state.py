@@ -14,6 +14,54 @@ from ckps.dashboard.mayin.connection_status import otp_status
 from ckps.dashboard.mayin.signal_preview import signal_preview
 
 
+def test_telegram_token_is_encrypted_survives_restart_and_is_independent_of_dnse():
+    import subprocess,sys
+    token='offline-telegram-token'
+    vault.remember_connection({'key':'k','secret':'s'})
+    vault.save_trading_session('123',{'key':'k','secret':'s'},'offline-session',time.time()+300)
+    vault.remember_telegram_token(token)
+    path=runtime_root()/'telegram.dpapi'
+    assert token.encode() not in path.read_bytes()
+    assert vault.load_telegram_token()==token
+    assert 'telegram_token' not in vault.load_connection()
+    child=subprocess.run([sys.executable,'-c',
+        "from ckps.connections.secure_session import load_telegram_token; assert load_telegram_token()=='offline-telegram-token'"],
+        capture_output=True,text=True,timeout=10)
+    assert child.returncode==0,child.stderr
+    vault.remember_connection({'key':'other','secret':'new'})
+    vault.forget_connection()
+    assert vault.load_telegram_token()==token
+    vault.remember_connection({'key':'k','secret':'s'})
+    vault.remember_telegram_token('')
+    assert not path.exists() and vault.load_telegram_token()==''
+    assert vault.load_connection()=={'key':'k','secret':'s'}
+
+
+def test_unreadable_telegram_vault_does_not_erase_api_or_restore_plaintext():
+    vault.remember_connection({'key':'k','secret':'s'})
+    (runtime_root()/'telegram.dpapi').write_bytes(b'damaged')
+    assert vault.load_telegram_token()==''
+    assert vault.load_connection()=={'key':'k','secret':'s'}
+
+
+def test_signal_start_remembers_token_without_starting_preview_notifications(monkeypatch):
+    from ckps.dashboard.settings_state import start_signal_backend,telegram_token
+    from ckps.models import Settings
+    class Process:
+        running=True
+        def __init__(self,*args):pass
+        def configure(self,*args):pass
+    monkeypatch.setattr('ckps.services.signal_process.SignalProcess',Process)
+    app=SimpleNamespace()
+    start_signal_backend(app,Settings(telegram_enabled=True,telegram_chat='offline-chat'),
+        {'key':'k','secret':'s','telegram_token':'offline-saved-token'})
+    assert vault.load_telegram_token()=='offline-saved-token'
+    assert telegram_token(SimpleNamespace())=='offline-saved-token'
+    assert telegram_token(SimpleNamespace(signal_credentials={'telegram_token':''}))==''
+    raw=(runtime_root()/'signals'/'settings.json').read_text(encoding='utf-8')
+    assert 'offline-saved-token' not in raw and 'telegram_token' not in raw
+
+
 def test_windows_store_is_encrypted_bound_to_api_account_and_expiry():
     credentials = {'key': 'offline-api-key', 'secret': 'offline-api-secret', 'otp': 'never-persist-otp'}
     now = time.time()

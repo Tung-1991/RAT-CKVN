@@ -76,6 +76,8 @@ class ExitSettings:
     arm_repeat: bool = False
     arm_repeat_below_arm: bool = False
     repeat_gap: float = 0.0
+    # ARM/TSL/LẶP have a separate unit; None preserves an older shared unit.
+    trailing_unit: str | None = None
     dynamic_enabled: bool = False
     dynamic_policy: str = "ALERT"
     dynamic_close_pct: float = 100.0
@@ -108,6 +110,8 @@ class ExitSettings:
         self.ema_exit_mode, self.ema_exit_interval = 'REALTIME', 'TICK'
         if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
+        if self.trailing_unit not in {None, "POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
+            raise ValueError("Đơn vị ARM/TSL/LẶP không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
                      "atr_start_multiplier", "atr_trail_multiplier", "retention_until"):
             value = getattr(self, name)
@@ -139,13 +143,14 @@ class ExitSettings:
                     raise ValueError('DYNAMIC: tham số đang bật phải lớn hơn 0.')
         return self
 
-    def points(self, value, entry, margin_per_contract=None):
-        if self.distance_unit == 'PNL_PERCENT':
+    def points(self, value, entry, margin_per_contract=None, *, unit=None):
+        unit = unit or self.distance_unit
+        if unit == 'PNL_PERCENT':
             if not margin_per_contract or not isfinite(margin_per_contract) or margin_per_contract <= 0:
                 if value == 0:return 0.
                 raise ValueError('Chờ ký quỹ xác minh để tính % PNL.')
             return value * margin_per_contract / 100 / 100_000
-        return value * entry / 100 if self.distance_unit in {"PERCENT", "PRICE_PERCENT"} else value
+        return value * entry / 100 if unit in {"PERCENT", "PRICE_PERCENT"} else value
 
 
 def _default_exit_settings():
@@ -291,6 +296,7 @@ class Order:
     protection_anchor: float = 0.0
     parent_position_id: str = ""
     abandon_remainder: bool = False
+    scheduled_for: str = ''
 
     @property
     def pending(self):

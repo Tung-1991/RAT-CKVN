@@ -6,9 +6,10 @@ from .formatting import money, price, clock
 from .theme import MUTED, GREEN, RED, WARN
 from .mayin.tokens import COL_TEXT as TEXT
 from .mayin.market_table import MarketTable
+from .mayin.widgets import configure_changed
 from .mayin.preview_state import preview_state, TONES
 
-STATUS_LABELS = {"CREATED": "ĐÃ XẾP", "SUBMITTING": "ĐANG GỬI", "WORKING": "CHỜ KHỚP",
+STATUS_LABELS = {"SCHEDULED":"CHỜ PHIÊN", "CREATED": "ĐÃ XẾP", "SUBMITTING": "ĐANG GỬI", "WORKING": "CHỜ KHỚP",
     "PARTIAL": "KHỚP MỘT PHẦN", "UNKNOWN": "CHƯA RÕ", "CANCEL_PENDING": "CHỜ HỦY",
     "REPLACE_PENDING": "CHỜ SỬA", "FILLED": "KHỚP ĐỦ", "CANCELLED": "ĐÃ HỦY",
     "REJECTED": "TỪ CHỐI", "EXPIRED": "HẾT HIỆU LỰC", "FAILED": "LỖI"}
@@ -108,9 +109,9 @@ class DashboardTablesMixin:
             tree.cell(o["id"],"#0",text=label+" · "+(o["kind"] if parent else o["symbol"]),detail=state,detail_color=alert_color)
             tree.cell(o["id"],"side",text=f"{o['side']} · {o['filled']}/{o['quantity']}",color=GREEN if o["side"]=="LONG" else RED)
             tree.cell(o["id"],"quantity",numeric=True)
-            tree.cell(o["id"],"entry",text=price(o["price"]) if o["kind"]=="LO" else o["kind"],numeric=o["kind"]=="LO",detail="Giá LO" if o["kind"]=="LO" else "Lệnh thị trường")
+            tree.cell(o["id"],"entry",text=price(o["price"]) if o["kind"]=="LO" else o["kind"],numeric=o["kind"]=="LO",detail='Phiên '+o['scheduled_for'] if o['status']=='SCHEDULED' else "Giá LO" if o["kind"]=="LO" else "Lệnh thị trường")
             tree.cell(o["id"],"pnl",text="—",detail="Khớp @ "+price(o["avg_fill"]))
-            tree.cell(o["id"],"protect",text=REASON_LABELS.get(o["reason"],o["reason"]),detail="ID "+o["broker_id"][-8:] if o["broker_id"] else "Chưa có ID broker",color=alert_color)
+            tree.cell(o["id"],"protect",text=REASON_LABELS.get(o["reason"],o["reason"]),detail="ID "+o["broker_id"][-8:] if o["broker_id"] else 'Lưu tại app' if o['status']=='SCHEDULED' else "Chưa có ID broker",color=alert_color)
             tree.cell(o['id'],'sl',text='—',color=MUTED)
             tree.cell(o['id'],'tp',text='—',color=MUTED)
             tree.cell(o['id'],'managed',text='KHỚP 1 PHẦN' if o['status']=='PARTIAL' else state,color=alert_color)
@@ -131,14 +132,15 @@ class DashboardTablesMixin:
         reserved = sum(o["quantity"] - o["filled"] for o in self.view.get("orders", [])
             if position and o.get("position_id") == position["id"] and o["action"] == "CLOSE" and o["status"] not in FINAL)
         enabled = {"close":bool(position and position["quantity"] > reserved),
-                   "cancel":bool(order and order["broker_id"] and order["status"] in {"WORKING", "PARTIAL"}),
+                   "cancel":bool(order and (order['status']=='SCHEDULED' or order["broker_id"] and order["status"] in {"WORKING", "PARTIAL"})),
                    "edit":bool(order and order["kind"] == "LO" and order["broker_id"] and order["status"] in {"WORKING", "PARTIAL"}),
                    "reconcile":bool(order and order["status"] == "UNKNOWN")}
         for key, button in self.action_buttons.items():
-            button.pack_forget()
-            button.configure(state="normal" if enabled[key] else "disabled")
-            if enabled[key]:
+            configure_changed(button,state="normal" if enabled[key] else "disabled")
+            if enabled[key] and not button.winfo_manager():
                 button.pack(side="right", padx=3, pady=3)
+            elif not enabled[key] and button.winfo_manager():
+                button.pack_forget()
         if row:
             self.action_bar.grid()
         else:

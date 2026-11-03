@@ -136,7 +136,7 @@ def _consolidated_scenario(scale):
     import customtkinter as ctk
     from tkinter import Misc
     from ckps.config import runtime_root
-    from ckps.dashboard.demo import DemoApp
+    from support.tests.ui_support import paper_form_app
     from ckps.dashboard.settings_state import signal_settings
     def forbidden(*args, **kwargs):
         raise AssertionError('UI verification cannot connect or trade.')
@@ -144,12 +144,12 @@ def _consolidated_scenario(scale):
     ctk.deactivate_automatic_dpi_awareness()
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
-    app = DemoApp()
+    app = paper_form_app()
     errors = []
     app.report_callback_exception = lambda *args: errors.append(args)
-    def settle():
+    def settle(ms=100):
         app.update()
-        app.after(100, app.quit)
+        app.after(ms, app.quit)
         Misc.mainloop(app)
         app.update()
     def controls(parent):
@@ -176,6 +176,20 @@ def _consolidated_scenario(scale):
         rule = app.settings_dialog()
         settle()
         assert set(rule.tabs._tab_dict) == {'E/M', 'TÍN HIỆU'}
+        assert rule.winfo_width()/rule._get_window_scaling()<=781
+        assert rule.winfo_height()/rule._get_window_scaling()<=601
+        for entry in (rule.initial_sl,rule.take_profit):
+            switch=next(w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkSwitch))
+            assert abs(switch.winfo_rooty()-entry.winfo_rooty())<5*scale
+            assert entry._hint_icon.cget('text')=='?'
+        assert rule.reentry_sl.master.master is rule.protect_card._viking_header
+        from ckps.dashboard.mayin.ui_compat import NativeFontMetrics
+        for entry in (rule.initial_sl,rule.take_profit,rule.reentry_sl,rule.normal_arm,
+                      rule.normal_giveback,rule.ema_exit_fast,rule.ema_exit_slow):
+            for caption in entry.master.winfo_children():
+                if isinstance(caption,ctk.CTkLabel) and caption.cget('text'):
+                    width=NativeFontMetrics(caption,caption._label.cget('font')).measure(caption.cget('text'))
+                    assert width<=caption.winfo_width()+1,(caption.cget('text'),width,caption.winfo_width())
         if scale == 1.:
             canvas = rule.exit_body._parent_canvas
             assert rule.dynamic_atr_detail.winfo_rooty()+rule.dynamic_atr_detail.winfo_height() <= canvas.winfo_rooty()+canvas.winfo_height()
@@ -188,6 +202,25 @@ def _consolidated_scenario(scale):
         assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
         assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
         assert rule._exits()['arm_close_pct']==50 and rule._exits()['dynamic_close_pct']==50
+        assert rule._exits()['trailing_unit']=='PNL_PERCENT'
+        assert '40,000,000' in rule.pnl_basis_preview.cget('text')
+        assert 'ARM 5% PNL · 20.0đ' in rule.pnl_distances_preview.cget('text')
+        assert 'ARM 5 % PNL = 20.0đ' in rule._pnl_help
+        assert '2,000,000 đ/1 HĐ' in rule.pnl_distances_preview.cget('text')
+        app.view['positions'][0]['quantity']=2
+        rule.render_atr()
+        assert '4,000,000 đ/2 HĐ' in rule.pnl_distances_preview.cget('text')
+        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'6')
+        rule.render_atr()
+        assert '4,800,000 đ/2 HĐ' in rule.pnl_distances_preview.cget('text')
+        assert app.settings.exit['arm_gain']==5  # Preview never saves a draft.
+        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'5')
+        app.view['positions'][0]['margin_per_contract']=None
+        rule.render_atr()
+        assert rule.pnl_basis_preview.cget('text')=='CHỜ KÝ QUỸ CƠ SỞ/HĐ'
+        app.view['positions'][0]['margin_per_contract']=40_000_000
+        app.view['positions'][0]['quantity']=1
+        rule.render_atr()
         for name in ('atr_start_multiplier','atr_trail_multiplier','retention_pct','retention_until','below_arm'):
             assert hasattr(rule,name),name
         assert sum(isinstance(w,ctk.CTkEntry) for w in controls(rule.protection_host))==11
@@ -268,14 +301,14 @@ def _consolidated_scenario(scale):
         assert connection.variables['connection.secret']._viking_entry.cget('show') == ''
         connection.key_visibility.invoke()
         assert connection.variables['connection.secret']._viking_entry.cget('show') == '•'
-        connection.read_api_button.invoke();settle()
+        connection.read_api_button.invoke();settle(600)
         assert connection.variables['connection.account'].get() == '1234567890'
         assert connection.variables['connection.loan'].get() == '2279'
         assert '2,000' in connection.profile_fee.cget('text')
         assert connection.account_menu.cget('state') == 'disabled'
         connection.save_connection()
         assert app.settings.account_no == '' and not hasattr(app.settings,'max_contracts')
-        assert app.runtime is None and not runtime_root().exists()
+        assert app.runtime is None and (runtime_root()/'settings.json').exists()
         connection.select_page('TELEGRAM / LỊCH');settle()
         connection.variables['telegram.token'].set('offline-token')
         connection.variables['telegram.chat'].set('offline-chat')
@@ -286,16 +319,26 @@ def _consolidated_scenario(scale):
         saved = signal_settings(app)
         assert saved.entry_notifications and saved.market_alerts['movement_enabled']
         assert saved.signals['buy_ema_fast'] == 5 and saved.signals['sell_ema_slow'] == 21
-        assert app._demo_calendar.manual_closed_dates == ['2026-11-19']
+        from ckps.services.calendar import read_settings
+        assert read_settings().manual_closed_dates == ['2026-11-19']
+        from ckps.connections.secure_session import load_telegram_token
+        assert load_telegram_token()=='offline-token'
+        assert not getattr(app,'signal_session',None)
+        connection.destroy()
+        del app.signal_credentials
+        connection=app.connection();connection.select_page('TELEGRAM / LỊCH');settle()
+        assert connection.variables['telegram.token'].get()=='offline-token'
+        assert connection.variables['telegram.token']._viking_entry.cget('show')=='•'
+        assert not getattr(app,'signal_session',None)
         connection.toggle_backend()
-        assert 'Mẫu offline' in connection.note.cget('text') and not getattr(app, 'signal_session', None)
+        assert app.signal_session.running
         connection.destroy()
         rule.select('E/M')
         rule.request_management()
         app.view['positions'] = []
         rule.confirm_management()
         assert 'Vị thế đã thay đổi' in rule.status.cget('text')
-        assert app.settings.exit == common and not runtime_root().exists()
+        assert app.settings.exit == common and (runtime_root()/'settings.json').exists()
         assert not errors, errors
     finally:
         app.close()

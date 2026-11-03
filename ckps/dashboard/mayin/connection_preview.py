@@ -72,13 +72,6 @@ class ConnectionPreviewMixin:
     def read_api(self,connect_after=False):
         try:
             credentials=self.api_credentials()
-            if getattr(self.app,'preview_only',False):
-                package={'id':2279,'name':'Gói mẫu','tradingFee':{'schemaType':'FIXED','fixedTradingFee':2000,'fixedDailyCloseTradingFee':2000}}
-                self._show_profile({'accounts':[{'id':'1234567890'}],'account_no':'1234567890',
-                    'packages':[package],'loan_package_id':'2279','balance':{'remaining_margin':100_000_000,'used_margin':0},
-                    'fees':package_fees(package),'observed_at':time.time()})
-                self.profile_state.configure(text='MẪU OFFLINE · Không đọc tài khoản thật')
-                return
             if not all(credentials.values()):raise ValueError('Nhập API key và API secret DNSE trước khi đọc.')
             if not self._probe:
                 from ckps.services.connection_probe import ConnectionProbe

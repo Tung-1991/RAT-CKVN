@@ -1,5 +1,5 @@
-"""Independent backend configuration; tokens and DNSE keys stay in memory."""
-from dataclasses import asdict
+"""Independent backend parameters; credentials belong to the Windows vault."""
+from dataclasses import asdict, replace
 import json
 import os
 
@@ -11,6 +11,11 @@ FIELDS = ('signals','market_alerts','telegram_enabled','telegram_chat','poll_sec
 
 def signal_folder():
     return runtime_root() / 'signals'
+
+
+def preview_settings(settings):
+    """Automatic analysis has no authority to enable notifications."""
+    return replace(settings, telegram_enabled=False, telegram_chat='', entry_notifications=False).validate()
 
 
 def read_signal_settings():

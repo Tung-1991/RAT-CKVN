@@ -10,12 +10,12 @@ import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import FINAL, ExitSettings, Position, Quote, load_record, quantity
-from ckps.rules.distances import price_percent_rules
+from ckps.rules.distances import price_percent_rules, pnl_trailing_rules
 from ckps.rules.defaults import shared_exit_settings
 from ..formatting import money, price, clock
 from .panels import OriginalPanels, INFO_PANEL_HEIGHT
 from .management_preview import position_milestones
-from .widgets import fit_label_text
+from .widgets import fit_label_text, configure_changed
 from .tokens import *
 
 
@@ -143,28 +143,34 @@ class MayinController(OriginalPanels):
             qty=quantity(self.qty.get()) if self.qty.get().strip() else available.maximum
             if self.qty.get().strip() and qty<=0:
                 raise ValueError('Chờ khối lượng hợp lệ.')
-            qty_unknown=not self.qty.get().strip() and (account.get('qmax_'+side.lower()) is None
+            qty_unknown=not self.qty.get().strip() and (not qty or qty<=0 or account.get('qmax_'+side.lower()) is None
                 or margin is None or (not held_side and account.get('qmax_long')!=account.get('qmax_short')))
-            sl=(money(-rules.points(rules.sl_distance,entry,margin)*qty*100_000).removesuffix(' đ') if entry and not qty_unknown else '—') if rules.sl_enabled else 'OFF'
-            tp=(money(rules.points(rules.tp_distance,entry,margin)*qty*100_000).removesuffix(' đ') if entry and not qty_unknown else '—') if rules.tp_enabled else 'OFF'
+            preview_qty=1 if qty_unknown else qty
+            for attr,title in (('lbl_sl_title','SL'),('lbl_tp_title','TP')):
+                if hasattr(self,attr):configure_changed(getattr(self,attr),text=title+(' · đ/HĐ' if qty_unknown else ' · đ'))
+            sl=money(-rules.points(rules.sl_distance,entry,margin)*preview_qty*100_000).removesuffix(' đ') if rules.sl_enabled else 'OFF'
+            tp=money(rules.points(rules.tp_distance,entry,margin)*preview_qty*100_000).removesuffix(' đ') if rules.tp_enabled else 'OFF'
             package=account.get('package_fees',{})
             per_contract=package.get('open')
-            if per_contract is None and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
+            estimated=per_contract is None and package.get('estimated_open') is not None
+            if estimated:per_contract=package['estimated_open']
+            if per_contract is None and not package and self.settings.mode=='PAPER' and self.settings.estimated_fee_per_contract:
                 per_contract=self.settings.estimated_fee_per_contract
-            fee=per_contract*qty if per_contract is not None and not qty_unknown else None
-            fees=money(fee).removesuffix(' đ') if fee is not None else 'CHỜ HĐ' if qty_unknown else 'CHỜ DNSE'
-            self.lbl_fee_title.configure(text=('PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')+' · đ')
-            self.lbl_order_value_title.configure(text='KÝ QUỸ + PHÍ GÓI' if package.get('open') is not None else 'KÝ QUỸ + PHÍ' if per_contract is not None else 'KÝ QUỸ · CHỜ PHÍ')
+            fee=per_contract*preview_qty if per_contract is not None else None
+            fees=('≤ ' if estimated else '')+money(fee).removesuffix(' đ') if fee is not None else 'CHỜ DNSE'
+            configure_changed(self.lbl_fee_title,text=('ƯỚC PHÍ GÓI' if estimated else 'PHÍ GÓI' if package.get('open') is not None else 'PHÍ MÔ PHỎNG' if per_contract is not None else 'PHÍ')+('/HĐ' if qty_unknown else ' · đ'))
+            configure_changed(self.lbl_order_value_title,text='KÝ QUỸ · CHỜ HĐ' if qty_unknown else 'KÝ QUỸ + PHÍ GÓI' if package.get('open') is not None or estimated else 'KÝ QUỸ + PHÍ' if per_contract is not None else 'KÝ QUỸ · CHỜ PHÍ')
             cash=money(margin*qty+fee) if margin is not None and fee is not None and not qty_unknown else '—'
+            if estimated and cash!='—':cash='≤ '+cash
             for widget,text,color in ((self.lbl_tp_preview,tp,'#55D6A4' if rules.tp_enabled else '#92ABC5'),
                     (self.lbl_sl_preview,sl,'#F38B96' if rules.sl_enabled else '#92ABC5'),
                     (self.lbl_fee_preview,fees,'#E9BF6B'),(self.lbl_order_value,cash,'#A8D3F5')):
-                widget.configure(text=text,text_color=color)
+                configure_changed(widget,text=text,text_color=color)
         except (ValueError,TypeError):
             for widget,text in ((self.lbl_tp_preview,'—' if rules.tp_enabled else 'OFF'),
                                 (self.lbl_sl_preview,'—' if rules.sl_enabled else 'OFF'),
                                 (self.lbl_fee_preview,'—'),(self.lbl_order_value,'—')):
-                widget.configure(text=text)
+                configure_changed(widget,text=text)
         finally:
             if hasattr(self,'preview_management'):
                 self._render_signal_preview()
@@ -174,23 +180,32 @@ class MayinController(OriginalPanels):
     def _render_signal_preview(self):
         from .signal_preview import signal_preview
         colors={'green':('#86EFAC','#397B57','#18332D'),'red':('#FCA5A5','#8B4851','#33232D'),
-                'neutral':('#DCE8F5','#435E7A','#1B2A3B')}
+                'amber':('#FCD77F','#75613B','#302B21'),'neutral':('#B8CADC','#3B4857','#202832')}
         session=getattr(self,'signal_session',None)
-        result=signal_preview({**self.view,'analysis_running':bool(session and session.running)},self.settings.max_quote_age)
+        preview=getattr(self,'preview_session',None)
+        result=signal_preview({**self.view,'analysis_running':bool((preview and preview.running) or (session and session.running))},self.settings.max_quote_age)
         for prefix,card,(value,detail,tone) in zip(('entry','trend'),self.preview_signal_cards,result):
             foreground,border,background=colors[tone]
-            card.configure(fg_color=background,border_color=border)
+            configure_changed(card,fg_color=background,border_color=border)
             getattr(self,'preview_'+prefix+'_value').configure(text=value,text_color=foreground)
             getattr(self,'preview_'+prefix+'_detail').configure(text=detail)
-            getattr(self,'preview_'+prefix+'_detail').configure(text_color='#B4D9CA' if tone=='green' else '#E1B8C0' if tone=='red' else '#ADC8E3')
+            getattr(self,'preview_'+prefix+'_detail').configure(text_color='#B4D9CA' if tone=='green' else '#E1B8C0' if tone=='red' else '#D6C6A4' if tone=='amber' else '#AFC0D0')
         from .connection_status import otp_status
         text,tone=otp_status(self.view,self.settings.mode)
         if self.settings.mode=='PAPER':text='PAPER · KHÔNG CẦN OTP'
         self.preview_connection_status.configure(text=text,text_color=COL_GREEN if tone=='green' else COL_WARN if tone=='amber' else COL_MUTED)
-        self.preview_authentication.configure(fg_color='#193129' if tone=='green' else '#342D20' if tone=='amber' else '#202C37',
+        configure_changed(self.preview_authentication,fg_color='#193129' if tone=='green' else '#342D20' if tone=='amber' else '#202C37',
             border_color='#39694E' if tone=='green' else '#77623B' if tone=='amber' else '#3E566C')
         from .atr_preview import atr_preview
         value,detail,ready=atr_preview(self.view,self.settings.exit)
+        self._preview_atr_help='ATR14 lấy nến ngày đã đóng của đúng hợp đồng.\n'+value+'\n'+detail
+        if ready:
+            from .pnl_preview import protection_reference, dynamic_pnl_preview
+            converted=dynamic_pnl_preview(self.view,self.settings.exit,
+                protection_reference(self.view,self.settings.max_quote_age),self.view['atr14']['pct'])
+            if converted:
+                detail,full=converted
+                self._preview_atr_help+='\n'+full
         self.preview_atr_value.configure(text=value,text_color=COL_ACCENT_BLUE if ready else COL_WARN)
         self.preview_atr_detail.configure(text=detail)
         popup=self.popups.get('rule')
@@ -207,21 +222,21 @@ class MayinController(OriginalPanels):
     def _render_management_config(self, rules, entry=None, margin=None):
         """Full configuration stays in a readable panel opened from each title."""
         try:
-            rules=load_record(ExitSettings,price_percent_rules(shared_exit_settings(asdict(rules)),entry,margin))
+            rules=load_record(ExitSettings,pnl_trailing_rules(shared_exit_settings(asdict(rules)),entry,margin))
         except ValueError:
             for prefix in ('arm','dynamic'):
-                self._preview_help[prefix]='Chờ dữ liệu xác minh để hiển thị % giá vốn. Các mốc đang chạy được giữ nguyên.'
+                self._preview_help[prefix]='Chờ dữ liệu giá vốn/ký quỹ cơ sở để xem PNL. Các mốc đang chạy được giữ nguyên.'
             return
-        unit='% giá vốn'
+        unit='% PNL trên ký quỹ cơ sở/HĐ'
         for prefix in ('arm','dynamic'):
             title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
                 self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M, áp dụng chung tất cả hợp đồng.'
                 continue
             action='Tự đóng 50% HĐ còn lại'
-            repeat=f'Lặp {rules.repeat_gap:g} {unit}' if getattr(rules,prefix+'_repeat') else 'Không lặp'
+            repeat=f'Lặp {rules.repeat_gap:g} điểm {unit}' if getattr(rules,prefix+'_repeat') else 'Không lặp'
             if prefix=='arm':
-                parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} {unit}'
+                parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} điểm {unit}'
                 explanation='Đạt ARM rồi bám đỉnh Long / đáy Short. Giá lùi tới mốc thì xử lý.'
             else:
                 parts=[]
@@ -248,67 +263,75 @@ class MayinController(OriginalPanels):
         source='RULE CHUNG'
         self.preview_rule_source.configure(text=source)
         self._render_management_config(rules,position.entry,position.margin_per_contract)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nĐơn vị hiển thị: % giá vốn\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nSL/TP: % giá vốn · ARM/TSL/LẶP: % PNL\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)
         pending=[o for o in self.view.get('orders',[]) if o.get('position_id')==position.id and o['action']=='CLOSE' and o['status'] not in FINAL]
-        self._render_management_milestones(*position_milestones(position,rules,quote.get('last'),atr,ready=ready,pending=pending))
+        full=position_milestones(position,rules,quote.get('last'),atr,ready=ready,pending=pending)
+        for prefix,milestone in zip(('arm','dynamic'),full):
+            self._preview_help[prefix]+='\n'+milestone.value+'\n'+milestone.detail+'\nCác số tiền là trước phí.'
+        self._render_management_milestones(*position_milestones(position,rules,quote.get('last'),atr,ready=ready,pending=pending,compact=True))
 
     def render(self):
         view,account=self.view,self.view.get('account',{})
-        self.ticket_tp.set('OFF')
+        if self.ticket_tp.get()!='OFF':self.ticket_tp.set('OFF')
         rules=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
         try:
             quote=view.get('quotes',{}).get(view.get('contract'),{})
             if quote and (quote.get('symbol')!=view.get('contract') or not load_record(Quote,quote).fresh(self.settings.max_quote_age)):
                 quote={}
             displayed=price_percent_rules(self.settings.exit,quote.get('last'),account.get('margin_per_contract'))
-            self.ticket_sl.set(f"{displayed['sl_distance']:g}%" if rules.sl_enabled else 'OFF')
+            sl_text=f"{displayed['sl_distance']:g}%" if rules.sl_enabled else 'OFF'
         except ValueError:
-            self.ticket_sl.set('CHỜ' if rules.sl_enabled else 'OFF')
+            sl_text='CHỜ' if rules.sl_enabled else 'OFF'
+        if self.ticket_sl.get()!=sl_text:self.ticket_sl.set(sl_text)
         mode=view.get('mode',self.settings.mode)
         requested=self.mode_requested or (self.switch_pending[0].mode if self.switch_pending else None)
         self.mode_choice.set(requested or mode)
-        self.mode_selector.configure(selected_color=COL_WARN if requested else COL_GREEN if mode=='PAPER' else COL_RED,
+        configure_changed(self.mode_selector,selected_color=COL_WARN if requested else COL_GREEN if mode=='PAPER' else COL_RED,
             selected_hover_color='#D97706' if requested else '#16A34A' if mode=='PAPER' else '#C53030',
             state='disabled' if self.switch_pending else 'normal')
-        self.lbl_equity_title.configure(text='KÝ QUỸ ẢO · PAPER' if mode=='PAPER' else 'KÝ QUỸ · REAL')
-        self.lbl_equity.configure(text=money(account.get('collateral_total')))
-        self.lbl_account.configure(text='PAPER · Tiền ảo / giá DNSE' if mode=='PAPER' else f'Tài khoản {self.settings.account_no} · REAL')
-        self.lbl_cash.configure(text='Tổng tiền: '+money(account.get('total_money')),text_color=COL_MUTED)
-        self.lbl_session.configure(text=datetime.now().strftime('%d/%m · %H:%M:%S'))
+        configure_changed(self.lbl_equity_title,text='KÝ QUỸ ẢO · PAPER' if mode=='PAPER' else 'KÝ QUỸ · REAL')
+        capital=account.get('collateral_total')
+        configure_changed(self.lbl_equity,text=money(capital),text_color=COL_WARN if capital is None else COL_GREEN if capital>0 else '#ADC8E3')
+        configure_changed(self.lbl_account,text='PAPER · Tiền ảo / giá DNSE' if mode=='PAPER' else f'Tài khoản {self.settings.account_no} · REAL',text_color='#A9C5E2')
+        configure_changed(self.lbl_cash,text='Tổng tiền: '+money(account.get('total_money')),text_color=COL_MUTED)
+        configure_changed(self.lbl_session,text=datetime.now().strftime('%d/%m · %H:%M:%S'))
         contract=view.get('contract','VN30F1M')
         quote=view.get('quotes',{}).get(contract,{})
         ready=bool(quote and load_record(Quote,quote).fresh(self.settings.max_quote_age))
         connection=view.get('market_connection',{})
-        self.lbl_brain.configure(text=f'{requested} · CHƯA KẾT NỐI' if requested else 'DNSE: '+('ĐÃ CÓ GIÁ' if ready else 'CHỜ GIÁ' if connection.get('configured') else 'CHƯA KẾT NỐI'),text_color=COL_GREEN if ready and not requested else COL_WARN)
-        self.lbl_quote_symbol.configure(text=contract)
+        from .connection_status import market_status
+        connection_text,connection_tone=market_status(view,self.settings.max_quote_age)
+        configure_changed(self.lbl_brain,text=f'{requested} · ĐANG KẾT NỐI' if requested else connection_text,
+            text_color=COL_WARN if requested else {'green':COL_GREEN,'red':COL_RED,'amber':COL_WARN,'blue':'#8DBEF4'}[connection_tone])
         cache=view.get('market_cache',{})
         display_quote=quote or cache.get('quote',{})
         value=quote.get('last')
-        self.lbl_price.configure(text=price(display_quote.get('last')),text_color=COL_TEXT if ready else COL_WARN)
-        if not quote and display_quote:self.lbl_quote_symbol.configure(text=cache.get('contract',contract))
+        closed=connection_tone=='blue'
+        configure_changed(self.lbl_price,text=price(display_quote.get('last')),text_color='#A8D3F5' if closed else COL_TEXT if ready else COL_WARN)
         if display_quote:
-            self.lbl_market.configure(text=('DNSE · ' if ready else 'GIÁ CŨ · ' if quote else 'GIÁ LƯU · ')+clock(display_quote.get('at')),
-                text_color=COL_MUTED if ready else COL_WARN)
+            configure_changed(self.lbl_market,text=('ĐÓNG PHIÊN · ' if closed else 'DNSE · ' if ready else 'GIÁ CŨ · ' if quote else 'GIÁ LƯU · ')+clock(display_quote.get('at')),
+                text_color='#8DBEF4' if closed else COL_MUTED if ready else COL_WARN)
             self.lbl_market.grid()
         else:self.lbl_market.grid_remove()
-        self.lbl_change.configure(text=('Ước ký quỹ/HĐ: ' if mode=='PAPER' else 'Ký quỹ/HĐ: ')+money(account.get('margin_per_contract')),font=('Segoe UI',15,'bold'),text_color='#ADC8E3')
-        self.market_context_label.configure(text='CHỈ THAM KHẢO · MẪU' if getattr(self,'preview_only',False) else 'CHỈ THAM KHẢO')
+        from .quote_header import quote_header
+        change,tone,margin,self._quote_header_hint=quote_header(view,mode)
+        configure_changed(self.lbl_change,text=change,text_color={'green':COL_GREEN,'red':COL_RED,'amber':COL_WARN,'neutral':COL_MUTED}[tone])
+        configure_changed(self.lbl_margin,text=margin)
+        configure_changed(self.market_context_label,text='CHỈ THAM KHẢO')
         if not self.limit.get() and value:
             self.limit.set(f'{value:.1f}')
         armed=view.get('armed',False)
-        self.bot.configure(text='BOT · ON' if armed else 'ĐANG BẬT…' if self.bot_requested else 'BOT · OFF',fg_color='#15803D' if armed else COL_GRAY)
-        self.capacity_label.configure(text=f"SỨC MỞ LONG {view.get('LONG',{}).get('maximum','—')} / SHORT {view.get('SHORT',{}).get('maximum','—')} HĐ" if ready else '')
-        calendar_reason=view.get('calendar',{}).get('reason')
-        if calendar_reason:self.capacity_label.configure(text=calendar_reason,text_color=COL_WARN,wraplength=380)
-        else:self.capacity_label.configure(text_color=COL_MUTED)
+        configure_changed(self.bot,text='BOT · ON' if armed else 'ĐANG BẬT…' if self.bot_requested else 'BOT · OFF',fg_color='#15803D' if armed else COL_GRAY)
+        configure_changed(self.capacity_label,text=f"SỨC MỞ LONG {view.get('LONG',{}).get('maximum','—')} / SHORT {view.get('SHORT',{}).get('maximum','—')} HĐ" if ready else '')
+        configure_changed(self.capacity_label,text_color=COL_MUTED)
         self._render_running()
         self._render_history()
         pnl_values=[load_record(Position,p).pnl(view['quotes'][p['symbol']]['last']) if view.get('quotes',{}).get(p['symbol'],{}).get('last') else None for p in view.get('positions',[])]
         pnl=sum(pnl_values) if all(value is not None for value in pnl_values) else None
-        self.lbl_pnl.configure(text='PNL: '+money(pnl),text_color=COL_MUTED if pnl is None else COL_GREEN if pnl>=0 else COL_RED)
+        configure_changed(self.lbl_pnl,text='PNL: '+money(pnl),text_color=COL_MUTED if pnl is None else COL_GREEN if pnl>=0 else COL_RED)
         events=sorted([*view.get('events',[]),*self.ui_events],key=lambda row:row[0])
         text='\n'.join(f'{clock(at)} [{kind}] {message}' for at,kind,message in events[-300:])
         if getattr(self.logs,'_last_text',None)!=text:
@@ -323,10 +346,21 @@ class MayinController(OriginalPanels):
             status=f'Cấu hình {requested} · Sổ đang chạy: {mode}. Đóng KẾT NỐI để hủy.'
         if self.ui_status and self.ui_status[1]>time.monotonic():
             status=self.ui_status[0]
-        self.status.configure(text=status,text_color=COL_RED if view.get('error') else COL_MUTED)
+        configure_changed(self.status,text=status,text_color=COL_RED if view.get('error') else COL_MUTED)
         self.status.grid() if status else self.status.grid_remove()
+        from .connection_status import order_block_reason
+        entry_reason=order_block_reason(view,self.settings.max_quote_age,busy=self.order_busy,requested=requested)
+        from ..scheduled_orders import scheduled_ticket
+        queued=scheduled_ticket(view)
+        gate_text=entry_reason or (f"LƯU LO CHỜ PHIÊN {queued['date']} · Chưa gửi broker" if queued else '')
+        configure_changed(self.execute_button,text='LƯU LONG' if queued else 'LONG')
+        configure_changed(self.short_button,text='LƯU SHORT' if queued else 'SHORT')
+        configure_changed(self.order_gate_label,text=gate_text)
+        if gate_text and not self.order_gate_label.winfo_manager():
+            self.order_gate_label.pack(fill='x',padx=12,pady=(0,2),before=self.order_form)
+        elif not gate_text and self.order_gate_label.winfo_manager():self.order_gate_label.pack_forget()
         for button in self.open_buttons:
-            button.configure(state='normal' if ready and view.get('healthy') and view.get('consistent') and not self.order_busy and not requested and not calendar_reason else 'disabled')
+            configure_changed(button,state='disabled' if entry_reason else 'normal')
         self._fit_account_stats()
         self._refresh_ticket_preview()
         self._fit_preview_text()

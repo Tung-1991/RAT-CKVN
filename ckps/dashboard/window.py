@@ -31,6 +31,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         # Opening the program never reconnects to a REAL trading account silently.
         self.settings = replace(self.settings, mode="PAPER").validate()
         self.runtime = None
+        self.preview_analysis_enabled = start_runtime
         self.view = {}
         self.running = True
         self.closing = False
@@ -38,12 +39,11 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.mode_requested = None
         self.credentials = {}
         self.remember_connection = False
-        if not getattr(self, 'preview_only', False):
-            from ckps.connections.secure_session import load_connection
-            self.credentials = load_connection()
-            self.remember_connection = bool(self.credentials)
-            from ckps.services.quote_cache import QuoteCache
-            self.view['market_cache'] = QuoteCache().value
+        from ckps.connections.secure_session import load_connection
+        self.credentials = load_connection()
+        self.remember_connection = bool(self.credentials)
+        from ckps.services.quote_cache import QuoteCache
+        self.view['market_cache'] = QuoteCache().value
         self.connection_profile = dict(self.credentials)
         self.popups = {}
         self.order_busy = False
@@ -54,11 +54,16 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         self.protocol("WM_DELETE_WINDOW", self.close)
         if start_runtime:
             self.runtime = Runtime(self.settings, self.credentials)
+            from .settings_state import ensure_preview_backend
+            ensure_preview_backend(self)
         self.render()
         self.after(100, self._drain)
 
     def _drain(self):
+        from .settings_state import ensure_preview_backend
+        ensure_preview_backend(self)
         self._drain_mode_probe()
+        render_pending = False
         if self.runtime:
             import queue
             for _ in range(100):
@@ -71,7 +76,7 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
                     capital=payload.get('account',{}).get('paper_capital')
                     if payload.get('mode')=='PAPER' and capital is not None:
                         self.settings.paper_balance=capital
-                    self.render()
+                    render_pending = True
                 elif kind == "error":
                     self.order_busy = False
                     self.bot_requested = self.runtime.engine.enabled.is_set()
@@ -101,6 +106,10 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
                         settings, credentials = self.switch_pending
                         self.switch_pending = None
                         self._start_runtime(settings, credentials)
+                    render_pending = True
+                    break
+        if render_pending:
+            self.render()
         self.after(100, self._drain)
 
     def send(self, name, *args, **kwargs):
@@ -139,6 +148,8 @@ class App(DashboardPanelsMixin, DashboardActionsMixin, DashboardTablesMixin, Wor
         session = getattr(self, 'signal_session', None)
         if session:
             session.close()
+        preview = getattr(self, 'preview_session', None)
+        if preview:preview.close()
         timer=getattr(self,'_preview_layout_after',None)
         if timer:
             self.after_cancel(timer)

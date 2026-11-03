@@ -9,17 +9,12 @@ import customtkinter as ctk
 
 def main():
     parser = argparse.ArgumentParser(description="RAT VN30 · Phái sinh · Vào lệnh tay và quản lý E/M")
-    parser.add_argument('--demo',action='store_true',help='Preview một Long mẫu; không có runtime, dữ liệu sổ hoặc kết nối mạng.')
-    args=parser.parse_args()
+    parser.parse_args()
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("dark-blue")
     from ckps.dashboard.window import App
     try:
-        if args.demo:
-            from ckps.dashboard.demo import DemoApp
-            app=DemoApp()
-        else:
-            app=App()
+        app=App()
         app.mainloop()
     except KeyboardInterrupt:
         return 0

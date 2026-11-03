@@ -10,7 +10,7 @@ from ckps.connections.dnse.history import ReadOnlyHistory
 from ckps.connections.dnse.paper_market import PaperMarket
 from ckps.models import Quote, Settings, load_record, is_vn30
 from ckps.storage import AccountLease, Store
-from .signal_config import signal_folder, write_signal_settings
+from .signal_config import signal_folder, write_signal_settings, preview_settings
 from .signal_worker import SignalWorker
 from .signal_notifications import SignalNotifications
 from .market_alerts import MarketAlerts
@@ -18,11 +18,13 @@ from .calendar import CalendarNotices
 
 
 class SignalRuntime(SignalNotifications):
-    def __init__(self,settings,credentials=None,*,market=None):
+    def __init__(self,settings,credentials=None,*,market=None,preview_only=False):
+        self.preview_only = preview_only
+        if preview_only:settings = preview_settings(settings)
         self.settings=settings.validate()
         self.persist_settings=True
         credentials=credentials or {}
-        folder=signal_folder()
+        folder=signal_folder() / 'preview' if preview_only else signal_folder()
         self.lease=AccountLease(folder/'session.lock')
         self.store=Store(folder/'ledger.sqlite3')
         key=credentials.get('key') or os.environ.get('CKPS_DNSE_API_KEY','')
@@ -40,7 +42,7 @@ class SignalRuntime(SignalNotifications):
             self.market.feed.max_quote_age = self.settings.max_quote_age
         self.commands,self.events=queue.Queue(),queue.Queue()
         self.stop=threading.Event()
-        self.owner_token=credentials.get('telegram_token',os.environ.get('CKPS_TELEGRAM_TOKEN',''))
+        self.owner_token='' if preview_only else credentials.get('telegram_token',os.environ.get('CKPS_TELEGRAM_TOKEN',''))
         self.owner_chat,self.owner_enabled=settings.telegram_chat,settings.telegram_enabled
         self.owner_state,self.owner_contract,self.owner_last=None,None,0.
         self.owner_sent={}
@@ -66,6 +68,7 @@ class SignalRuntime(SignalNotifications):
 
     def _configure(self,raw,token):
         settings=load_record(Settings,raw).validate()
+        if getattr(self,'preview_only',False):settings, token = preview_settings(settings), ''
         with self.store.lock:
             if (settings.telegram_enabled,settings.telegram_chat,token)!=(self.owner_enabled,self.owner_chat,self.owner_token):
                 self.store.db.execute('UPDATE outbox SET sent=2 WHERE sent=0')
@@ -77,7 +80,7 @@ class SignalRuntime(SignalNotifications):
             self.owner_token=token
             self.owner_enabled,self.owner_chat=settings.telegram_enabled,settings.telegram_chat
             self._drop_disabled_owner()
-            if getattr(self,'persist_settings',True):write_signal_settings(settings)
+            if getattr(self,'persist_settings',True) and not getattr(self,'preview_only',False):write_signal_settings(settings)
 
     def _run(self):
         next_poll=0.
@@ -133,10 +136,13 @@ class SignalRuntime(SignalNotifications):
         from .market_context import publish_context, entry_context
         last_move=self.store.get('market','movement:'+contract,{})
         quote=raw_quotes.get(contract,{})
-        if quote and -2<=time.time()-quote.get('at',0)<=self.settings.max_quote_age:
+        from .session_preview import closing_analysis
+        observed_at=time.time()
+        reference=closing_analysis({'contract':contract,'quotes':raw_quotes,'bars':data.get('bars',[])},self.settings,now=observed_at)
+        if quote and (-2<=observed_at-quote.get('at',0)<=self.settings.max_quote_age or reference):
             movement=(f"BIẾN ĐỘNG {last_move.get('change_points',0):+g}đ" if 0<=time.time()-last_move.get('at',0)<=60 else 'ĐANG THEO DÕI')
-            publish_context({'contract':contract,'observed_at':quote['at'],'movement':movement,
-                'entry':entry_context(analysis,contract,max_age=self.settings.max_quote_age)})
+            publish_context({'contract':contract,'observed_at':observed_at,'movement':movement,'reference':reference,
+                'entry':entry_context(analysis,contract,max_age=self.settings.max_quote_age)}, preview=getattr(self,'preview_only',False))
         self.events.put(('snapshot',{'contract':contract,'quotes':raw_quotes,'connection':data,'analysis':analysis,
             'history':self.store.all('signal_history')[-200:],'events':self.store.events(),
             'market':market,'telegram_error':self.telegram_error}))

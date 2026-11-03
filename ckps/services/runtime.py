@@ -52,6 +52,10 @@ class Runtime:
             self.lease.close()
             raise
         self.engine = Engine(self.store, broker, settings)
+        self.previous_close=None
+        if key and secret and not offline:
+            from .previous_close import PreviousCloseWorker
+            self.previous_close=PreviousCloseWorker(ReadOnlyHistory(key,secret))
         from ckps.services.entry_notices import EntryRelay
         self.entry_relay = EntryRelay(self.store)
         self.calendar_worker=CalendarWorker(key,secret) if key and secret and not offline else None
@@ -74,6 +78,7 @@ class Runtime:
                 self.engine.disarm()
         if name == "set_managed" and args[1] is False:
             self.engine.suspend_position(args[0])
+        if name=='cancel':self.engine.suspended_entries.add(args[0])
         self.commands.put((name, args, kwargs))
 
     def _run(self):
@@ -117,7 +122,7 @@ class Runtime:
                     elif name == "refresh":
                         pass
                     else:
-                        allowed = {"arm", "open_manual", "close_position", "set_managed", "cancel", "replace", "bind_unknown"}
+                        allowed = {"arm", "open_manual", "schedule_manual", "close_position", "set_managed", "cancel", "replace", "bind_unknown"}
                         if name not in allowed:
                             raise ValueError("Thao tác không hỗ trợ.")
                         if name != "arm" or not args[0] or self.desired_arm:
@@ -153,6 +158,7 @@ class Runtime:
                 next_poll = time.monotonic() + self.settings.poll_seconds
         self.engine.disarm()
         self.entry_relay.close()
+        if self.previous_close:self.previous_close.close()
         if self.calendar_worker:self.calendar_worker.close()
         self.engine.broker.close()
         self.store.close()
@@ -173,6 +179,12 @@ class Runtime:
                  "history": [asdict(p) for p in self.store.positions(closed=True)][-300:],
                  "events": self.store.events()}
         views['market_cache'] = self.quote_cache.value
+        if getattr(self,'previous_close',None):
+            display_quote=quotes.get(views['contract']) or self.quote_cache.value.get('quote',{})
+            views['previous_close']=self.previous_close.observe(display_quote)
+        from .entry_schedule import queue_session
+        try:views['entry_queue']=queue_session() or {}
+        except (ValueError,TypeError):views['entry_queue']={}
         broker = self.engine.broker
         if self.settings.mode == 'REAL':
             # Display a successful balance read even if another endpoint fails.
@@ -186,7 +198,7 @@ class Runtime:
         views['account_profile'] = getattr(broker, 'market_view', {}).get('account_profile', {})
         if snapshot:
             from ckps.services.market_context import context
-            views['market_context'] = context(snapshot, max_age=self.settings.max_quote_age)
+            views['market_context'] = context(snapshot, max_age=self.settings.max_quote_age, preview=True)
             quote=snapshot.quotes.get(snapshot.contract)
             views['market_ready']=bool(quote and quote.fresh(self.settings.max_quote_age))
             views['market_connection']=getattr(self.engine.broker,'market_view',{'configured':True,'connected':self.engine.healthy})
@@ -209,6 +221,7 @@ class Runtime:
         self.events.put(("snapshot", views))
 
     def close(self):
+        self.engine.entry_stopping.set()
         self.desired_arm = False
         self.engine.disarm()
         self.stop.set()

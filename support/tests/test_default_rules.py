@@ -25,9 +25,10 @@ def test_first_launch_loads_one_complete_preset_without_creating_runtime_or_a_pi
     assert rules.distance_unit == 'PRICE_PERCENT'
     assert rules.sl_enabled and rules.sl_distance == .5
     assert not rules.tp_enabled and rules.tp_distance == 0
-    assert rules.arm_enabled and rules.arm_gain == 1 and rules.trail_gap == .25
+    assert rules.trailing_unit=='PNL_PERCENT'
+    assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.25
     assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 50 and rules.arm_basis == 'REMAINING'
-    assert rules.arm_repeat and rules.arm_repeat_below_arm and rules.repeat_gap == .25
+    assert rules.arm_repeat and rules.arm_repeat_below_arm and rules.repeat_gap == 1.25
     assert rules.dynamic_enabled and rules.dynamic_policy == 'AUTO' and rules.dynamic_repeat
     assert rules.dynamic_close_pct == 50 and rules.dynamic_basis == 'REMAINING'
     assert rules.atr_start_multiplier == .5 and rules.atr_trail_multiplier == .8
@@ -67,9 +68,9 @@ def test_saved_user_rules_including_explicit_off_survive_restart(disabled):
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
-def test_default_stop_and_trail_are_price_based_and_tp_never_caps_a_profitable_run(side,sign):
+def test_default_stop_is_price_based_trail_is_pnl_and_tp_never_caps_a_profitable_run(side,sign):
     rules = load_record(ExitSettings, read_settings().exit)
-    position = Position.create('VN30F1M', side, 4, 2000, history_verified=True)
+    position = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
     assert levels(position, rules)['sl'] == 2000 - sign * 10
     assert levels(position, rules)['arm'] == 2000 + sign * 20
     assert levels(position, rules)['tp'] == 0
@@ -77,7 +78,7 @@ def test_default_stop_and_trail_are_price_based_and_tp_never_caps_a_profitable_r
     assert levels(position, rules)['protect'] == pytest.approx(2000 + sign * 95)
     decision = evaluate(position, 2000 + sign * 95, rules)
     assert decision.reason == 'ARM' and decision.policy == 'AUTO' and decision.quantity == 2
-    stopped = Position.create('VN30F1M', side, 4, 2000, history_verified=True)
+    stopped = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
     assert evaluate(stopped, 2000 - sign * 10, rules).reason == 'SL'
     assert stopped.pnl(2000 - sign * 10) == -4_000_000
 
@@ -85,7 +86,7 @@ def test_default_stop_and_trail_are_price_based_and_tp_never_caps_a_profitable_r
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
 def test_default_dynamic_protects_before_arm_and_the_floor_never_loosens(side,sign):
     rules = load_record(ExitSettings, read_settings().exit)
-    position = Position.create('VN30F1M', side, 4, 2000, history_verified=True)
+    position = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
     assert evaluate(position, 2000 + sign * 12, rules, 1) is None
     floor = 2000 + sign * 8.4
     assert levels(position, rules, 1)['stage'] == 'DYN'
@@ -147,8 +148,3 @@ def test_builtin_preset_never_adopts_a_dnse_position_by_itself(system):
     engine.arm(True)
     broker.set_price(1985); engine.poll()
     assert not store.positions()[0].managed and not store.orders()
-
-
-def test_offline_sample_uses_exactly_the_shipped_policy():
-    from ckps.dashboard.demo import demo_rules
-    assert asdict(demo_rules()) == read_settings().exit

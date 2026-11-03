@@ -49,8 +49,8 @@ def test_completed_atr_preview_remains_read_only_when_live_quote_is_stale():
             'quotes': {'VN30F1M': {'symbol': 'VN30F1M', 'last': 2000, 'at': NOW.timestamp()-60}}}
     before = repr(view)
     title, detail, ready = atr_preview(view)
-    assert ready and title == 'ATR14 · 1,00% · phiên 29/10/2026'
-    assert detail == 'Bắt đầu +0,50% · lùi ATR 0,80% · giữ 70% lãi'
+    assert ready and title == 'ATR14 · 1,00% giá · 29/10/2026'
+    assert detail == 'Bắt đầu +0,50% giá · lùi ATR 0,80% giá · giữ 70% lãi'
     assert all(result[0] == 'CHỜ' for result in signal_preview(view, now=NOW.timestamp()))
     assert repr(view) == before
 
@@ -86,7 +86,7 @@ def test_dynamic_settings_and_repeat_below_arm_survive_save_restart_and_executio
 def test_atr_preview_uses_saved_or_draft_thresholds_and_flags():
     view={'contract':'VN30F1M','atr14':{'contract':'VN30F1M',**completed_atr_snapshot(candles(),NOW)}}
     rules={**Settings().exit,'atr_start_multiplier':.2,'atr_trail_multiplier':1.2,'retention_pct':60}
-    assert atr_preview(view,rules)[1]=='Bắt đầu +0,20% · lùi ATR 1,20% · giữ 60% lãi'
+    assert atr_preview(view,rules)[1]=='Bắt đầu +0,20% giá · lùi ATR 1,20% giá · giữ 60% lãi'
     rules.update(atr_start_enabled=False,atr_trail_enabled=False,retention_until_enabled=True,retention_until=.9)
     assert atr_preview(view,rules)[1]=='Bắt đầu khi có lãi · giữ 60% lãi · tới MFE 0.9% giá vốn'
 
