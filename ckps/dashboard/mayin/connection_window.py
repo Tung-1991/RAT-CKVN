@@ -200,7 +200,14 @@ class ConnectionWindow(ConnectionPreviewMixin,_StableToplevel):
         remember_telegram_token(credentials['telegram_token'])
         from ckps.services import calendar
         calendar.write_settings(schedule)
-        self.app.signal_credentials=credentials
+        session = getattr(self.app, 'signal_session', None)
+        if session and session.running:
+            # The pipe updates settings/token only. Keep the API identity of
+            # the actual running process until it is stopped and restarted.
+            self.app.signal_credentials = {**getattr(self.app, 'signal_credentials', {}),
+                                           'telegram_token': credentials['telegram_token']}
+        else:
+            self.app.signal_credentials=credentials
         save_signal_settings(self.app,settings)
         self.note.configure(text='Đã lưu Telegram/lịch · Token mã hóa Windows.' if credentials['telegram_token']
             else 'Đã lưu Telegram/lịch · Đã xóa token ghi nhớ.',text_color=GREEN)

@@ -166,7 +166,7 @@ def test_msgpack_ticks_preserve_extremes_and_actual_event_time():
     feed.authenticated = True
     for px in [2000, 2010, 2005]:
         feed._message(None, msgpack.packb({"data": {"symbol": "41I1GB000", "matchPrice": px, "timestamp": time.time()}}, use_bin_type=True))
-    ticks, extremes = feed.drain()
+    ticks, extremes, samples = feed.drain()
     assert ticks["41I1GB000"].last == 2005
     assert extremes["41I1GB000"] == (2000, 2010)
     assert not feed.changed.is_set()
@@ -274,7 +274,8 @@ def test_signal_alert_switches_gate_notifications_without_orders(system, signal_
     runtime.settings,runtime.latest,runtime.store=engine.settings,engine.latest,store
     runtime.owner_enabled,runtime.owner_token,runtime.owner_chat=True,'offline-token','offline-chat'
     runtime.owner_state,runtime.owner_last=None,0
-    runtime.analysis=SimpleNamespace(snapshot=lambda:{'contract':engine.latest.contract,'p2':{
+    runtime.analysis=SimpleNamespace(snapshot=lambda:{'contract':engine.latest.contract,
+        'observed_at':time.time(),'quote_at':time.time(),'p2':{
         'buy_alert':True,'exit_alert':True,'indicators':{'buy_ema_fast':2001,'buy_ema_slow':2000,
             'sell_ema_fast':1998,'sell_ema_slow':1999,'rsi':51}}})
     runtime._owner_telemetry()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import asdict
+from datetime import datetime
 from math import isfinite
 from ckps.models import FINAL, Order, Quote, Settings, Snapshot, number
 from .protocol import BrokerError, SubmissionCancelled
@@ -82,15 +83,17 @@ class PaperBroker:
     def _fill(self, row):
         if row["status"] in FINAL:
             return
-        if row.get('scheduled_for'):
-            from ckps.services.calendar import local_now
-            from ckps.rules.p2.market import exchange_close_minute
-            now=local_now()
-            if now.date().isoformat()>row['scheduled_for'] or (now.date().isoformat()==row['scheduled_for']
-                    and now.hour*60+now.minute>=exchange_close_minute('VN30')):
-                row['status']='EXPIRED'
-                self.store.put('paper_order',row['id'],row)
-                return
+        from ckps.services.calendar import local_now
+        from ckps.rules.p2.market import VN_TZ, exchange_close_minute, market_phase
+        now = local_now()
+        session = row.get('scheduled_for') or row.get('session_date') or datetime.fromtimestamp(row['created_at'], VN_TZ).date().isoformat()
+        if now.date().isoformat() > session or (now.date().isoformat() == session
+                and now.hour * 60 + now.minute >= exchange_close_minute('VN30')):
+            row['status'] = 'EXPIRED'
+            self.store.put('paper_order', row['id'], row)
+            return
+        if now.date().isoformat() < session or market_phase(now, exchange='VN30')[0] not in {'ATO', 'OPEN', 'ATC'}:
+            return
         quote = self._quote(row["symbol"])
         if not quote or not quote.fresh(self.settings.max_quote_age):
             return
@@ -133,7 +136,9 @@ class PaperBroker:
             if existing:
                 return existing
             row = asdict(order)
-            row.update(broker_id=order.id, status="WORKING", tag="CKPS:" + order.id)
+            from ckps.services.calendar import local_now
+            row.update(broker_id=order.id, status="WORKING", tag="CKPS:" + order.id,
+                       session_date=local_now().date().isoformat())
             self.store.put("paper_order", order.id, row)
             self._fill(row)
             return row

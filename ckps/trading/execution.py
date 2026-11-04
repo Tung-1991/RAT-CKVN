@@ -14,9 +14,10 @@ from ckps.rules.defaults import shared_exit_settings
 from ckps.rules.ema_exit import EMAExit
 from ckps.trading.exit_requests import FULL_EXITS, requested_exit, request_exit
 from .scheduled_entries import ScheduledEntriesMixin
+from .price_events import PriceEventsMixin
 
 
-class Engine(ScheduledEntriesMixin):
+class Engine(PriceEventsMixin, ScheduledEntriesMixin):
     """Serialized manual execution and optional position protection. No auto entry."""
 
     def __init__(self, store, broker, settings: Settings):
@@ -30,6 +31,7 @@ class Engine(ScheduledEntriesMixin):
         self.suspended_entries=set()
         self.entry_stopping=threading.Event()
         self.ema_exit = EMAExit()
+        self.price_observed_at = {}
         feed = getattr(broker, 'feed', None)
         if feed:
             feed.max_quote_age = self.settings.max_quote_age
@@ -55,6 +57,11 @@ class Engine(ScheduledEntriesMixin):
             self.disarm()
         else:
             self._ready()
+            feed = getattr(self.broker, 'feed', None)
+            if feed and hasattr(feed, 'drain') and not self.enabled.is_set():
+                # Observe buffered prices under the old OFF permission first.
+                self.on_prices(*feed.drain())
+                self._ready()
             self._quote(self.latest.contract)
             self.enabled.set()
         self.store.event("BOT", "Bật quản lý tự động" if enabled else "Tắt quản lý tự động")
@@ -394,10 +401,10 @@ class Engine(ScheduledEntriesMixin):
     def ema_snapshot(self, symbol):
         return self.ema_exit.observe(self.latest, self.settings, symbol)
 
-    def _decision(self, position, price):
+    def _decision(self, position, price, *, atr_pct=None):
         rules = self.exits(position)
         try:
-            decision = evaluate(position, price, rules, self._atr(position.symbol))
+            decision = evaluate(position, price, rules, self._atr(position.symbol) if atr_pct is None else atr_pct)
         except ValueError:
             decision = None  # Legacy margin-based distances must not disable E.
         if decision and decision.reason == 'SL':
@@ -492,24 +499,6 @@ class Engine(ScheduledEntriesMixin):
                     self._retire_open_remainders()
                 # A new broker snapshot is required before another automatic order.
                 break
-
-    def on_prices(self, quotes, extremes):
-        if not self.latest or not self.healthy:
-            return
-        accepted = set()
-        for symbol, quote in quotes.items():
-            previous = self.latest.quotes.get(symbol)
-            if quote.symbol == symbol and quote.fresh(self.settings.max_quote_age) and (
-                    not previous or quote.at >= previous.at):
-                self.latest.quotes[symbol] = quote
-                accepted.add(symbol)
-        for position in self.store.positions():
-            if position.symbol in extremes and position.symbol in accepted:
-                low, high = extremes[position.symbol]
-                position.best = max(position.best or position.entry, high) if position.sign > 0 else min(position.best or position.entry, low)
-                position.worst = min(position.worst or position.entry, low) if position.sign > 0 else max(position.worst or position.entry, high)
-                self.store.save_position(position)
-        self._manage()
 
     def _pending_closes(self, position_id, exclude=""):
         return [o for o in self.store.orders(pending=True)
@@ -725,6 +714,11 @@ class Engine(ScheduledEntriesMixin):
         position = self.store.position(position_id)
         if enabled:
             self._ready()
+            feed = getattr(self.broker, 'feed', None)
+            if feed and hasattr(feed, 'drain') and not position.managed:
+                self.on_prices(*feed.drain())
+                self._ready()
+                position = self.store.position(position_id)
             quote = self._quote(position.symbol)
             if position.closed_at:
                 raise ValueError("Vị thế đã đóng.")

@@ -62,6 +62,55 @@ def test_signal_start_remembers_token_without_starting_preview_notifications(mon
     assert 'offline-saved-token' not in raw and 'telegram_token' not in raw
 
 
+def test_saving_telegram_then_connecting_a_new_api_stops_the_actual_old_backend(monkeypatch):
+    from ckps.dashboard.mayin.connection_window import ConnectionWindow
+    from ckps.models import Settings
+    from ckps.rules.calendar import CalendarSettings
+    configured, stopped, trading_stopped = [], [], []
+    settings = Settings(telegram_enabled=True, telegram_chat='offline-chat', entry_notifications=True)
+    old = {'key': 'old-key', 'secret': 'old-secret', 'telegram_token': 'old-token'}
+    new = {'key': 'new-key', 'secret': 'new-secret', 'telegram_token': 'new-token'}
+    app = SimpleNamespace(signal_credentials=old.copy(), _signal_settings=settings,
+        signal_session=SimpleNamespace(running=True, configure=lambda *args: configured.append(args),
+            close=lambda: stopped.append(True)))
+    window = SimpleNamespace(app=app, note=SimpleNamespace(configure=lambda **kwargs: None),
+        notification_values=lambda: (settings, CalendarSettings(), new.copy()))
+    ConnectionWindow.save_notifications(window)
+    assert app.signal_credentials == {**old, 'telegram_token': 'new-token'}
+    assert vault.load_telegram_token() == 'new-token'
+    assert configured[0][1] == 'new-token'
+    app.switch_pending = app.mode_requested = None
+    app.settings = Settings()
+    app.runtime = SimpleNamespace(close=lambda: trading_stopped.append(True))
+    app.clear_confirmation = app._cancel_mode_probe = app.render = lambda: None
+    reports = []
+    app.report = reports.append
+    window.variables = {f'connection.{key}': SimpleNamespace(get=lambda value=value: value)
+        for key, value in dict(mode='REAL', key='new-key', secret='new-secret', account='123', loan='456').items()}
+    window.api_credentials = lambda: {'key': 'new-key', 'secret': 'new-secret'}
+    window._profile_signature = 'verified-new-api'
+    window._signature = lambda credentials: 'verified-new-api'
+    window.preview_profile = {'observed_at': time.time()}
+    window.remember_values = lambda credentials: None
+    ConnectionWindow.connect(window)
+    assert stopped == [True] and trading_stopped == [True]
+    assert app.switch_pending[1]['key'] == 'new-key'
+    assert any('API cũ' in text for text in reports)
+
+
+def test_saving_notifications_with_stopped_backend_keeps_new_credentials_for_explicit_start():
+    from ckps.dashboard.mayin.connection_window import ConnectionWindow
+    from ckps.models import Settings
+    from ckps.rules.calendar import CalendarSettings
+    app = SimpleNamespace(signal_credentials={'key': 'old-key'},
+                          signal_session=SimpleNamespace(running=False))
+    new = {'key': 'new-key', 'secret': 'new-secret', 'telegram_token': 'new-token'}
+    window = SimpleNamespace(app=app, note=SimpleNamespace(configure=lambda **kwargs: None),
+        notification_values=lambda: (Settings(), CalendarSettings(), new.copy()))
+    ConnectionWindow.save_notifications(window)
+    assert app.signal_credentials == new and app.signal_session.running is False
+
+
 def test_windows_store_is_encrypted_bound_to_api_account_and_expiry():
     credentials = {'key': 'offline-api-key', 'secret': 'offline-api-secret', 'otp': 'never-persist-otp'}
     now = time.time()

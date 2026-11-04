@@ -63,7 +63,8 @@ def test_signal_condition_and_cooldown_survive_backend_restart_without_replay(sy
         result=SignalRuntime.__new__(SignalRuntime)
         result.settings,result.store=settings,store
         result.latest=SimpleNamespace(contract='VN30F1M',quotes={'VN30F1M':Quote('VN30F1M',2000)})
-        result.analysis=SimpleNamespace(snapshot=lambda:{'contract':'VN30F1M','observed_at':time.time(),'p2':condition})
+        result.analysis=SimpleNamespace(snapshot=lambda:{'contract':'VN30F1M','observed_at':time.time(),
+            'quote_at':time.time(),'p2':condition})
         result.owner_enabled,result.owner_token,result.owner_chat=True,'offline-token','offline-chat'
         result.owner_contract=None
         return result

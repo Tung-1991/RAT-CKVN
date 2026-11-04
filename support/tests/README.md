@@ -3,6 +3,10 @@
 Chạy bằng `START_SYSTEM.bat → 4` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
 Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay Telegram thật.
 
+`test_tick_exits.py`: các tick hợp lệ trong cùng lô giữ ý định SL/TP/E qua hồi giá, cùng timestamp, snapshot mới hơn, restart và lệnh đóng cũ giữ chỗ; BOT/quyền OFF không tạo ý định, bật lại không xử lý lại giao cắt khi OFF; UNKNOWN chỉ gửi một lần, tick cũ không được giá mới hợp thức hóa.
+
+`test_paper_sessions.py`: LO thường hết hạn cuối phiên và qua restart, tương thích bản ghi cũ; giờ nghỉ/giá đóng phiên không tạo fill, không đổi tiền/vị thế; lệnh đã nhận vẫn khớp trong ATC dù cổng gửi mở mới đang chặn.
+
 `test_previous_close.py` / `test_quote_header_ui.py`: close đúng mã/G1/ngày, qua cuối tuần/ngày trống, cache và rollover không so nhầm, màu/điểm/% không sửa dữ liệu; GET chậm không chặn UI và bỏ phản hồi cũ. Native header vừa DPI 100–200%, không còn badge mã, hover ký quỹ chờ 500ms, hint giữ số tiền đầy đủ.
 
 `test_scheduled_entries.py` / `test_scheduled_ticket.py`: LO xác nhận ngoài phiên lưu local, gửi theo đúng mã/giá/HĐ, sống qua restart; giữ chỗ/FIFO, hủy local, đổi vé phải xác nhận lại; phiên/ngày nghỉ/ATO/ATC, OTP REAL, giá cũ, hủy/đóng app trong GET, timeout không gửi lại; quá phiên/rollover hết hiệu lực, PAPER không khớp cache. Runtime và UI xác nhận/bảng/hủy chạy trên các đường thật, không gửi mạng.

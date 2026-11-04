@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -25,6 +26,7 @@ class MarketFeed:
         self.symbols = set()
         self.ticks = {}
         self.extremes = {}
+        self.samples = deque()
         self.socket = None
         self.authenticated = False
         self.thread = None
@@ -85,6 +87,10 @@ class MarketFeed:
                 # Validate every event before accumulating its extreme. A later
                 # fresh tick must never make an old or undated event actionable.
                 self.ticks[symbol] = quote
+                self.samples.append(quote)
+                cutoff = time.time() - self.max_quote_age
+                while self.samples and self.samples[0].at < cutoff:
+                    self.samples.popleft()
                 low, high = self.extremes.get(symbol, (px, px))
                 self.extremes[symbol] = min(low, px), max(high, px)
                 self.changed.set()
@@ -121,14 +127,17 @@ class MarketFeed:
 
     def drain(self):
         with self.lock:
-            values = ({symbol: replace(value) for symbol, value in self.ticks.items()}, dict(self.extremes))
+            values = ({symbol: replace(value) for symbol, value in self.ticks.items()}, dict(self.extremes),
+                      tuple(self.samples))
             self.extremes.clear()
+            self.samples.clear()
             self.changed.clear()
             return values
 
     def reset_extremes(self, symbol):
         with self.lock:
             self.extremes.pop(symbol, None)
+            self.samples = deque(quote for quote in self.samples if quote.symbol != symbol)
 
     def close(self):
         self.stop_event.set()

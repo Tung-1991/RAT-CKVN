@@ -21,7 +21,7 @@ def test_invalid_tick_cannot_pollute_extremes(bad_age):
         bad['timestamp'] = now - bad_age
     feed._message(None, json.dumps(bad))
     feed._message(None, json.dumps({'symbol': symbol, 'matchPrice': 2001, 'timestamp': now}))
-    ticks, extremes = feed.drain()
+    ticks, extremes, samples = feed.drain()
     assert ticks[symbol].last == 2001
     assert extremes[symbol] == (2001, 2001)
 
@@ -33,7 +33,7 @@ def test_older_tick_cannot_replace_newest_but_equal_timestamps_keep_trades():
     now = time.time()
     for price, at in [(2000, now), (2100, now - 1), (2002, now)]:
         feed._message(None, json.dumps({'symbol': symbol, 'matchPrice': price, 'timestamp': at}))
-    ticks, extremes = feed.drain()
+    ticks, extremes, samples = feed.drain()
     assert ticks[symbol].last == 2002
     assert extremes[symbol] == (2000, 2002)
 

@@ -1,6 +1,7 @@
 """Committed trade receipts and Telegram delivery, entirely offline."""
 from dataclasses import asdict
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -221,3 +222,47 @@ def test_legacy_open_receipt_still_renders_and_incomplete_fill_cannot_claim_succ
     text, kind = receipt_text(value, 1_000_000_000)
     assert kind == 'VÀO LỆNH' and ' · ENTRY · REAL' in text
     assert 'CHỜ ĐỐI SOÁT' in text and 'ĐÃ KHỚP' not in text
+
+
+@pytest.mark.parametrize('stamp', [None, 'missing', 'bad', float('nan'), float('inf'), -30, 30])
+def test_telegram_requires_fresh_input_quote_evidence_before_consuming_a_signal(system, stamp):
+    from ckps.rules.signal_settings import SignalSettings
+    _, _, store = system
+    now = time.time()
+    symbol = 'VN30F1M'
+    analysis = {'contract': symbol, 'observed_at': now, 'quote_at': now,
+        'p2': {'buy_alert': True, 'exit_alert': True, 'indicators': {
+            'buy_ema_fast': 2001, 'buy_ema_slow': 2000, 'sell_ema_fast': 1999, 'sell_ema_slow': 2000, 'rsi': 51}}}
+    if stamp == 'missing':
+        analysis.pop('quote_at')
+    else:
+        analysis['quote_at'] = now + stamp if isinstance(stamp, (int, float)) else stamp
+    runtime = runtime_notifications(store)
+    runtime.settings.signals = SignalSettings(buy_alert_enabled=True, sell_alert_enabled=True).to_dict()
+    runtime.latest = SimpleNamespace(contract=symbol, quotes={symbol: Quote(symbol, 1990, at=now)})
+    runtime.analysis = SimpleNamespace(snapshot=lambda: analysis)
+    runtime._owner_telemetry()
+    assert not store.db.execute('SELECT id FROM outbox').fetchall()
+    assert store.get('notification', 'condition:' + symbol) is None
+    analysis['quote_at'] = now
+    runtime._owner_telemetry()
+    texts = [row[0] for row in store.db.execute('SELECT text FROM outbox')]
+    assert len(texts) == 2 and any('TÍN HIỆU' in text for text in texts) and any(' · E · ' in text for text in texts)
+    assert not store.orders() and not store.positions()
+
+
+def test_telegram_cannot_refresh_an_old_input_quote_with_a_recent_analysis_or_new_market_price(system):
+    from ckps.rules.signal_settings import SignalSettings
+    from ckps.services.market_context import entry_context
+    _, _, store = system
+    now = time.time()
+    analysis = {'contract': 'VN30F1M', 'observed_at': now - 2, 'quote_at': now - 11,
+        'quote_price': 2001, 'p2': {'buy_alert': True, 'price_fresh': True,
+            'indicators': {'buy_ema_fast': 2001, 'buy_ema_slow': 2000, 'rsi': 51}}}
+    runtime = runtime_notifications(store)
+    runtime.settings.signals = SignalSettings(buy_alert_enabled=True).to_dict()
+    runtime.latest = SimpleNamespace(contract='VN30F1M', quotes={'VN30F1M': Quote('VN30F1M', 1990, at=now)})
+    runtime.analysis = SimpleNamespace(snapshot=lambda: analysis)
+    assert entry_context(analysis, 'VN30F1M', now=now)['reason'] == 'PRICE_STALE'
+    runtime._owner_telemetry()
+    assert not store.db.execute('SELECT id FROM outbox').fetchall()

@@ -1,5 +1,6 @@
 """Signal-only Telegram delivery; no account, engine or trading dependency."""
 import time
+from math import isfinite
 import requests
 from ckps.rules.signal_settings import SignalSettings
 from ckps.rules.market_alerts import MarketAlertSettings
@@ -21,7 +22,12 @@ class SignalNotifications:
         analysis = self.analysis.snapshot()
         if analysis.get("contract") != latest.contract:
             return
-        if 'observed_at' in analysis and not -2<=time.time()-float(analysis['observed_at'])<=self.settings.max_quote_age:
+        try:
+            now = time.time()
+            stamps = (float(analysis['observed_at']), float(analysis['quote_at']))
+            if not all(isfinite(at) and -2 <= now - at <= self.settings.max_quote_age for at in stamps):
+                return
+        except (KeyError, TypeError, ValueError, OverflowError):
             return
         phase = analysis.get("p2", {})
         if getattr(self,'owner_contract',None)!=latest.contract:

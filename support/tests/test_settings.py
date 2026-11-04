@@ -7,6 +7,7 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -92,7 +93,8 @@ def test_entry_channel_off_keeps_signal_tracking_and_does_not_replay_when_enable
     runtime.settings, runtime.latest, runtime.store = engine.settings, engine.latest, store
     runtime.owner_enabled, runtime.owner_token, runtime.owner_chat = True, 'offline-token', 'offline-chat'
     runtime.owner_state, runtime.owner_last = None, 0
-    runtime.analysis = SimpleNamespace(snapshot=lambda: {'contract': engine.latest.contract, 'p2': state})
+    runtime.analysis = SimpleNamespace(snapshot=lambda: {'contract': engine.latest.contract,
+        'observed_at': time.time(), 'quote_at': time.time(), 'p2': state})
     runtime._owner_telemetry()
     assert not store.db.execute('SELECT id FROM outbox').fetchall()
     assert store.get('notification', 'condition:'+engine.latest.contract)['state'] == [True, True]

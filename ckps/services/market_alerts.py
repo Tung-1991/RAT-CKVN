@@ -36,8 +36,13 @@ class MarketAlerts:
                 result['events'].append(self._record(symbol,'VOLATILITY','BIẾN ĐỘNG',reason,at))
                 self.store.put('market','movement:'+symbol,movement)
         p1 = analysis.get('p1',{}) if analysis.get('contract')==symbol else {}
-        observed = float(analysis.get('observed_at',0))
-        if p1.get('state') in {'ABOVE','BELOW'} and p1.get('ma') and -2<=now-observed<=max_age:
+        try:
+            observed = float(analysis.get('observed_at', 0))
+            quote_at = float(analysis.get('quote_at', 0))
+        except (TypeError, ValueError, OverflowError):
+            return result
+        if (p1.get('state') in {'ABOVE','BELOW'} and p1.get('ma')
+                and -2 <= now-observed <= max_age and -2 <= now-quote_at <= max_age):
             previous = self.store.get('market','trend:'+symbol,{})
             state = p1['state']
             result['trend'] = state

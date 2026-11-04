@@ -54,7 +54,7 @@ def test_trend_history_deduplicates_restart_and_rejects_stale_or_wrong_contract(
     monitor = MarketAlerts(store)
     symbol = 'VN30F1M'
     quote = {'last':2001,'at':NOW}
-    analysis = {'contract':symbol,'observed_at':NOW,'p1':{'state':'ABOVE','price':2001,'ma':2000}}
+    analysis = {'contract':symbol,'observed_at':NOW,'quote_at':NOW,'p1':{'state':'ABOVE','price':2001,'ma':2000}}
     first = monitor.observe(symbol,quote,analysis,{},now=NOW,max_age=10)
     assert first['events'][0]['channel']=='TREND'
     assert 'UPTREND' in first['events'][0]['reason']
@@ -113,7 +113,7 @@ def test_market_alert_channels_are_separate_from_p2_and_cannot_trade(system,monk
     runtime.telegram_error = ''
     runtime.owner_enabled,runtime.owner_token,runtime.owner_chat = True,'offline-token','offline-chat'
     runtime.analysis = SimpleNamespace(update=lambda *args:None,snapshot=lambda:{'contract':engine.latest.contract,
-        'observed_at':NOW,'p1':{'state':'ABOVE','ma':1990,'price':2000}})
+        'observed_at':NOW,'quote_at':NOW,'p1':{'state':'ABOVE','ma':1990,'price':2000}})
     runtime.market=SimpleNamespace(snapshot=lambda:{'contract':engine.latest.contract,'quotes':{k:asdict(v) for k,v in engine.latest.quotes.items()},'bars':[]})
     monkeypatch.setattr('ckps.services.signal_runtime.time.time',lambda:NOW)
     runtime._publish()
@@ -141,7 +141,8 @@ def test_signal_switch_does_not_replay_old_condition_and_channels_do_not_share_c
     runtime.settings,runtime.latest,runtime.store=engine.settings,engine.latest,store
     runtime.owner_enabled,runtime.owner_token,runtime.owner_chat=True,'offline-token','offline-chat'
     runtime.owner_state,runtime.owner_last=None,0
-    runtime.analysis=SimpleNamespace(snapshot=lambda:{'contract':engine.latest.contract,'p2':state})
+    runtime.analysis=SimpleNamespace(snapshot=lambda:{'contract':engine.latest.contract,
+        'observed_at':time.time(),'quote_at':time.time(),'p2':state})
     runtime._owner_telemetry()
     engine.settings.signals.update(buy_alert_enabled=True,sell_alert_enabled=True)
     runtime._owner_telemetry()
@@ -165,7 +166,7 @@ def test_fresh_quote_cannot_grant_notification_to_stale_analysis(system):
     engine,broker,store=system
     engine.settings.entry_notifications=True
     engine.settings.signals=SignalSettings(buy_alert_enabled=True).to_dict()
-    analysis={'contract':engine.latest.contract,'observed_at':time.time()-30,'p2':{
+    analysis={'contract':engine.latest.contract,'observed_at':time.time()-30,'quote_at':time.time(),'p2':{
         'buy_alert':True,'indicators':{'buy_ema_fast':2001,'buy_ema_slow':2000,'rsi':51}}}
     runtime=SignalRuntime.__new__(SignalRuntime)
     runtime.settings,runtime.latest,runtime.store=engine.settings,engine.latest,store
@@ -178,6 +179,21 @@ def test_fresh_quote_cannot_grant_notification_to_stale_analysis(system):
     runtime._owner_telemetry()
     assert store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0]==1
     assert not store.orders()
+
+
+@pytest.mark.parametrize('stamp', [None, 'bad', 'missing', -11, 3, float('nan')])
+def test_p1_trend_requires_the_analysed_price_to_still_be_fresh(system, stamp):
+    store = system[2]
+    analysis = {'contract': 'VN30F1M', 'observed_at': NOW,
+                'p1': {'state': 'ABOVE', 'price': 2001, 'ma': 2000}}
+    if stamp != 'missing':
+        analysis['quote_at'] = NOW + stamp if isinstance(stamp, (int, float)) else stamp
+    quote = {'last': 1990, 'at': NOW}
+    result = MarketAlerts(store).observe('VN30F1M', quote, analysis, {}, now=NOW, max_age=10)
+    assert not result['events'] and not store.all('signal_history')
+    analysis['quote_at'] = NOW
+    result = MarketAlerts(store).observe('VN30F1M', quote, analysis, {}, now=NOW, max_age=10)
+    assert len(result['events']) == 1 and result['events'][0]['channel'] == 'TREND'
 
 
 def test_slow_telegram_does_not_delay_automatic_sl(monkeypatch):
