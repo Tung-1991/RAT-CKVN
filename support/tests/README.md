@@ -3,6 +3,8 @@
 Chạy bằng `START_SYSTEM.bat → 4` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
 Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay Telegram thật.
 
+`test_bootstrap.py`: kiểm thử offline luồng tự chuẩn bị môi trường; dùng lại môi trường hợp lệ, máy chưa có Python, lỗi pip/kiểm tra gói, sai SHA256 và sai chữ ký dừng trước khi chạy Python/app. Mạng, giải nén và trình cài bên ngoài bị chặn hoặc thay bằng fixture trong PowerShell con.
+
 `test_tick_exits.py`: các tick hợp lệ trong cùng lô giữ ý định SL/TP/E qua hồi giá, cùng timestamp, snapshot mới hơn, restart và lệnh đóng cũ giữ chỗ; BOT/quyền OFF không tạo ý định, bật lại không xử lý lại giao cắt khi OFF; UNKNOWN chỉ gửi một lần, tick cũ không được giá mới hợp thức hóa.
 
 `test_paper_sessions.py`: LO thường hết hạn cuối phiên và qua restart, tương thích bản ghi cũ; giờ nghỉ/giá đóng phiên không tạo fill, không đổi tiền/vị thế; lệnh đã nhận vẫn khớp trong ATC dù cổng gửi mở mới đang chặn.

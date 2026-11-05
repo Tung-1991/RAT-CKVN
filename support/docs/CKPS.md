@@ -42,6 +42,16 @@ Mở app đã có RULE thì giữ các ngưỡng chung đã lưu, kể cả ch�
 
 SL/TP giữ PRICE_PERCENT: khoảng giá bằng giá vốn bình quân nhân tỷ lệ nhập rồi chia 100. Giá vốn 2.000, SL 0,25% là khoảng giá 5: Long cắt tại 1.995, Short tại 2.005; lỗ trước phí 500.000 đồng/HĐ. Nhập SL 0,25 hoặc -0,25 đều dùng khoảng cách dương 0,25%; dấu chấm hoặc phẩy thập phân đều được. ARM/TSL/LẶP dùng riêng `trailing_unit=PNL_PERCENT`: tiền/HĐ = ký quỹ cơ sở/HĐ đã lưu × mức nhập / 100; điểm giá = tiền/HĐ / 100.000. ARM là % lãi chưa chốt trên ký quỹ cơ sở; lùi và LẶP là điểm phần trăm PNL, ví dụ đỉnh +10%, lùi 2 điểm % thì kích hoạt tại +8%. Không lấy % của lãi đỉnh thay cho khoảng lùi này. Long bám đỉnh, Short bám đáy; mốc đã bảo vệ không tự nới.
 
+PNL tiền là lãi/lỗ chưa chốt trước phí; PNL % = PNL tiền / (ký quỹ cơ sở/HĐ đã lưu × HĐ còn giữ) × 100. Một điểm giá/HĐ là 100.000 đồng; 2 HĐ đi 1 điểm là 200.000 đồng, đi 5 điểm là 1 triệu. Tổng tiền trong tài khoản không tự trở thành cơ sở tính ARM. Ví dụ ARM 5%:
+
+| Cơ sở/HĐ | HĐ còn giữ | Tổng cơ sở | Lãi chưa chốt tại ARM | Khoảng giá thuận chiều |
+| --- | --- | --- | --- | --- |
+| 100 triệu | 1 | 100 triệu | 5 triệu | 50 điểm |
+| 50 triệu | 2 | 100 triệu | 5 triệu | 25 điểm |
+| 40 triệu | 2 | 80 triệu | 4 triệu | 20 điểm |
+
+Đây là ví dụ quy đổi, không phải số ký quỹ mặc định DNSE hoặc mục tiêu lợi nhuận cam kết. ARM chỉ kích hoạt trailing, không chốt ngay tại mức đó; DYNAMIC bảo vệ trước ARM và E/SL vẫn độc lập. Chưa tối ưu ngưỡng 5% bằng backtest/MFE thực tế, không suy ra dễ/khó đạt chỉ từ số phần trăm.
+
 Giữ lãi DYNAMIC mặc định 70% vẫn là phần trăm lãi đỉnh; ATR/START/trail ATR và Tới MFE % giá vốn giữ nguyên ý nghĩa. Ký quỹ cơ sở/HĐ được ghi cùng fill/vị thế, không đổi theo tổng tiền, tiền nạp/rút hoặc số ký quỹ mới ở mỗi tick. Vào thêm bình quân cơ sở theo HĐ khớp; giảm 50% HĐ giữ cơ sở/HĐ, restart không tính lại từ số dư. PNL tiền Preview = chênh lệch giá theo chiều × HĐ còn giữ × 100.000; PNL % = tiền lãi chưa chốt / (cơ sở/HĐ × HĐ còn giữ). Không cộng lãi đã chốt vào trailing. Thiếu cơ sở thì ARM/TSL và LẶP CHỜ; DYNAMIC cần bước LẶP cũng chờ, SL/TP % giá và E vẫn độc lập. Các số tiền Preview là trước phí và giá kích hoạt không bảo đảm giá khớp.
 
 Không có nút chọn đơn vị. RULE cũ thiếu `trailing_unit` giữ nghĩa đơn vị cũ đến khi LƯU. Form dựng bản nháp theo từng nhóm SL/TP % giá và ARM/TSL/LẶP % PNL bằng cơ sở đã xác minh; ưu tiên giá vốn/ký quỹ của vị thế đúng mã, vé mới dùng giá vé và ký quỹ DNSE quy đổi tương ứng. Giá đóng DNSE hợp lệ cùng ngày cũng dùng được để xem trước/quy đổi, không cấp quyền giao dịch. Thiếu cơ sở chỉ khóa các ô cần quy đổi, không khóa toàn form; LƯU giữ nguyên số và đơn vị nguồn của nhóm còn CHỜ, không gán mẫu hoặc thay 0. Khi có cơ sở, form tự hoàn tất bản nháp; vẫn cần LƯU để áp dụng. Preset mới đã có đúng đơn vị nên luôn hiện các ngưỡng dù chưa có dữ liệu thị trường. LƯU RULE dùng một bộ chung cho đang giữ/chờ/mới, không tạo policy riêng. SL/TP, công tắc đã lưu, sàn bảo vệ, mốc LẶP và lịch sử được giữ. Không tự ghi lại RULE lúc mở app.
@@ -103,6 +113,8 @@ App ghi biên nhận cùng transaction khớp/vị thế rồi chuyển bản r�
 Token/chat, ba nhóm thông báo, lịch và nút CHẠY/DỪNG nằm trong KẾT NỐI → TELEGRAM / LỊCH. CHẠY tạo tiến trình backend không giao diện; pipe riêng chỉ truyền API đọc giá, token Telegram và tham số tín hiệu, không truyền số tài khoản, OTP hoặc E/M. Lưu áp dụng cấu hình vào backend đang chạy. Tắt Tín hiệu / Lệnh chặn cả P1/P2/E và biên nhận mở/đóng/giảm; không tắt phân tích hoặc gửi bù điều kiện cũ khi bật lại. Không thêm checkbox riêng cho từng lý do đóng.
 
 ## Kiểm thử
+
+BAT tự chuẩn bị Python/Tkinter/pip và các thư viện trong môi trường riêng của project trước khi mở app hoặc kiểm thử. Gói Python đầy đủ từ Python.org được xác minh SHA256/chữ ký PSF; không cần Python cài sẵn, quyền admin hay sửa PATH/registry. Môi trường chưa cài đủ hoặc xác minh thất bại thì dừng trước khi mở app. `runtime/python`, bộ tải trong `runtime/bootstrap` và `.venv` nằm ngoài Git. Đổi file requirements làm mất hiệu lực dấu sẵn sàng để lần mở sau kiểm tra/cài lại.
 
 Chạy `.venv\Scripts\python.exe -X utf8 -m pytest support/tests -q -p no:cacheprovider --tb=short`. Fixture chặn mạng, dùng sổ tạm. Không gửi lệnh hoặc Telegram thật để thử. Giữ runtime, credentials, môi trường và .artifacts ngoài Git. Trước dùng REAL cần đối chiếu tài khoản/giá/ký quỹ, phí và độ trễ với DNSE.
 

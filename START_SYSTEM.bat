@@ -21,9 +21,13 @@ if errorlevel 2 goto backend
 if errorlevel 1 goto start
 goto menu
 :start
+call :prepare
+if errorlevel 1 goto menu
 start "RAT - Giao dich" /b powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Start
 goto menu
 :backend
+call :prepare
+if errorlevel 1 goto menu
 start "RAT - Tin hieu" /b powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Backend
 goto menu
 :install
@@ -31,6 +35,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.p
 pause
 goto menu
 :check
+call :prepare
+if errorlevel 1 goto menu
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Check
 pause
 goto menu
+:prepare
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Prepare
+if errorlevel 1 (
+    pause
+    exit /b 1
+)
+exit /b 0
