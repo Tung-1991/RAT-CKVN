@@ -1,5 +1,6 @@
 """The built-in VN30 preset loads without a picker and never starts trading."""
 from dataclasses import asdict
+from datetime import datetime, timedelta
 import json
 
 import pytest
@@ -8,6 +9,7 @@ from ckps.config import read_settings, runtime_root, write_settings
 from ckps.models import ExitSettings, Position, Settings, load_record
 from ckps.rules.defaults import default_exit_settings, shared_exit_settings
 from ckps.rules.protection import evaluate, levels
+from ckps.rules.p2.market import VN_TZ
 from ckps.trading.execution import Engine
 
 
@@ -25,6 +27,7 @@ def test_first_launch_loads_one_complete_preset_without_creating_runtime_or_a_pi
     assert rules.distance_unit == 'PRICE_PERCENT'
     assert rules.sl_enabled and rules.sl_distance == .5
     assert not rules.tp_enabled and rules.tp_distance == 0
+    assert rules.ema_exit_enabled and (rules.ema_exit_fast, rules.ema_exit_slow) == (3, 6)
     assert rules.trailing_unit=='PNL_PERCENT'
     assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.25
     assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 50 and rules.arm_basis == 'REMAINING'
@@ -148,3 +151,33 @@ def test_builtin_preset_never_adopts_a_dnse_position_by_itself(system):
     engine.arm(True)
     broker.set_price(1985); engine.poll()
     assert not store.positions()[0].managed and not store.orders()
+
+
+@pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
+def test_builtin_e_exits_all_on_opposite_ema_only_after_bot_is_armed(system, side, sign):
+    engine, broker, store = use_defaults(system)
+    engine.open_manual(side, 2, 'MOK')
+    now = datetime.now(VN_TZ)
+    broker.set_bars([dict(time=(now-timedelta(days=n)).timestamp(), close=2000, high=2001, low=1999)
+                    for n in range(30, 0, -1) if (now-timedelta(days=n)).weekday() < 5])
+    broker.set_price(2000-sign)
+    engine.poll()
+    assert engine.exits().ema_exit_enabled and not engine.enabled.is_set()
+    assert len(store.orders()) == 1 and store.positions()[0].quantity == 2
+    engine.arm(True)
+    engine.poll()
+    assert not store.positions() and len(store.orders()) == 2
+    assert store.orders()[-1].reason == 'E' and store.orders()[-1].applied == 2
+
+
+@pytest.mark.parametrize('missing_flag', [False, True])
+def test_new_preset_never_enables_e_in_a_saved_off_or_legacy_rule(missing_flag):
+    values = {**default_exit_settings(), 'ema_exit_enabled': False}
+    if missing_flag:
+        values.pop('ema_exit_enabled')
+    write_settings(Settings(exit=values))
+    path = runtime_root() / 'settings.json'
+    original = path.read_bytes()
+    loaded = read_settings()
+    assert not load_record(ExitSettings, loaded.exit).ema_exit_enabled
+    assert path.read_bytes() == original

@@ -13,8 +13,8 @@
   Không có quyền mở/đóng lệnh.
 - E thực thi tại app giao dịch, tách khỏi E ALERT của backend: EMA nhanh/chậm
   mặc định 3/6, chỉnh ngay E/M; luôn REALTIME theo từng giá mới trên nến 1D, không chọn chế độ/nhịp.
-  Long nhanh < chậm, Short nhanh > chậm thì đóng toàn bộ khi E + BOT + quyền vị thế ON. E mới mặc định OFF,
-  bật/lưu tại RULE → E/M; không phụ thuộc ALERT/Telegram, không mở hoặc đảo chiều.
+  Long nhanh < chậm, Short nhanh > chậm thì đóng toàn bộ khi E + BOT + quyền vị thế ON. Preset app chưa lưu RULE có E ON;
+  giữ E OFF đã lưu và dữ liệu cũ thiếu cờ. Bật/tắt và lưu tại RULE → E/M; không phụ thuộc ALERT/Telegram, không mở hoặc đảo chiều.
 - SL/TP/E đóng HĐ khả dụng trước, hủy lệnh đóng cũ cản trở và chờ broker xác nhận
   trước khi giải phóng giữ chỗ. Ý định thoát lưu bền qua hồi giá/restart, vẫn
   cần BOT/quyền ON; tắt nhánh hoặc bỏ quản lý dừng ý định. UNKNOWN không gửi lại.
@@ -44,7 +44,7 @@
   chỉ hiển thị dòng 50% HĐ còn lại và giải thích làm tròn trong hint.
   Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
-- App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%,
+- App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%, E ON EMA3/6,
   ARM 5% PNL, TSL lùi/LẶP 1,25 điểm % PNL, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
   giữ 70% lãi đỉnh, TỚI MFE OFF; LẶP mặc định ON.

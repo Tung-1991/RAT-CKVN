@@ -4,9 +4,11 @@
 - `backend.py`: chạy backend console bằng biến môi trường; thường dùng CHẠY/DỪNG ngay trong KẾT NỐI.
 - `START_SYSTEM.bat`: mở app PAPER/REAL, backend hoặc kiểm thử tự động.
 
+VPS cần Windows 64-bit có phiên Desktop/RDP, Python 3.11 trở lên kèm Tcl/Tk và pip, cùng Internet để tải thư viện/DNSE/Telegram. Chạy `START_SYSTEM.bat` → **3** để tạo `.venv` và cài các gói, → **4** kiểm thử offline, → **1** mở app. Launcher tìm `py -3`, thiếu thì dùng `python`; không tự cài Python vào Windows. Backend thông báo thường chạy từ KẾT NỐI → TELEGRAM / LỊCH → CHẠY; mục **2** dành cho console dùng biến môi trường.
+
 MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. Cài đặt tập trung vào RULE (một E/M chung, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH), hai cửa sổ cùng kích thước. DNSE / VỐN có ĐỌC API để chọn tài khoản/gói và xem ký quỹ/phí từ DNSE, dùng chung một cặp key/secret, có OTP và tùy chọn ghi nhớ kết nối bằng mã hóa Windows; không lưu mã OTP dùng một lần. Giá lưu gần nhất có thời gian và nhãn CŨ, chỉ để xem. Chọn dòng hợp đồng rồi mở RULE → E/M để nhận/bỏ quyền BOT. BOT OFF khi khởi động. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN cùng trạng thái OTP; giấu thông số chỉ báo, chỉ hiện bảo vệ khi chọn vị thế. Bảng chính ẩn PNL. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
 
-SL/TP giữ % giá vốn; ARM dùng % PNL trên ký quỹ cơ sở/HĐ, TSL/LẶP dùng điểm phần trăm PNL. Cơ sở được lưu cùng vị thế, giảm HĐ không tính lại cơ sở/HĐ, vào thêm bình quân theo fill; tiền nạp/rút không đổi mốc. Một RULE chung cho đang giữ/chờ/mới, không chọn đơn vị hoặc ghi đè trên vé. Preview RULE hiện ký quỹ cơ sở, PNL, điểm và tiền theo số HĐ còn giữ; thiếu cơ sở thì CHỜ. RULE cũ chỉ chuyển bản nháp rồi LƯU, không tự sửa cấu hình lúc mở. App chưa lưu RULE nạp SL 0,5% giá, TP OFF, ARM 5% PNL, TSL/LẶP 1,25 điểm % PNL, mỗi lượt đóng 50% còn lại; DYNAMIC ATR/giữ lãi và LẶP ON. BOT vẫn OFF khi mở.
+SL/TP giữ % giá vốn; ARM dùng % PNL trên ký quỹ cơ sở/HĐ, TSL/LẶP dùng điểm phần trăm PNL. Cơ sở được lưu cùng vị thế, giảm HĐ không tính lại cơ sở/HĐ, vào thêm bình quân theo fill; tiền nạp/rút không đổi mốc. Một RULE chung cho đang giữ/chờ/mới, không chọn đơn vị hoặc ghi đè trên vé. Preview RULE hiện ký quỹ cơ sở, PNL, điểm và tiền theo số HĐ còn giữ; thiếu cơ sở thì CHỜ. RULE cũ chỉ chuyển bản nháp rồi LƯU, không tự sửa cấu hình lúc mở. App chưa lưu RULE nạp SL 0,5% giá, TP OFF, E ON EMA3/6, ARM 5% PNL, TSL/LẶP 1,25 điểm % PNL, mỗi lượt đóng 50% còn lại; DYNAMIC ATR/giữ lãi và LẶP ON. BOT vẫn OFF khi mở.
 
 TSL/ARM và DYNAMIC tự đóng 50% HĐ còn lại mỗi lượt khi BOT và quyền quản lý ON. Không có lựa chọn AUTO/ALERT, GỐC/CÒN LẠI hay nhập tỷ lệ đóng trong E/M. Cấu hình cũ cũng dùng các lựa chọn cố định này; các ngưỡng và cờ bật/tắt nhánh được giữ. Một HĐ còn lại thì đóng một; LẶP vẫn cần mốc giá mới và lệnh trước đã kết thúc.
 
@@ -16,7 +18,7 @@ Telegram chủ yếu báo tín hiệu tham khảo để người dùng tự quy�
 
 PAPER dùng giá DNSE và tiền ảo; REAL cần tài khoản phái sinh và OTP. SL hiện do app thực thi, cần app và BOT đang hoạt động; chưa nghiệm thu REAL. Chi tiết: [nghiệp vụ CKPS](support/docs/CKPS.md).
 
-E tự thoát bật tại RULE → E/M (mặc định OFF): Long EMA3 < EMA6, Short EMA3 > EMA6 thì đóng toàn bộ khi BOT và quyền vị thế ON. Chỉnh hai chu kỳ EMA ngay trong nhóm E tại E/M; luôn REALTIME theo từng giá mới hợp lệ trên nến 1D, độc lập ALERT/Telegram; backend không có quyền giao dịch. SL/TP/E đóng phần chưa giữ chỗ trước, phần còn lại chờ hủy/khớp lệnh cũ được xác nhận; timeout không tự gửi lại.
+E tự thoát tại RULE → E/M có sẵn ON trong preset app chưa lưu RULE; giữ nguyên E OFF đã lưu và dữ liệu cũ thiếu cờ. Long EMA3 < EMA6, Short EMA3 > EMA6 thì đóng toàn bộ khi BOT và quyền vị thế ON. Chỉnh hai chu kỳ EMA ngay trong nhóm E tại E/M; luôn REALTIME theo từng giá mới hợp lệ trên nến 1D, độc lập ALERT/Telegram; backend không có quyền giao dịch. SL/TP/E đóng phần chưa giữ chỗ trước, phần còn lại chờ hủy/khớp lệnh cũ được xác nhận; timeout không tự gửi lại.
 
 ```powershell
 .venv\Scripts\python.exe main.py

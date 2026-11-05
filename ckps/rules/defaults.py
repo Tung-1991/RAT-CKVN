@@ -18,6 +18,7 @@ def default_exit_settings():
         trailing_unit='PNL_PERCENT',
         sl_enabled=True, sl_distance=.5,
         tp_enabled=False, tp_distance=0,
+        ema_exit_enabled=True, ema_exit_fast=3, ema_exit_slow=6,
         arm_enabled=True, arm_gain=5, trail_gap=1.25,
         arm_policy='AUTO', arm_close_pct=50, arm_basis='REMAINING',
         arm_repeat=True, arm_repeat_below_arm=True, repeat_gap=1.25,

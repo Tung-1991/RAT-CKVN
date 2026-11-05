@@ -127,7 +127,7 @@ def test_e_closes_all_only_with_bot_permission_and_ignores_alert_switches(system
     assert not store.db.execute('SELECT id FROM outbox').fetchall()
 
 
-def test_new_e_branch_defaults_off_and_cannot_create_an_entry(system):
+def test_legacy_e_defaults_off_and_enabling_it_cannot_create_an_entry(system):
     engine, _, store = system
     assert not engine.exits().ema_exit_enabled
     engine.settings.exit = asdict(ExitSettings(ema_exit_enabled=True))
@@ -169,6 +169,13 @@ def _rule_form_scenario():
         assert app.settings.exit['ema_exit_interval'] == 'TICK'
         rule = app.settings_dialog('E/M')
         app.update()
+        assert rule.ema_exit_enabled.get()
+        rule.ema_exit_enabled.set(False)
+        rule.save()
+        assert not app.settings.exit['ema_exit_enabled']
+        rule.destroy()
+        rule = app.settings_dialog('E/M')
+        app.update()
         assert not rule.ema_exit_enabled.get()
         rule.ema_exit_enabled.set(True)
         rule.save()
@@ -181,7 +188,7 @@ def _rule_form_scenario():
         app.close()
 
 
-def test_rule_form_requires_explicit_e_opt_in_and_saves_it():
+def test_rule_form_starts_with_preset_e_and_preserves_saved_off_and_on():
     import inspect
     import subprocess
     import sys
