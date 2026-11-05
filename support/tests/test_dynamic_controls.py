@@ -20,7 +20,7 @@ def test_custom_dynamic_start_and_retention_drive_real_decisions(system,side,sig
     broker.set_price(2000+sign*20);engine.poll()
     assert store.positions()[0].floor==pytest.approx(2000+sign*10)
     broker.set_price(2000+sign*14);engine.poll()
-    assert len(store.orders())==1  # Default 70% retention would close here.
+    assert len(store.orders())==1  # The custom 50% retention permits this pullback.
     broker.set_price(2000+sign*10);engine.poll();engine.poll()
     assert not store.positions() and store.orders()[-1].reason=='DYN'
     assert store.orders()[-1].applied==4
@@ -35,7 +35,7 @@ def test_legacy_repeat_below_arm_setting_cannot_split_a_full_exit(system,side,si
     engine.settings=read_settings()
     engine.paper_capital(200_000_000)
     engine.open_manual(side,4,'MOK');engine.poll();engine.arm(True)
-    for gain in (28,23):broker.set_price(2000+sign*gain);engine.poll();engine.poll()
+    for gain in (28,22):broker.set_price(2000+sign*gain);engine.poll();engine.poll()
     assert not store.positions() and store.orders()[-1].applied==4
     broker.set_price(2000+sign*18);engine.poll();engine.poll()
     assert not store.positions()

@@ -123,8 +123,8 @@ def test_ticket_text_cannot_override_shared_price_rules(text):
     app=SimpleNamespace(settings=Settings(),ticket_sl=Value(text),ticket_tp=Value('RULE'),
                         view={'contract':'VN30F1M'})
     policy,override=DashboardActionsMixin.ticket_rules(app,2000)
-    assert policy.distance_unit=='PRICE_PERCENT' and policy.sl_distance==.5
-    assert policy.points(policy.sl_distance,2000)==10 and override is None
+    assert policy.distance_unit=='PRICE_PERCENT' and policy.sl_distance==1
+    assert policy.points(policy.sl_distance,2000)==20 and override is None
 
 
 def test_modern_position_can_be_adopted_and_protected_without_margin_basis(system):

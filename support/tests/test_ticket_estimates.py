@@ -17,7 +17,7 @@ def ticket():
         def configure(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
-    app = SimpleNamespace(settings=Settings(), ticket_sl=value('RULE'), qty=value('2'), limit=value('2000'), kind=value('LO'),
+    app = SimpleNamespace(settings=Settings(exit={**Settings().exit,'sl_distance':.5}), ticket_sl=value('RULE'), qty=value('2'), limit=value('2000'), kind=value('LO'),
         view={'account': {'qmax_long': 2, 'margin_per_contract': 40_000_000, 'package_fees': {'open': 2000}}})
     app.ticket_rules = lambda entry: (ExitSettings(**app.settings.exit), None)
     app.ticket_capacity = lambda *args: SimpleNamespace(margin_per_contract=40_000_000, maximum=2)

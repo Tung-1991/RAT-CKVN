@@ -92,7 +92,7 @@ def test_new_preset_needs_no_market_data_to_fill_the_editor():
     original=default_exit_settings()
     draft,pending=pnl_rule_draft(original)
     assert draft==original and not pending
-    assert draft['sl_distance']==.5 and draft['arm_gain']==5 and draft['repeat_gap']==1.25
+    assert draft['sl_distance']==1 and draft['arm_gain']==5 and draft['repeat_gap']==1.5
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
@@ -186,9 +186,9 @@ def test_compact_dynamic_uses_the_same_trigger_and_keeps_full_distance_in_detail
     before=deepcopy(asdict(p))
     full=position_milestones(p,rule,2009,1.)[1]
     compact=position_milestones(p,rule,2009,1.,compact=True)[1]
-    assert '2,008.4' in full.value and compact.value=='AUTO · MỐC 2,008.4'
+    assert '2,007.8' in full.value and compact.value=='AUTO · MỐC 2,007.8'
     assert 'Còn' in full.detail and 'Còn' not in compact.detail
-    assert '+2.10% PNL' in compact.detail and '840,000 đ/1 HĐ' in compact.detail
+    assert '+1.95% PNL' in compact.detail and '780,000 đ/1 HĐ' in compact.detail
     assert asdict(p)==before
 
 

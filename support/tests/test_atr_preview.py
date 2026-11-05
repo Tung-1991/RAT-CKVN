@@ -50,7 +50,7 @@ def test_completed_atr_preview_remains_read_only_when_live_quote_is_stale():
     before = repr(view)
     title, detail, ready = atr_preview(view)
     assert ready and title == 'ATR14 · 1,00% giá · 29/10/2026'
-    assert detail == 'Bắt đầu +0,50% giá · lùi ATR 0,80% giá · giữ 70% lãi'
+    assert detail == 'Bắt đầu +0,50% giá · lùi ATR 0,80% giá · giữ 65% lãi'
     assert all(result[0] == 'CHỜ' for result in signal_preview(view, now=NOW.timestamp()))
     assert repr(view) == before
 
@@ -100,6 +100,6 @@ def test_missing_atr_does_not_invent_dynamic_trigger_and_sl_still_works(system, 
     broker.set_price(2000 + sign*12); engine.poll()
     broker.set_price(2000 + sign*8); engine.poll()
     assert store.positions()[0].quantity == 1 and len(store.orders()) == 1
-    broker.set_price(2000 - sign*10); engine.poll(); engine.poll()
+    broker.set_price(2000 - sign*20); engine.poll(); engine.poll()
     assert not store.positions()
     assert store.orders()[-1].reason == 'SL'

@@ -45,10 +45,10 @@
   giữ dữ liệu cũ để quy đổi nhưng không chờ bước LẶP khi thoát toàn bộ.
   Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 100%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
-- App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%, E ON EMA3/6,
-  ARM 5% PNL, TSL lùi 1,25 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
+- App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 1%, E ON EMA3/6,
+  ARM 5% PNL, TSL lùi 1,5 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
-  giữ 70% lãi đỉnh, TỚI MFE OFF; chạm mốc đóng toàn bộ, không chia lượt.
+  giữ 65% lãi đỉnh, TỚI MFE OFF; chạm mốc đóng toàn bộ, không chia lượt; LẶP preset OFF.
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
   Giữ tham số đã lưu, không ép về mặc định. LẶP cũ chỉ giữ để tương thích dữ liệu;
   phần chưa khớp tiếp tục theo ý định thoát toàn bộ, không chờ mốc lặp.

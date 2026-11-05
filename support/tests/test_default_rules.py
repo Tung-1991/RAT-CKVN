@@ -25,21 +25,21 @@ def test_first_launch_loads_one_complete_preset_without_creating_runtime_or_a_pi
     rules = load_record(ExitSettings, settings.exit).validate()
     assert settings.exit == default_exit_settings() == Settings().exit
     assert rules.distance_unit == 'PRICE_PERCENT'
-    assert rules.sl_enabled and rules.sl_distance == .5
+    assert rules.sl_enabled and rules.sl_distance == 1
     assert not rules.tp_enabled and rules.tp_distance == 0
     assert rules.ema_exit_enabled and (rules.ema_exit_fast, rules.ema_exit_slow) == (3, 6)
     assert rules.trailing_unit=='PNL_PERCENT'
-    assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.25
+    assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.5
     assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 100 and rules.arm_basis == 'REMAINING'
-    assert rules.arm_repeat and rules.arm_repeat_below_arm and rules.repeat_gap == 1.25
-    assert rules.dynamic_enabled and rules.dynamic_policy == 'AUTO' and rules.dynamic_repeat
+    assert not rules.arm_repeat and not rules.arm_repeat_below_arm and rules.repeat_gap == 1.5
+    assert rules.dynamic_enabled and rules.dynamic_policy == 'AUTO' and not rules.dynamic_repeat
     assert rules.dynamic_close_pct == 100 and rules.dynamic_basis == 'REMAINING'
     assert rules.atr_start_multiplier == .5 and rules.atr_trail_multiplier == .8
-    assert rules.retention_pct == 70 and not rules.retention_until_enabled
+    assert rules.retention_pct == 65 and not rules.retention_until_enabled
     assert not settings.telegram_enabled and not settings.entry_notifications
     assert not runtime_root().exists()
     settings.exit['sl_distance'] = 99
-    assert read_settings().exit['sl_distance'] == .5  # Independent copies.
+    assert read_settings().exit['sl_distance'] == 1  # Independent copies.
 
 
 @pytest.mark.parametrize('with_empty_exit', [False, True])
@@ -74,16 +74,16 @@ def test_saved_user_rules_including_explicit_off_survive_restart(disabled):
 def test_default_stop_is_price_based_trail_is_pnl_and_tp_never_caps_a_profitable_run(side,sign):
     rules = load_record(ExitSettings, read_settings().exit)
     position = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
-    assert levels(position, rules)['sl'] == 2000 - sign * 10
+    assert levels(position, rules)['sl'] == 2000 - sign * 20
     assert levels(position, rules)['arm'] == 2000 + sign * 20
     assert levels(position, rules)['tp'] == 0
     assert evaluate(position, 2000 + sign * 100, rules) is None
-    assert levels(position, rules)['protect'] == pytest.approx(2000 + sign * 95)
-    decision = evaluate(position, 2000 + sign * 95, rules)
+    assert levels(position, rules)['protect'] == pytest.approx(2000 + sign * 94)
+    decision = evaluate(position, 2000 + sign * 94, rules)
     assert decision.reason == 'ARM' and decision.policy == 'AUTO' and decision.quantity == 4
     stopped = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
-    assert evaluate(stopped, 2000 - sign * 10, rules).reason == 'SL'
-    assert stopped.pnl(2000 - sign * 10) == -4_000_000
+    assert evaluate(stopped, 2000 - sign * 20, rules).reason == 'SL'
+    assert stopped.pnl(2000 - sign * 20) == -8_000_000
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
@@ -91,7 +91,7 @@ def test_default_dynamic_protects_before_arm_and_the_floor_never_loosens(side,si
     rules = load_record(ExitSettings, read_settings().exit)
     position = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
     assert evaluate(position, 2000 + sign * 12, rules, 1) is None
-    floor = 2000 + sign * 8.4
+    floor = 2000 + sign * 7.8
     assert levels(position, rules, 1)['stage'] == 'DYN'
     assert position.floor == pytest.approx(floor)
     evaluate(position, 2000 + sign * 11, rules, 2)
@@ -107,7 +107,7 @@ def test_loaded_preset_does_not_open_or_close_until_user_arms_it(system,side,sig
         engine.poll()
     assert not store.orders() and not engine.enabled.is_set()
     engine.open_manual(side, 1, 'MOK')
-    broker.set_price(2000 - sign * 10)
+    broker.set_price(2000 - sign * 20)
     engine.poll()
     assert len(store.orders()) == 1 and len(store.positions()) == 1
     engine.arm(True)
@@ -124,7 +124,7 @@ def test_default_closes_four_contracts_at_first_trailing_hit_without_tick_spam(s
     engine.arm(True)
     broker.set_price(2000 + sign * 28); engine.poll()
     assert len(store.orders()) == 1
-    for gain in (23, 18, 13):
+    for gain in (22, 18, 13):
         broker.set_price(2000 + sign * gain)
         engine.poll(); engine.poll()
         assert not store.positions()
@@ -133,7 +133,7 @@ def test_default_closes_four_contracts_at_first_trailing_hit_without_tick_spam(s
             engine.poll()
         assert len(store.orders()) == 2
     closed = store.positions(closed=True)[0]
-    assert closed.realized == 9_200_000  # 4 * 23 * 100,000.
+    assert closed.realized == 8_800_000  # 4 * 22 * 100,000.
     assert all(o.reason == 'ARM' for o in store.orders() if o.action == 'CLOSE')
 
 
