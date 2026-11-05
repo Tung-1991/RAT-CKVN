@@ -269,7 +269,7 @@ class OriginalPanels:
         title.configure(cursor='hand2')
         title._hover_hint=_HoverHint(title,lambda:self._preview_position_context,click_to_toggle=True,hover=False)
         label(header,'preview_rule_source',size=11,color=COL_MUTED,row=0,column=1,padx=7,pady=2).configure(width=95)
-        for index,prefix,title,color in ((0,'normal','TSL / ARM',COL_ACCENT_BLUE),(1,'exit','DYNAMIC',COL_WARN)):
+        for index,prefix,title,color in ((0,'normal','ARM',COL_ACCENT_BLUE),(1,'exit','DYNAMIC',COL_WARN)):
             row=ctk.CTkFrame(management,width=1,fg_color=COL_PANEL_BODY,corner_radius=4)
             row.grid(row=index+1,column=0,sticky='ew',pady=(0,3))
             row.grid_columnconfigure(0,minsize=108)

@@ -37,7 +37,7 @@ def preview_state(view, max_age, position=None, rules=None, *, changing_book=Fal
     elif rules and rules.distance_unit=='PNL_PERCENT' and not position.margin_per_contract:
         management = ('QL · CHỜ KÝ QUỸ', 'amber')
     elif rules and trailing_needs_margin(rules) and not position.margin_per_contract:
-        management = ('QL · TSL CHỜ KÝ QUỸ', 'amber')
+        management = ('QL · ARM CHỜ KÝ QUỸ', 'amber')
     elif changing_book or not fresh or not synced:
         management = ('QL · CHỜ DỮ LIỆU', 'red')
     elif any(o.get('position_id') == position.id and o.get('action') == 'CLOSE'

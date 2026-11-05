@@ -129,7 +129,7 @@ class OriginalRuleForms:
         self.exit_limit_cells=limit_cells
         self.initial_sl = self._field(limit_cells[0], 'SL (% GIÁ)', self.params.initial_sl_pct, 'Mức cắt lỗ theo % giá vốn bình quân. Nhập 0,25 hoặc -0,25: app dùng khoảng cách 0,25%. Giá vốn 2.000: Long cắt tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. Không tính trên tiền hoặc NAV.')
         self.take_profit = self._field(limit_cells[1], 'TP (% GIÁ)', self.params.take_profit_pct, 'Chốt toàn bộ theo % giá vốn. Giá vốn 2.000, TP 1%: Long chốt tại 2.020, Short tại 1.980. Chỉ tự đóng khi TP, BOT và quyền vị thế ON.')
-        self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Chạm mốc khi BOT và quyền quản lý ON: đóng toàn bộ HĐ khả dụng, tiếp tục phần còn lại sau khi broker xác nhận. Không chia tỷ lệ hoặc chờ bước LẶP.', 2, 0, span=2,compact=compact)
+        self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC bảo vệ trước khi ARM đạt mức bắt đầu. ARM tự bám đỉnh/đáy sau mức đó. Chạm mốc khi BOT và quyền quản lý ON: đóng toàn bộ HĐ khả dụng, tiếp tục phần còn lại sau khi broker xác nhận. Không chia tỷ lệ hoặc chờ bước LẶP.', 2, 0, span=2,compact=compact)
         repeat_host=self.protect_card._viking_header if compact else self.protect_card
         repeat_host._viking_compact=compact
         self.reentry_sl = self._field(repeat_host, 'LẶP (điểm % PNL)', self.params.reentry_sl_pct, 'Khoảng lặp theo ký quỹ cơ sở/HĐ đã lưu: tiền/HĐ = cơ sở × bước LẶP / 100; điểm giá = tiền/HĐ ÷ 100.000. Chốt bớt không đổi cơ sở/HĐ. Áp dụng ARM và DYNAMIC, không mở lại lệnh.')
@@ -144,9 +144,9 @@ class OriginalRuleForms:
         groups.pack(fill='x', padx=4, pady=(0, 0 if compact else 2))
         groups.grid_columnconfigure((0,1,2) if include_signals else (0,1), weight=1, uniform='protect-groups')
         self.exit_left_column = groups
-        normal = self._card(groups, 'TSL / ARM', 'SAU ARM: bám đỉnh/đáy và đóng toàn bộ HĐ khả dụng khi giá lùi đến mốc, BOT và quyền quản lý đều ON. ARM chỉ kích hoạt TSL, không chốt ngay.', 0, 0,compact=compact)
+        normal = self._card(groups, 'ARM', 'ARM gồm hai mức: Bắt đầu và Lùi. Lãi đủ mức Bắt đầu thì bám đỉnh Long/đáy Short; giá lùi đủ mức Lùi thì đóng toàn bộ HĐ khả dụng khi BOT và quyền quản lý ON.', 0, 0,compact=compact)
         self.protect_trail_card = normal
-        self.normal_arm = self._field(normal, 'ARM (% PNL)', self.params.normal_arm_pct, 'ARM = lãi chưa chốt / (ký quỹ cơ sở/HĐ × số HĐ còn giữ). Cơ sở 40 triệu/HĐ, ARM 5% là lãi 2 triệu/HĐ = 20 điểm giá. Đạt ARM bắt đầu TSL, chưa đóng ngay. Ký quỹ cơ sở không chạy theo tiền nạp/rút hoặc số dư.')
+        self.normal_arm = self._field(normal, 'Bắt đầu (% PNL)', self.params.normal_arm_pct, 'Lãi chưa chốt / (ký quỹ cơ sở/HĐ × số HĐ còn giữ). Cơ sở 40 triệu/HĐ, Bắt đầu 5% là lãi 2 triệu/HĐ = 20 điểm giá. Từ mức này ARM bám đỉnh/đáy; giá lùi đủ mức Lùi mới đóng. Ký quỹ cơ sở không chạy theo tiền nạp/rút hoặc số dư.')
         self.normal_giveback = self._field(normal, 'Lùi (điểm % PNL)', self.params.normal_giveback_pct, 'Khoảng lùi tính bằng điểm phần trăm PNL trên ký quỹ cơ sở/HĐ. Đỉnh +10%, lùi 2 điểm % thì kích hoạt tại +8%. Cơ sở 40 triệu, lùi 1,25 điểm % = 500.000đ/HĐ = 5 điểm giá. Long bám đỉnh, Short bám đáy; trước phí.')
         self.pnl_distances_preview=ctk.CTkLabel(normal,text='',font=('Segoe UI',12),anchor='w',justify='left',wraplength=300)
         self.pnl_distances_preview.pack(fill='x',padx=8,pady=3)

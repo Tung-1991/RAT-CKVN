@@ -76,7 +76,7 @@ class ExitSettings:
     arm_repeat: bool = False
     arm_repeat_below_arm: bool = False
     repeat_gap: float = 0.0
-    # ARM/TSL/LẶP have a separate unit; None preserves an older shared unit.
+    # ARM and legacy repeat thresholds use a separate unit; None keeps old units.
     trailing_unit: str | None = None
     dynamic_enabled: bool = False
     dynamic_policy: str = "ALERT"
@@ -111,7 +111,7 @@ class ExitSettings:
         if self.distance_unit not in {"POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
             raise ValueError("Đơn vị E/M không hợp lệ.")
         if self.trailing_unit not in {None, "POINTS", "PERCENT", "PNL_PERCENT", "PRICE_PERCENT"}:
-            raise ValueError("Đơn vị ARM/TSL/LẶP không hợp lệ.")
+            raise ValueError("Đơn vị ARM không hợp lệ.")
         for name in ("sl_distance", "tp_distance", "arm_gain", "trail_gap", "repeat_gap",
                      "atr_start_multiplier", "atr_trail_multiplier", "retention_until"):
             value = getattr(self, name)

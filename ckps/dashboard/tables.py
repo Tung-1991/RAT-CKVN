@@ -13,7 +13,7 @@ STATUS_LABELS = {"SCHEDULED":"CHỜ PHIÊN", "CREATED": "ĐÃ XẾP", "SUBMITTIN
     "PARTIAL": "KHỚP MỘT PHẦN", "UNKNOWN": "CHƯA RÕ", "CANCEL_PENDING": "CHỜ HỦY",
     "REPLACE_PENDING": "CHỜ SỬA", "FILLED": "KHỚP ĐỦ", "CANCELLED": "ĐÃ HỦY",
     "REJECTED": "TỪ CHỐI", "EXPIRED": "HẾT HIỆU LỰC", "FAILED": "LỖI"}
-REASON_LABELS = {"MANUAL":"ĐẶT TAY", "SL":"CẮT LỖ", "E":"E · EMA", "TP":"CHỐT LỜI", "ARM":"SAU ARM", "DYN":"DYNAMIC"}
+REASON_LABELS = {"MANUAL":"ĐẶT TAY", "SL":"CẮT LỖ", "E":"E · EMA", "TP":"CHỐT LỜI", "ARM":"ARM", "DYN":"DYNAMIC"}
 
 
 class DashboardTablesMixin:

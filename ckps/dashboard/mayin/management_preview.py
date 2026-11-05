@@ -81,7 +81,7 @@ def position_milestones(position: Position, rules: ExitSettings, current_price=N
         if not ready or not current_price or not isfinite(current_price):
             return show("CHỜ GIÁ", "Chờ đồng bộ vị thế/giá")
         if stage == "DYN" and armed:
-            return show("NHƯỜNG ARM", "SAU ARM đang tiếp quản")
+            return show("NHƯỜNG ARM", "ARM đang tiếp quản")
         if stage == "ARM" and not armed:
             distance = max(0, position.sign * (view["arm"] - current_price))
             if compact:return show('CHỜ ARM',f'{price(view["arm"])} · '+target_text(view['arm']))

@@ -28,7 +28,7 @@ def price_rules(rules, entry, margin):
         raise ValueError('Chờ giá vốn hợp lệ để tính % giá.')
     missing=not reference_margin(margin,entry,entry)
     if trailing_needs_margin(rules) and missing:
-        raise ValueError('Chờ ký quỹ cơ sở/HĐ để tính ARM/TSL/LẶP theo PNL.')
+        raise ValueError('Chờ ký quỹ cơ sở/HĐ để tính ARM theo PNL.')
     values = {key:(0. if key in TRAILING_DISTANCES and unit=='PNL_PERCENT' and missing
                    else rules.points(getattr(rules,key),entry,margin,
                         unit=unit if key in TRAILING_DISTANCES else rules.distance_unit)) for key in DISTANCES}
@@ -63,7 +63,7 @@ def pnl_trailing_rules(values, entry=None, margin=None):
     result,pending=pnl_rule_draft(values,entry,margin)
     if pending:
         if not reference_margin(entry,entry,entry):raise ValueError('Chờ giá vốn xác minh để quy đổi RULE; giữ nguyên mốc đang chạy.')
-        raise ValueError('Chờ ký quỹ cơ sở/HĐ để quy đổi ARM/TSL/LẶP; giữ nguyên RULE đã lưu.')
+        raise ValueError('Chờ ký quỹ cơ sở/HĐ để quy đổi ARM; giữ nguyên RULE đã lưu.')
     return result
 
 

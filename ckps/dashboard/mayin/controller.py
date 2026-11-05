@@ -231,7 +231,7 @@ class MayinController(OriginalPanels):
             return
         unit='% PNL trên ký quỹ cơ sở/HĐ'
         for prefix in ('arm','dynamic'):
-            title='TSL / ARM · SAU ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
+            title='ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
                 self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M, áp dụng chung tất cả hợp đồng.'
                 continue
@@ -245,7 +245,7 @@ class MayinController(OriginalPanels):
                 if rules.atr_trail_enabled:parts.append(f'Lùi {rules.atr_trail_multiplier:g} ATR')
                 if rules.retention_enabled:parts.append(f'Giữ {rules.retention_pct:g}% lãi')
                 parameters=' · '.join(parts)
-                explanation='Bảo vệ trước ARM. Khi đạt ARM, TSL tiếp quản.'
+                explanation='Bảo vệ trước khi ARM đạt mức bắt đầu. Sau đó ARM tiếp quản.'
             self._preview_help[prefix]='\n'.join((title,explanation,parameters,action,
                 'Cần BOT và quyền quản lý ON; chờ broker xác nhận phần còn lại, không chờ bước LẶP.'))
 
@@ -264,7 +264,7 @@ class MayinController(OriginalPanels):
         source='RULE CHUNG'
         self.preview_rule_source.configure(text=source)
         self._render_management_config(rules,position.entry,position.margin_per_contract)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nSL/TP: % giá vốn · ARM/TSL/LẶP: % PNL\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nSL/TP: % giá vốn · ARM: % PNL\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

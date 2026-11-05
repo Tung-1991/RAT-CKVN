@@ -100,7 +100,7 @@ class ProtectionFormMixin(OriginalRuleForms):
         bar=ctk.CTkFrame(body,fg_color='#1C2B3B',border_width=1,border_color='#344D66',corner_radius=7)
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=4,pady=(2,5))
         ctk.CTkLabel(bar,text='RULE CHUNG',height=22,font=('Segoe UI',12,'bold'),text_color='#B9D9FA').pack(side='left',padx=8,pady=3)
-        ctk.CTkLabel(bar,text='SL/TP: % GIÁ · ARM/TSL/LẶP: % PNL',height=22,font=('Segoe UI',12),text_color=self.TEXT).pack(side='right',padx=8)
+        ctk.CTkLabel(bar,text='SL/TP: % GIÁ · ARM: % PNL',height=22,font=('Segoe UI',12),text_color=self.TEXT).pack(side='right',padx=8)
         for index,key,label,color in ((0,'sl_enabled','BẬT SL','#EF6B73'),(1,'tp_enabled','BẬT TP','#36C997')):
             entry=(self.initial_sl,self.take_profit)[index]
             row=entry.master
@@ -134,7 +134,7 @@ class ProtectionFormMixin(OriginalRuleForms):
 
     def _update_units(self):
         for entry,title,suffix in ((self.initial_sl,'SL','% GIÁ'),(self.take_profit,'TP','% GIÁ'),
-                (self.normal_arm,'ARM','% PNL'),(self.normal_giveback,'Lùi','điểm % PNL')):
+                (self.normal_arm,'Bắt đầu','% PNL'),(self.normal_giveback,'Lùi','điểm % PNL')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w is not entry._hint_icon and w.cget('text')),None)
             if label:
                 label.configure(text=f'{title} ({suffix})')

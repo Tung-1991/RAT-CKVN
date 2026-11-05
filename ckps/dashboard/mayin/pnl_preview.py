@@ -1,4 +1,4 @@
-"""Read-only ARM/TSL/LẶP conversion using the execution margin basis."""
+"""Read-only ARM thresholds using the execution margin basis."""
 from dataclasses import dataclass
 from math import isfinite
 
@@ -40,10 +40,10 @@ def protection_reference(view, max_age=10, *, entry=None, quantity=None):
 def pnl_preview(values, reference, *, compact=False):
     """Amounts describe the remaining holding, not accumulated realized profit."""
     if reference.entry is None or not isfinite(reference.entry) or reference.entry<=0:
-        return ('CHỜ GIÁ VỐN / GIÁ VÉ', 'Chưa có dữ liệu giá hợp lệ để xem trước ARM/TSL')
+        return ('CHỜ GIÁ VỐN / GIÁ VÉ', 'Chưa có dữ liệu giá hợp lệ để xem trước ARM')
     margin=reference.margin
     if margin is None or not isfinite(margin) or margin<=0:
-        return ('CHỜ KÝ QUỸ CƠ SỞ/HĐ', 'ARM / TSL: CHỜ · SL/TP vẫn theo % giá vốn')
+        return ('CHỜ KÝ QUỸ CƠ SỞ/HĐ', 'ARM: CHỜ · SL/TP vẫn theo % giá vốn')
     try:rules=pnl_trailing_rules(values,reference.entry,margin)
     except ValueError:
         return ('CHỜ QUY ĐỔI RULE', 'Giữ nguyên RULE đã lưu và mốc bảo vệ đang chạy')

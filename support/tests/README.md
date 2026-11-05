@@ -19,7 +19,7 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_dashboard_refresh.py`: gộp snapshot chờ thành một lượt hiển thị mới nhất; dữ liệu không đổi không vẽ lại widget, giá thay đổi và giá cũ vẫn cập nhật ngay, không cấp quyền lệnh từ giá cũ.
 
-`test_pnl_trailing.py`: ARM/TSL theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, đóng toàn bộ 4 HĐ, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP. Dữ liệu LẶP cũ vẫn đọc được.
+`test_pnl_trailing.py`: ARM theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, đóng toàn bộ 4 HĐ, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP. Dữ liệu LẶP cũ vẫn đọc được.
 
 `test_preview_analysis.py`: Preview chỉ đọc tự chạy, Telegram luôn OFF; tham chiếu đóng phiên tự tính từ nến thật kể cả chưa có cache backend, dùng cho bản nháp RULE nhưng không làm giá mới/cấp LONG hoặc quyền giao dịch.
 
@@ -27,7 +27,7 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_execution_safety.py`: SL/E với lệnh đóng đang chờ, khớp trong lúc hủy, timeout,
 restart/BOT OFF, giữ chỗ, quyền quản lý và khối lượng broker bị thay đổi.
-`test_stream_safety.py`: tick cũ/thiếu thời gian/tương lai/lùi thứ tự không làm sai MFE hoặc tự đóng TSL.
+`test_stream_safety.py`: tick cũ/thiếu thời gian/tương lai/lùi thứ tự không làm sai MFE hoặc tự đóng ARM.
 `test_ema_exit.py`: E EMA3/6 Long/Short, REALTIME/CLOSED, nhịp phút, dữ liệu thiếu/cũ/khác mã,
 đóng toàn bộ đúng quyền và không phụ thuộc ALERT/Telegram.
 `test_runtime_safety.py`: snapshot tài khoản chậm không trì hoãn BOT OFF hoặc gây gửi lệnh muộn sau khi đã tắt BOT.
@@ -38,9 +38,9 @@ thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, 
 
 | File | Phạm vi |
 | --- | --- |
-| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; Long/Short SL/TSL/DYNAMIC đóng toàn bộ, TP OFF; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
+| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; Long/Short SL/ARM/DYNAMIC đóng toàn bộ, TP OFF; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
 | `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL, fill muộn, restart giữ mốc; TP OFF; cấu hình cũ ALERT/ORIGINAL/tỷ lệ khác vẫn tự đóng toàn bộ số còn lại sau giảm tay, không tự bật nhánh đã tắt |
-| `test_trade_notifications.py` | Biên nhận Long/Short SL/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
+| `test_trade_notifications.py` | Biên nhận Long/Short SL/ARM/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
 | `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; AUTO 0/thiếu sức mở hiển thị SL/phí theo 1 HĐ, không cấp sức mở; phí ước, thiếu và 0 phân biệt rõ |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |
 | `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; thoát toàn bộ qua gap/hồi giá, handoff, khớp từng phần và restart |

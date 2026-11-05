@@ -1,5 +1,8 @@
 # RAT VN30 · Hướng dẫn làm việc
 
+- Chỉ gọi ba nhánh EXIT là ARM, E và DYNAMIC. ARM gồm mức Bắt đầu và Lùi bám đỉnh/đáy;
+  không tách cơ chế bám đỉnh thành nhánh EXIT hoặc nhãn khác trên UI/Telegram.
+
 - Gọi người dùng là **thưa Kaiser** hoặc **thưa Ngài**; trả lời ngắn, chính xác.
 - Sản phẩm chỉ CKPS VN30. Đọc `support/docs/CKPS.md` trước khi sửa nghiệp vụ.
 - Một agent, trừ khi Kaiser yêu cầu rõ dùng subagent.
@@ -24,29 +27,29 @@
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
   SL/TP dùng % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa NAV.
-  ARM/TSL/LẶP dùng PNL % trên ký quỹ cơ sở/HĐ đã lưu (trailing_unit=PNL_PERCENT).
+  ARM/LẶP dùng PNL % trên ký quỹ cơ sở/HĐ đã lưu (trailing_unit=PNL_PERCENT).
   Cơ sở không chạy theo số dư/nạp rút; vào thêm bình quân theo fill, giảm HĐ giữ cơ sở/HĐ.
   Giá vốn 2.000, SL 0,25% là khoảng giá 5. TP mặc định OFF,
   có công tắc và mức % giá vốn tại RULE; bật thì chốt toàn bộ. Giữ cấu hình TP đã lưu.
-  TSL/LẶP bám đỉnh Long/đáy Short; lùi và LẶP là điểm phần trăm PNL,
+  ARM/LẶP bám đỉnh Long/đáy Short; lùi và LẶP là điểm phần trăm PNL,
   tiền/HĐ = ký quỹ cơ sở × mức nhập / 100, điểm giá = tiền/HĐ / 100.000.
   Preview RULE và vị thế hiện PNL, điểm và tiền theo HĐ còn giữ; không dùng tổng lãi đã chốt.
-  Thiếu ký quỹ thì ARM/TSL/LẶP CHỜ; SL/TP theo giá và E vẫn độc lập.
+  Thiếu ký quỹ thì ARM/LẶP CHỜ; SL/TP theo giá và E vẫn độc lập.
   Không chọn đơn vị. RULE cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
   chỉ khóa ô cần quy đổi; phần còn lại vẫn chỉnh/lưu được. Giữ số và đơn vị nguồn
   của nhóm CHỜ, tự hoàn tất bản nháp khi có cơ sở; không tự áp dụng trước LƯU.
   Giá đóng DNSE hợp lệ dùng được để xem trước/quy đổi, vẫn khóa giao dịch.
   Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
   lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
-  Giữ đầy đủ TSL/DYNAMIC/ATR; giữ lãi là % lãi đỉnh, không phải tỷ lệ HĐ đóng.
-- TSL và DYNAMIC cố định tự đóng 100% HĐ còn lại khi đủ quyền.
+  Giữ đầy đủ ARM/DYNAMIC/ATR; giữ lãi là % lãi đỉnh, không phải tỷ lệ HĐ đóng.
+- ARM và DYNAMIC cố định tự đóng 100% HĐ còn lại khi đủ quyền.
   Không AUTO / ALERT, GỐC / CÒN LẠI hoặc ô nhập tỷ lệ đóng trong E/M;
   chỉ hiển thị dòng Đóng toàn bộ HĐ còn lại. Ẩn điều khiển LẶP chia lượt;
   giữ dữ liệu cũ để quy đổi nhưng không chờ bước LẶP khi thoát toàn bộ.
   Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 100%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 1%, E ON EMA3/6,
-  ARM 5% PNL, TSL lùi 1,5 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
+  ARM 5% PNL, lùi ARM 1,5 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
   giữ 65% lãi đỉnh, TỚI MFE OFF; chạm mốc đóng toàn bộ, không chia lượt; LẶP preset OFF.
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
@@ -65,7 +68,7 @@
 - Fill, vị thế, queue cùng transaction. Timeout là UNKNOWN, không tự POST lại.
 - Giữ bố cục MayinTien: trái tài khoản/điều khiển/vé lệnh; phải bảng lệnh ở trên,
   PREVIEW / LOG ở dưới. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN;
-  hiện trạng thái phân tích và EMA/RSI chỉ đọc. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
+  hiện trạng thái phân tích và EMA/RSI chỉ đọc. Chỉ thêm ARM/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
 - Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
@@ -90,7 +93,7 @@
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE/KẾT NỐI tối đa 780×600 logic, cùng DPI; E/M nhãn 12, số 14, giữ các nhóm gốc.
   SL/TP gom công tắc và ô số cùng hàng; không hiện bước chia lượt LẶP.
-- E/M hiện TSL/ARM và DYNAMIC, đóng toàn bộ; ATR14 nguồn chỉ đọc,
+- E/M hiện ARM và DYNAMIC, đóng toàn bộ; ATR14 nguồn chỉ đọc,
   hệ số DYNAMIC chỉnh trực tiếp, không giấu trong nâng cao. Giữ hint và cùng cỡ hai cửa sổ.
 - Preview và RULE cùng hiện ATR14, phiên nến, START/lùi tính ra từ nguồn thực thi;
   thiếu nến/khác mã hiện CHỜ. Giá cũ vẫn khóa tín hiệu; ATR nến đã đóng hiển thị
