@@ -116,7 +116,10 @@ class SignalRuntime(SignalNotifications):
         data=self.market.snapshot()
         contract=data['contract']
         if not is_vn30(contract):raise ValueError('Backend chỉ phân tích hợp đồng VN30.')
-        quotes={symbol:load_record(Quote,raw) for symbol,raw in data.get('quotes',{}).items() if raw.get('symbol')==symbol and is_vn30(symbol)}
+        quotes={}
+        for symbol, raw in data.get('quotes',{}).items():
+            quote = raw if isinstance(raw, Quote) else load_record(Quote, raw)
+            if quote.symbol == symbol and is_vn30(symbol):quotes[symbol] = quote
         feed=getattr(self.market,'feed',None)
         if feed:
             quote=feed.latest(contract,self.settings.max_quote_age)
@@ -133,7 +136,7 @@ class SignalRuntime(SignalNotifications):
                 text=f'{contract} · {event["channel"]} · ALERT\n'+event['reason']
                 if event.get('notify',True) and self.owner_enabled and self.owner_token and self.owner_chat and self._private_alert_allowed(text):
                     self.store.notify('owner:'+self.owner_chat,text,key=event['id'])
-        from .market_context import publish_context, entry_context
+        from .market_context import publish_context, entry_context, analysis_context
         last_move=self.store.get('market','movement:'+contract,{})
         quote=raw_quotes.get(contract,{})
         from .session_preview import closing_analysis
@@ -142,6 +145,7 @@ class SignalRuntime(SignalNotifications):
         if quote and (-2<=observed_at-quote.get('at',0)<=self.settings.max_quote_age or reference):
             movement=(f"BIẾN ĐỘNG {last_move.get('change_points',0):+g}đ" if 0<=time.time()-last_move.get('at',0)<=60 else 'ĐANG THEO DÕI')
             publish_context({'contract':contract,'observed_at':observed_at,'movement':movement,'reference':reference,
+                'analysis':analysis_context(analysis,contract,max_age=self.settings.max_quote_age,now=observed_at),
                 'entry':entry_context(analysis,contract,max_age=self.settings.max_quote_age)}, preview=getattr(self,'preview_only',False))
         self.events.put(('snapshot',{'contract':contract,'quotes':raw_quotes,'connection':data,'analysis':analysis,
             'history':self.store.all('signal_history')[-200:],'events':self.store.events(),

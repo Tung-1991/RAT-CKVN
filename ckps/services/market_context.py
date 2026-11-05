@@ -52,6 +52,27 @@ def entry_context(analysis, contract, *, max_age=10, now=None):
         return waiting
 
 
+def analysis_context(analysis, contract, *, max_age=10, now=None):
+    """Public indicator detail only; it cannot grant an entry or refresh its age."""
+    now=time.time() if now is None else now
+    if not isinstance(analysis,dict):return {}
+    try:
+        if (analysis.get('contract')!=contract or analysis.get('error')
+                or not -2<=now-float(analysis['observed_at'])<=max_age
+                or not -2<=now-float(analysis['quote_at'])<=max_age):return {}
+        p2=analysis.get('p2',{})
+        if not isinstance(p2,dict):return {}
+        source=p2.get('indicators',{})
+        if not isinstance(source,dict):source={}
+        indicators={}
+        for key in ('buy_ema_fast','buy_ema_slow','sell_ema_fast','sell_ema_slow','rsi'):
+            value=source.get(key)
+            if isinstance(value,(int,float)) and not isinstance(value,bool) and isfinite(value):indicators[key]=value
+        return {'contract':contract,'observed_at':analysis['observed_at'],'quote_at':analysis['quote_at'],
+                'p2':{'status':str(p2.get('status',''))[:120],'indicators':indicators}}
+    except (ValueError,TypeError,KeyError):return {}
+
+
 def context(snapshot, *, max_age=10, now=None, preview=False):
     now = time.time() if now is None else now
     quote = snapshot.quotes.get(snapshot.contract)
@@ -103,4 +124,5 @@ def context(snapshot, *, max_age=10, now=None, preview=False):
                     entry={'state':'READY','price':value,'observed_at':candidate['observed_at']}
     except (OSError, ValueError, TypeError, KeyError):
         pass
-    return {"text":text,"state":p1['state'],"ma":p1.get('ma'),"observed_at":quote.at,'entry':entry}
+    return {"text":text,"state":p1['state'],"ma":p1.get('ma'),"observed_at":quote.at,'entry':entry,
+            'analysis':analysis_context(shared.get('analysis',{}),snapshot.contract,max_age=max_age,now=now)}

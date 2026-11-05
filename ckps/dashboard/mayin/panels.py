@@ -8,7 +8,7 @@ from .widgets import FONT_KEY, FONT_VALUE, FONT_MONO_VALUE, StatusLabel, fit_ent
 from .hover_hint import _HoverHint
 APP_NAME = 'RAT VN30'
 APP_VERSION = '0.1.0'
-INFO_PANEL_HEIGHT = 230
+INFO_PANEL_HEIGHT = 300
 
 class OriginalPanels:
 
@@ -226,6 +226,7 @@ class OriginalPanels:
         self.market_context_label=ctk.CTkLabel(self.info_header,text='CHỈ THAM KHẢO',height=28,
             font=('Segoe UI',13,'bold'),text_color='#9BB9D8',anchor='e')
         self.market_context_label.grid(row=0,column=1,sticky='ew',padx=(8,10))
+        self.market_context_label.grid_remove()
         signals=ctk.CTkFrame(data,fg_color='transparent')
         signals.grid(row=0,column=0,sticky='ew',pady=(0,6))
         signals.grid_columnconfigure((0,1),weight=1,uniform='signals')
@@ -241,23 +242,22 @@ class OriginalPanels:
             self.preview_signal_cards.append(card)
         metadata=ctk.CTkFrame(data,fg_color='transparent')
         metadata.grid(row=1,column=0,sticky='ew',pady=(0,5))
-        metadata.grid_columnconfigure(0,weight=2,uniform='preview-metadata')
-        metadata.grid_columnconfigure(1,weight=1,uniform='preview-metadata')
+        metadata.grid_columnconfigure(0,weight=1)
         atr=ctk.CTkFrame(metadata,width=1,fg_color='#1A2A3C',border_width=1,border_color='#344E6C',corner_radius=7)
-        atr.grid(row=0,column=0,sticky='nsew',padx=(0,4))
+        atr.grid(row=0,column=0,sticky='nsew')
         atr.grid_columnconfigure(0,weight=1)
         self.preview_atr=atr
         label(atr,'preview_atr_title','DYNAMIC · ATR14',size=12,color='#9EBEE1',bold=True,row=0,column=0,padx=10,pady=(6,1))
         label(atr,'preview_atr_value','ATR14 · CHỜ NẾN 1D',size=14,color=COL_WARN,bold=True,row=1,column=0,padx=10,pady=(2,2))
         label(atr,'preview_atr_detail','',size=13,color='#DCC59E',bold=False,row=2,column=0,padx=10,pady=(0,7))
         atr._hover_hint=_HoverHint(atr,lambda:getattr(self,'_preview_atr_help','ATR14 dùng nến ngày đã đóng của đúng hợp đồng.'),click_to_toggle=True,hover=False)
-        authentication=ctk.CTkFrame(metadata,width=1,fg_color='#202B31',border_width=1,border_color='#3D555F',corner_radius=7)
-        authentication.grid(row=0,column=1,sticky='nsew',padx=(4,0))
-        authentication.grid_columnconfigure(0,weight=1)
+        authentication=ctk.CTkFrame(self.info_header,width=1,fg_color='#202B31',corner_radius=4)
+        authentication.grid(row=0,column=1,sticky='ew',padx=(8,10),pady=3)
+        authentication.grid_columnconfigure(1,weight=1)
         self.preview_authentication=authentication
-        label(authentication,'preview_auth_title','XÁC THỰC',size=12,color='#AFC7D1',bold=True,row=0,column=0,padx=10,pady=(6,1))
-        self.preview_connection=label(authentication,'preview_connection_status',size=14,color='#B8D3E3',bold=True,
-            row=1,column=0,padx=10,pady=(4,8))
+        label(authentication,'preview_auth_title','OTP',size=11,color='#AFC7D1',bold=False,row=0,column=0,padx=(8,4),pady=2).configure(width=28)
+        self.preview_connection=label(authentication,'preview_connection_status',size=11,color='#B8D3E3',bold=False,
+            row=0,column=1,padx=(4,8),pady=2)
         management=ctk.CTkFrame(data,width=1,fg_color='transparent')
         management.grid(row=3,column=0,sticky='new')
         management.grid_columnconfigure(0,weight=1)
@@ -323,7 +323,7 @@ class OriginalPanels:
         height=max(300 if self.preview_management.winfo_manager() else INFO_PANEL_HEIGHT,required)
         if self.table_workspace.cget('height')!=170:self.table_workspace.configure(height=170)
         if self.info_panel.cget('height')!=height:self.info_panel.configure(height=height)
-        self.right.grid_rowconfigure(1,weight=1,minsize=170)
+        self.right.grid_rowconfigure(1,weight=1,minsize=ceil(170*scale))
         self.right.grid_rowconfigure(3,weight=0,minsize=0)
         self.right.grid_rowconfigure(2,weight=0,minsize=height)
         self._fit_preview_text()

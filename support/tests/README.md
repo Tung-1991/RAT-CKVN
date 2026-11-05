@@ -7,6 +7,8 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_tick_exits.py`: các tick hợp lệ trong cùng lô giữ ý định SL/TP/E qua hồi giá, cùng timestamp, snapshot mới hơn, restart và lệnh đóng cũ giữ chỗ; BOT/quyền OFF không tạo ý định, bật lại không xử lý lại giao cắt khi OFF; UNKNOWN chỉ gửi một lần, tick cũ không được giá mới hợp thức hóa.
 
+`test_app_separation.py`: Preview nhận đúng đối tượng Quote từ PaperMarket thật và xuất market-context, không gửi Telegram hoặc tạo lệnh. `test_signal_preview.py` kiểm tra lý do chờ/EMA/RSI công khai; số liệu cũ, khác mã hoặc có lỗi không được dùng và không tạo tín hiệu mới.
+
 `test_full_protection_exits.py`: ARM/DYNAMIC Long/Short đóng toàn bộ 1/2/3/7 HĐ; cấu hình 33%/50% và LẶP cũ không chia lượt. Giữ ý định qua tick hồi cùng timestamp, lệnh đóng giữ chỗ/restart; UNKNOWN hoặc broker từ chối không POST lại, tắt nhánh dừng ý định, DYNAMIC không chờ ký quỹ chỉ vì bước LẶP không dùng.
 
 `test_paper_sessions.py`: LO thường hết hạn cuối phiên và qua restart, tương thích bản ghi cũ; giờ nghỉ/giá đóng phiên không tạo fill, không đổi tiền/vị thế; lệnh đã nhận vẫn khớp trong ATC dù cổng gửi mở mới đang chặn.

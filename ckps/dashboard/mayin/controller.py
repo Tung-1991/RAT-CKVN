@@ -204,8 +204,10 @@ class MayinController(OriginalPanels):
             converted=dynamic_pnl_preview(self.view,self.settings.exit,
                 protection_reference(self.view,self.settings.max_quote_age),self.view['atr14']['pct'])
             if converted:
-                detail,full=converted
+                summary,detail=converted
+                full=detail
                 self._preview_atr_help+='\n'+full
+        detail+='\nChạm điều kiện thoát: đóng toàn bộ HĐ khả dụng · BOT + quyền vị thế ON.'
         self.preview_atr_value.configure(text=value,text_color=COL_ACCENT_BLUE if ready else COL_WARN)
         self.preview_atr_detail.configure(text=detail)
         popup=self.popups.get('rule')

@@ -1,4 +1,4 @@
-"""Two black-box results; no indicator controls or execution callbacks."""
+"""Read-only results and public analysis detail; no execution callbacks."""
 from math import isfinite
 import time
 from ckps.models import Quote, load_record
@@ -47,7 +47,8 @@ def signal_preview(view, max_age=10, *, now=None):
     ma=context.get('ma')
     if state in {'ABOVE','BELOW','EQUAL'} and isinstance(ma,(int,float)) and isfinite(ma) and ma>0:
         trend=({'ABOVE':'UP','BELOW':'DOWN','EQUAL':'ĐI NGANG'}[state],
-            'MA200 · '+price(ma),{'ABOVE':'green','BELOW':'red','EQUAL':'neutral'}[state])
+            'Giá HĐ '+price(quote['last'])+' · MA200 '+price(ma)+'\nGiờ giá '+clock(quote['at']),
+            {'ABOVE':'green','BELOW':'red','EQUAL':'neutral'}[state])
     else:trend=('CHỜ','Chưa đủ nến ngày','amber')
     entry=context.get('entry',{})
     detail={
@@ -68,4 +69,13 @@ def signal_preview(view, max_age=10, *, now=None):
             if isfinite(value) and value>0 and -2<=now-float(entry['observed_at'])<=max_age:
                 result=('LONG · '+price(value),'Phân tích lúc '+clock(entry['observed_at']),'green')
         except (ValueError,TypeError,KeyError):pass
+    from ckps.services.market_context import analysis_context
+    public=analysis_context(context.get('analysis',{}),view.get('contract'),max_age=max_age,now=now)
+    if public:
+        p2=public['p2'];marks=p2['indicators'];lines=[]
+        if p2['status']:lines.append(p2['status'])
+        if 'buy_ema_fast' in marks and 'buy_ema_slow' in marks:
+            lines.append('EMA nhanh '+price(marks['buy_ema_fast'])+' · chậm '+price(marks['buy_ema_slow']))
+        if 'rsi' in marks:lines.append(f"RSI {marks['rsi']:.2f} · Phân tích "+clock(public['observed_at']))
+        if lines:result=(result[0], '\n'.join(lines), result[2])
     return result,trend

@@ -65,7 +65,7 @@
 - Fill, vị thế, queue cùng transaction. Timeout là UNKNOWN, không tự POST lại.
 - Giữ bố cục MayinTien: trái tài khoản/điều khiển/vé lệnh; phải bảng lệnh ở trên,
   PREVIEW / LOG ở dưới. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN;
-  giấu EMA/RSI/các đếm giao cắt. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
+  hiện trạng thái phân tích và EMA/RSI chỉ đọc. Chỉ thêm TSL/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
 - Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
@@ -105,8 +105,8 @@
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ trong phiên hiện CHỜ; không suy ngược điểm Short.
   Bảng chính ẩn PNL; Preview bảo vệ vị thế được hiện PNL/điểm/tiền.
-  Preview: nhãn 12–13, kết quả 22, chi tiết 13–14; OTP 14 đậm, giá/vốn 24.
-  Hai ô kết quả cao tối thiểu 96, vùng Preview tối thiểu 230 logic; căn lề 10,
+  Preview: nhãn 12–13, kết quả 22, chi tiết 13–14; OTP 11 thường, gọn một dòng, giá/vốn 24.
+  Hai ô kết quả cao tối thiểu 96, vùng Preview tối thiểu 300 logic, tự tăng theo nội dung; căn lề 10,
   giãn dòng rõ, vẫn để bảng lệnh giãn phần còn lại và kiểm tra DPI 100–200%.
   Dòng bảo vệ chỉ hiện mốc, PNL/tiền và HĐ giảm; khoảng còn lại chi tiết đưa vào hint.
   DYNAMIC giữ ATR/giữ lãi, Preview quy đổi PNL theo cơ sở thật; không đổi thuật toán vì cách trình bày.

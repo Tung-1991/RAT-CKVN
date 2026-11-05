@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 from ckps.models import Quote
-from ckps.services.market_context import context, entry_context, publish_context
+from ckps.services.market_context import context, entry_context, publish_context, analysis_context
 from ckps.dashboard.mayin.signal_preview import signal_preview
 
 
@@ -89,3 +89,27 @@ def test_wait_reason_distinguishes_history_backend_failure_and_old_analysis():
     view['market_context']['entry']={'state':'WAIT_SOURCE'}
     view['analysis_running']=True
     assert signal_preview(view,now=1000)[0][1]=='Chờ kết quả phân tích'
+
+
+def test_public_indicator_details_explain_wait_without_granting_a_signal_or_refreshing_old_data():
+    raw=analysis(buy_alert=False,status='CHỜ CẮT LÊN',indicators={
+        'buy_ema_fast':1998,'buy_ema_slow':2000,'rsi':42.5,'secret':'private','sell_ema_fast':float('nan')})
+    public=analysis_context(raw,'VN30F1M',now=1000)
+    assert public['p2']['indicators']=={'buy_ema_fast':1998,'buy_ema_slow':2000,'rsi':42.5}
+    quote=Quote('VN30F1M',2007,at=1000)
+    publish_context({'contract':quote.symbol,'observed_at':1000,'entry':entry_context(raw,quote.symbol,now=1000),
+        'analysis':public},preview=True)
+    snapshot=SimpleNamespace(contract=quote.symbol,quotes={quote.symbol:quote},bars=[])
+    view={'contract':quote.symbol,'quotes':{quote.symbol:asdict(quote)},'market_context':context(snapshot,now=1000,preview=True)}
+    result,_=signal_preview(view,now=1000)
+    assert result[0]=='CHƯA CÓ ĐIỂM'
+    assert 'CHỜ CẮT LÊN' in result[1] and 'EMA nhanh 1,998.0' in result[1] and 'RSI 42.50' in result[1]
+    assert 'private' not in str(public)
+    assert not analysis_context(raw,'41I1GB000',now=1000)
+    assert not analysis_context(raw,quote.symbol,now=1011)
+    assert not analysis_context({**raw,'quote_at':980},quote.symbol,now=1000)
+    assert not analysis_context({**raw,'error':'private credentials'},quote.symbol,now=1000)
+    view['quotes'][quote.symbol]['at']=1011
+    view['market_context']['observed_at']=1011
+    result,_=signal_preview(view,now=1011)
+    assert 'EMA' not in result[1] and 'RSI' not in result[1]

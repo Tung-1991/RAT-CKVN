@@ -63,7 +63,9 @@ def _layout_scenario(scale):
         assert not app.positions_tree.horizontal.winfo_ismapped()
         assert app.table_workspace.winfo_height()>=app.right.winfo_height()*.4
         assert abs(app.info_panel.winfo_rooty()+app.info_panel.winfo_height()-app.right.winfo_rooty()-app.right.winfo_height())<=2
-        assert 230<=app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=285
+        assert 300<=app.info_panel.winfo_height()/app.info_panel._get_widget_scaling()<=380
+        assert app.preview_connection_status.cget('font')==('Segoe UI',11)
+        assert app.preview_authentication.winfo_height()/app.preview_authentication._get_widget_scaling()<=28
         assert app.preview_entry_value.cget('font')[1]==22
         assert app.preview_entry_detail.cget('font')==('Segoe UI',14)
         assert not {'manage','adopt'} & set(app.action_buttons)
@@ -176,7 +178,7 @@ def _layout_scenario(scale):
             dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,dynamic_repeat=True,
             atr_start_multiplier=.5,retention_pct=70,retention_until_enabled=False)
         app.settings.exit=asdict(rules)
-        position=Position.create('VN30F1M','LONG',2,2000,history_verified=True)
+        position=Position.create('VN30F1M','LONG',2,2000,history_verified=True,margin_per_contract=40_000_000)
         evaluate(position,2012,rules,1)
         position.metrics['DYN:AUTO']={'count':1,'anchor':2008.4}
         app.view.update(positions=[asdict(position)],orders=[],healthy=True,consistent=True,
@@ -184,6 +186,19 @@ def _layout_scenario(scale):
         app.render();app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview();settle()
         assert 'MỐC 2,008.4' in app.preview_exit_value.cget('text')
+        from time import time
+        from datetime import date,timedelta
+        stamp=time()
+        app.view.update(atr14={'contract':'VN30F1M','period':14,'count':20,'pct':1.,
+            'as_of':(date.today()-timedelta(days=1)).isoformat()},
+            market_context={'state':'BELOW','ma':2010,'observed_at':stamp,'entry':{'state':'WAIT'},
+                'analysis':{'contract':'VN30F1M','observed_at':stamp,'quote_at':stamp,
+                    'p2':{'status':'CHỜ CẮT LÊN','indicators':{'buy_ema_fast':1998,'buy_ema_slow':2000,'rsi':42.5}}}})
+        app._refresh_ticket_preview();settle()
+        assert 'EMA nhanh 1,998.0' in app.preview_entry_detail.cget('text')
+        assert 'RSI 42.50' in app.preview_entry_detail.cget('text')
+        assert '2,000,000 đ/2 HĐ' in app.preview_atr_detail.cget('text')
+        assert 'điểm' in app.preview_atr_detail.cget('text')
         assert app.positions_tree.cell(position.id,'managed')['text']=='CHƯA NHẬN'
         assert app.positions_tree.cell(position.id,'side')['color']=='#22C55E'
         assert app.positions_tree.cell(position.id,'pnl')['color']=='#22C55E'

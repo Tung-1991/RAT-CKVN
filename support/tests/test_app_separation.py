@@ -29,6 +29,32 @@ def test_backend_cannot_create_engine_or_accept_trading_commands(monkeypatch):
     assert not runtime.thread.is_alive() and not runtime.telegram_thread.is_alive()
 
 
+def test_preview_publishes_actual_paper_market_quote_objects_without_notifications():
+    import json
+    from ckps.connections.dnse.paper_market import PaperMarket
+    feed=SimpleNamespace(start=lambda symbols:None,latest=lambda *args:None)
+    client=SimpleNamespace(feed=feed,resolve=lambda:'VN30F1M',get_quote=lambda symbol:Quote(symbol,2007),
+        daily_bars=lambda:[],close=lambda:None)
+    market=PaperMarket(client,start=False)
+    market._poll()
+    assert isinstance(market.snapshot()['quotes']['VN30F1M'],Quote)
+    backend=SignalRuntime(Settings(),market=market,preview_only=True)
+    try:
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            kind,value=backend.events.get(timeout=3)
+            assert kind!='error',value
+            if kind=='snapshot':break
+        else:pytest.fail('Preview did not publish a market snapshot.')
+        assert value['quotes']['VN30F1M']['last']==2007
+        path=runtime_root()/'signals'/'preview'/'market-context.json'
+        assert json.loads(path.read_text(encoding='utf-8'))['contract']=='VN30F1M'
+        assert not backend.owner_enabled and not backend.owner_token
+        assert not backend.store.orders() and not backend.store.positions()
+    finally:
+        backend.close();backend.thread.join(5)
+
+
 def test_trading_and_signal_apps_can_run_together_with_isolated_ledgers_and_settings():
     trading=Settings(paper_balance=230_000_000)
     write_settings(trading)
