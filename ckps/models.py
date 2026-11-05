@@ -128,7 +128,7 @@ class ExitSettings:
                 raise ValueError("Tỷ lệ đóng phải trong (0, 100].")
             if getattr(self, stage + "_basis") not in {"ORIGINAL", "REMAINING"}:
                 raise ValueError("Cơ sở khối lượng không hợp lệ.")
-            if getattr(self, stage + "_repeat") and self.repeat_gap <= 0:
+            if getattr(self, stage + "_repeat") and getattr(self, stage + "_close_pct") < 100 and self.repeat_gap <= 0:
                 raise ValueError("Bật LẶP cần khoảng lặp lớn hơn 0.")
         if not 0 <= self.retention_pct <= 100:
             raise ValueError("Tỷ lệ giữ lãi phải trong [0, 100].")

@@ -78,34 +78,34 @@ def test_saved_tp_is_respected_and_closes_the_position(system,side,price):
 
 @pytest.mark.parametrize('stage', ['ARM','DYN'])
 @pytest.mark.parametrize('side,sign', [('LONG',1),('SHORT',-1)])
-def test_old_alert_original_and_custom_percent_cannot_change_ready_to_use_reductions(system,stage,side,sign):
+def test_old_alert_original_and_custom_percent_cannot_change_full_exits(system,stage,side,sign):
     engine,broker,store=system
     engine.paper_capital(200_000_000)
     engine.open_manual(side,4,'MOK');engine.poll()
     position=store.positions()[0]
     engine.close_position(position.id,2);engine.poll()
     assert store.position(position.id).quantity==2 and store.position(position.id).original_quantity==4
-    # Attempted old choices would either only alert or close all remaining HĐ.
+    # Old alert/fraction choices cannot leave a partial holding behind.
     engine.settings.exit=asdict(ExitSettings(arm_enabled=stage=='ARM',arm_gain=1,trail_gap=.25,
-        arm_policy='ALERT',arm_basis='ORIGINAL',arm_close_pct=100,arm_repeat=True,
+        arm_policy='ALERT',arm_basis='ORIGINAL',arm_close_pct=33,arm_repeat=True,
         arm_repeat_below_arm=True,repeat_gap=.25,dynamic_enabled=stage=='DYN',
-        dynamic_policy='ALERT',dynamic_basis='ORIGINAL',dynamic_close_pct=100,
+        dynamic_policy='ALERT',dynamic_basis='ORIGINAL',dynamic_close_pct=50,
         dynamic_repeat=True,atr_start_multiplier=.5,retention_pct=70,retention_until_enabled=False))
     engine._atr=lambda symbol:1.
     engine.arm(True)
     broker.set_price(2000+sign*(28 if stage=='ARM' else 12));engine.poll()
     broker.set_price(2000+sign*(23 if stage=='ARM' else 8));engine.poll();engine.poll()
-    assert store.position(position.id).quantity==1
+    assert store.position(position.id).quantity==0
     closes=[o for o in store.orders() if o.source=='AUTO']
-    assert len(closes)==1 and closes[0].quantity==1 and closes[0].reason==stage
+    assert len(closes)==1 and closes[0].quantity==2 and closes[0].reason==stage
     for _ in range(3):engine.poll()
     assert len([o for o in store.orders() if o.source=='AUTO'])==1
     broker.set_price(2000+sign*(18 if stage=='ARM' else 3));engine.poll();engine.poll()
     assert not store.positions()
-    assert [o.quantity for o in store.orders() if o.source=='AUTO']==[1,1]
+    assert [o.quantity for o in store.orders() if o.source=='AUTO']==[2]
 
 
-def test_loading_old_choices_uses_auto_and_half_remaining_without_enabling_disabled_branches():
+def test_loading_old_choices_uses_auto_and_all_remaining_without_enabling_disabled_branches():
     raw=asdict(ExitSettings(sl_enabled=True,sl_distance=.35,arm_enabled=False,dynamic_enabled=False,
         arm_policy='ALERT',dynamic_policy='ALERT',arm_basis='ORIGINAL',dynamic_basis='ORIGINAL',
         arm_close_pct=33,dynamic_close_pct=67))
@@ -116,5 +116,5 @@ def test_loading_old_choices_uses_auto_and_half_remaining_without_enabling_disab
     assert raw==original
     for prefix in ('arm','dynamic'):
         assert loaded[prefix+'_policy']=='AUTO' and loaded[prefix+'_basis']=='REMAINING'
-        assert loaded[prefix+'_close_pct']==50 and not loaded[prefix+'_enabled']
+        assert loaded[prefix+'_close_pct']==100 and not loaded[prefix+'_enabled']
     assert loaded['sl_distance']==.35 and loaded['sl_enabled'] and not loaded['tp_enabled']

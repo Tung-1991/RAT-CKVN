@@ -111,7 +111,8 @@ def position_milestones(position: Position, rules: ExitSettings, current_price=N
         detail += target_text(target)
         if compact:
             label='MỐC'
-            detail=(target_text(target) or remaining)+(f' · giảm {qty} HĐ' if policy=='AUTO' else ' · chỉ báo')
+            verb='đóng' if getattr(rules,prefix+'_close_pct')==100 else 'giảm'
+            detail=(target_text(target) or remaining)+(f' · {verb} {qty} HĐ' if policy=='AUTO' else ' · chỉ báo')
         if position.profit_points(current_price) <= 0:
             detail = "Giá chưa có lãi · chưa xử lý"
         return show(label + " " + price(target), detail)

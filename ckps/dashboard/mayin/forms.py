@@ -129,7 +129,7 @@ class OriginalRuleForms:
         self.exit_limit_cells=limit_cells
         self.initial_sl = self._field(limit_cells[0], 'SL (% GIÁ)', self.params.initial_sl_pct, 'Mức cắt lỗ theo % giá vốn bình quân. Nhập 0,25 hoặc -0,25: app dùng khoảng cách 0,25%. Giá vốn 2.000: Long cắt tại 1.995, Short tại 2.005, lỗ trước phí 500.000đ/HĐ. Không tính trên tiền hoặc NAV.')
         self.take_profit = self._field(limit_cells[1], 'TP (% GIÁ)', self.params.take_profit_pct, 'Chốt toàn bộ theo % giá vốn. Giá vốn 2.000, TP 1%: Long chốt tại 2.020, Short tại 1.980. Chỉ tự đóng khi TP, BOT và quyền vị thế ON.')
-        self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Khi BOT và quyền quản lý ON, mỗi lượt tự đóng 50% số HĐ còn lại, làm tròn xuống và tối thiểu 1 HĐ. Ví dụ 4 → 2 → 1 → 0 HĐ qua các lượt LẶP, không gửi liên tục cùng một mốc.', 2, 0, span=2,compact=compact)
+        self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC trước ARM; TSL bám đỉnh/đáy sau ARM. Chạm mốc khi BOT và quyền quản lý ON: đóng toàn bộ HĐ khả dụng, tiếp tục phần còn lại sau khi broker xác nhận. Không chia tỷ lệ hoặc chờ bước LẶP.', 2, 0, span=2,compact=compact)
         repeat_host=self.protect_card._viking_header if compact else self.protect_card
         repeat_host._viking_compact=compact
         self.reentry_sl = self._field(repeat_host, 'LẶP (điểm % PNL)', self.params.reentry_sl_pct, 'Khoảng lặp theo ký quỹ cơ sở/HĐ đã lưu: tiền/HĐ = cơ sở × bước LẶP / 100; điểm giá = tiền/HĐ ÷ 100.000. Chốt bớt không đổi cơ sở/HĐ. Áp dụng ARM và DYNAMIC, không mở lại lệnh.')
@@ -137,13 +137,14 @@ class OriginalRuleForms:
             self.reentry_sl.master.pack_configure(side='right',fill='none',padx=0,pady=0)
             self.reentry_sl.master.grid_columnconfigure(0,weight=0)
             next(w for w in self.reentry_sl.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w.cget('text')).configure(width=150)
+        self.reentry_sl.master.pack_forget()  # Keep legacy values for draft conversion only.
         self.pnl_basis_preview=ctk.CTkLabel(self.protect_card,text='',height=22,font=('Segoe UI',12,'bold'),anchor='w',justify='left',wraplength=650)
         self.pnl_basis_preview.pack(fill='x',padx=10,pady=(1,2))
         groups = ctk.CTkFrame(self.protect_card, fg_color='transparent')
         groups.pack(fill='x', padx=4, pady=(0, 0 if compact else 2))
         groups.grid_columnconfigure((0,1,2) if include_signals else (0,1), weight=1, uniform='protect-groups')
         self.exit_left_column = groups
-        normal = self._card(groups, 'TSL / ARM', 'SAU ARM: bám đỉnh/đáy và tự đóng 50% HĐ còn lại khi giá lùi đến mốc, BOT và quyền quản lý đều ON.', 0, 0,compact=compact)
+        normal = self._card(groups, 'TSL / ARM', 'SAU ARM: bám đỉnh/đáy và đóng toàn bộ HĐ khả dụng khi giá lùi đến mốc, BOT và quyền quản lý đều ON. ARM chỉ kích hoạt TSL, không chốt ngay.', 0, 0,compact=compact)
         self.protect_trail_card = normal
         self.normal_arm = self._field(normal, 'ARM (% PNL)', self.params.normal_arm_pct, 'ARM = lãi chưa chốt / (ký quỹ cơ sở/HĐ × số HĐ còn giữ). Cơ sở 40 triệu/HĐ, ARM 5% là lãi 2 triệu/HĐ = 20 điểm giá. Đạt ARM bắt đầu TSL, chưa đóng ngay. Ký quỹ cơ sở không chạy theo tiền nạp/rút hoặc số dư.')
         self.normal_giveback = self._field(normal, 'Lùi (điểm % PNL)', self.params.normal_giveback_pct, 'Khoảng lùi tính bằng điểm phần trăm PNL trên ký quỹ cơ sở/HĐ. Đỉnh +10%, lùi 2 điểm % thì kích hoạt tại +8%. Cơ sở 40 triệu, lùi 1,25 điểm % = 500.000đ/HĐ = 5 điểm giá. Long bám đỉnh, Short bám đáy; trước phí.')
@@ -151,11 +152,13 @@ class OriginalRuleForms:
         self.pnl_distances_preview.pack(fill='x',padx=8,pady=3)
         for widget in (self.pnl_basis_preview,self.pnl_distances_preview):
             widget.bind('<Configure>',lambda event,w=widget:configure_changed(w,wraplength=max(120,int(w.winfo_width()/w._get_widget_scaling())-4)),add='+')
-        ctk.CTkLabel(normal, text='Đóng 50% HĐ còn lại', font=('Segoe UI',12), text_color=self.TITLE, anchor='w').pack(fill='x',padx=12,pady=4)
+        ctk.CTkLabel(normal, text='Đóng toàn bộ HĐ còn lại', font=('Segoe UI',12), text_color=self.TITLE, anchor='w').pack(fill='x',padx=12,pady=4)
         self.normal_repeat = self._switch(normal, 'LẶP ĐÓNG', self.params.normal_repeat_enabled, 'Cho phép đóng tiếp sau khi lệnh trước kết thúc, theo Bước LẶP hoặc đỉnh/đáy mới.')
-        self.below_arm = self._switch(normal, 'LẶP DƯỚI ARM', self.params.arm_repeat_below_arm, 'Sau lượt ARM đầu: ON cho phép lặp khi PNL còn dương trước phí dù dưới ARM; mỗi lượt cách đủ bước LẶP theo điểm % PNL. OFF chờ PNL còn đạt ARM. Mỗi lượt 50% HĐ còn lại, không gửi lại cùng mốc.')
+        self.below_arm = self._switch(normal, 'LẶP DƯỚI ARM', self.params.arm_repeat_below_arm, 'Giữ cấu hình cũ; thoát toàn bộ không dùng bước lặp.')
+        self.normal_repeat._viking_row.pack_forget()
+        self.below_arm._viking_row.pack_forget()
         self.repeat_switch = next((child for child in self.normal_repeat._viking_row.winfo_children() if isinstance(child, ctk.CTkSwitch)))
-        dynamic_box = self._card(groups, 'DYNAMIC', 'Bảo vệ trước ARM bằng ATR14 nến ngày đã đóng và/hoặc giữ lãi đỉnh. START quyết định lúc bắt đầu; Lùi ATR và Giữ lãi cùng bật thì chọn mốc bảo vệ chặt hơn. Tới MFE chỉ giới hạn nhánh giữ lãi; OFF giữ tới ARM. Mốc đã bảo vệ không tự nới khi đổi tham số. Mỗi lượt đóng 50% HĐ còn lại khi đủ quyền.', 0, 1,compact=compact)
+        dynamic_box = self._card(groups, 'DYNAMIC', 'Bảo vệ trước ARM bằng ATR14 nến ngày đã đóng và/hoặc giữ lãi đỉnh. START quyết định lúc bắt đầu; Lùi ATR và Giữ lãi cùng bật thì chọn mốc bảo vệ chặt hơn. Tới MFE chỉ giới hạn nhánh giữ lãi; OFF giữ tới ARM. Mốc đã bảo vệ không tự nới khi đổi tham số. Chạm mốc thì đóng toàn bộ HĐ khả dụng khi đủ quyền.', 0, 1,compact=compact)
         self.dynamic_settings_card = dynamic_box
         dynamic_header = dynamic_box._viking_header
         dynamic_header.pack_configure(padx=8, pady=(4, 2))
@@ -191,7 +194,7 @@ class OriginalRuleForms:
         sale = ctk.CTkFrame(dynamic_groups, fg_color='#20252C', corner_radius=7)
         sale.grid(row=2, column=0, sticky='ew', pady=(5, 0))
         sale._viking_compact=compact
-        ctk.CTkLabel(sale, text='Đóng 50% HĐ còn lại', font=('Segoe UI',12), text_color=self.TITLE, anchor='w').pack(fill='x',padx=8,pady=4)
+        ctk.CTkLabel(sale, text='Đóng toàn bộ HĐ còn lại', font=('Segoe UI',12), text_color=self.TITLE, anchor='w').pack(fill='x',padx=8,pady=4)
         self.dynamic_repeat = self._switch(sale, 'LẶP', self.params.dynamic_repeat_enabled, 'Đóng tiếp khi giá đi bất lợi thêm đủ Bước LẶP và lệnh trước đã kết thúc.')
         repeat_row = self.dynamic_repeat._viking_row
         repeat_row.pack_configure(padx=6, pady=(2, 4))
@@ -199,3 +202,4 @@ class OriginalRuleForms:
         self.dynamic_repeat_switch.configure(width=76, font=('Segoe UI', 11))
         self.dynamic_repeat_switch.grid_configure(column=0, padx=(0, 4))
         next((child for child in repeat_row.winfo_children() if isinstance(child, ctk.CTkLabel))).grid_configure(column=1)
+        repeat_row.pack_forget()

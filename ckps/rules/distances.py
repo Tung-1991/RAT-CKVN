@@ -10,7 +10,7 @@ TRAILING_DISTANCES = ('arm_gain', 'trail_gap', 'repeat_gap')
 
 def trailing_needs_margin(rules):
     return (rules.trailing_unit or rules.distance_unit) == 'PNL_PERCENT' and bool(
-        rules.arm_enabled or rules.dynamic_enabled and rules.dynamic_repeat)
+        rules.arm_enabled or rules.dynamic_enabled and rules.dynamic_repeat and rules.dynamic_close_pct < 100)
 
 
 def reference_margin(margin, reference, entry):

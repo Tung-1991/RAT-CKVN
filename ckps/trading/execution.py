@@ -418,9 +418,9 @@ class Engine(PriceEventsMixin, ScheduledEntriesMixin):
 
     def _cancel_exit_obstructions(self, position, reason):
         for order in self._pending_closes(position.id):
-            if order.source == 'AUTO' and order.reason in FULL_EXITS:
-                continue
             request = self.store.position(position.id).metrics['full_exit']
+            if order.source == 'AUTO' and (order.reason in {'SL', 'TP', 'E'} or order.id == request.get('order_id')):
+                continue
             if order.id in request['cancel_requested'] or not order.broker_id or order.status not in {'WORKING', 'PARTIAL'}:
                 continue
             if not self.enabled.is_set() or position.id in self.suspended:

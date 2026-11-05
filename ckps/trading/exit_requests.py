@@ -1,18 +1,19 @@
 """Durable full-exit intent; pending cancellations never release contracts."""
 from ckps.models import Decision, number
 
-FULL_EXITS = frozenset({'SL', 'TP', 'E'})
+FULL_EXITS = frozenset({'SL', 'TP', 'E', 'ARM', 'DYN'})
 
 
 def requested_exit(position, rules):
     request = position.metrics.get('full_exit', {})
     reason = request.get('reason')
-    enabled = {'SL': rules.sl_enabled, 'TP': rules.tp_enabled, 'E': rules.ema_exit_enabled}
+    enabled = {'SL': rules.sl_enabled, 'TP': rules.tp_enabled, 'E': rules.ema_exit_enabled,
+               'ARM': rules.arm_enabled, 'DYN': rules.dynamic_enabled}
     if reason not in enabled or not enabled[reason]:
         position.metrics.pop('full_exit', None)
         return None
     price = number(request.get('price'))
-    return Decision(reason, price, position.quantity) if price > 0 else None
+    return Decision(reason, price, position.quantity, stage=reason if reason in {'ARM', 'DYN'} else '') if price > 0 else None
 
 
 def request_exit(position, decision):

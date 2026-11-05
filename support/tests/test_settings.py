@@ -186,7 +186,11 @@ def _consolidated_scenario(scale):
             assert entry._hint_icon.cget('text')=='?'
         assert rule.reentry_sl.master.master is rule.protect_card._viking_header
         from ckps.dashboard.mayin.ui_compat import NativeFontMetrics
-        for entry in (rule.initial_sl,rule.take_profit,rule.reentry_sl,rule.normal_arm,
+        assert not rule.reentry_sl.master.winfo_ismapped()
+        assert not rule.normal_repeat._viking_row.winfo_ismapped()
+        assert not rule.below_arm._viking_row.winfo_ismapped()
+        assert not rule.dynamic_repeat._viking_row.winfo_ismapped()
+        for entry in (rule.initial_sl,rule.take_profit,rule.normal_arm,
                       rule.normal_giveback,rule.ema_exit_fast,rule.ema_exit_slow):
             for caption in entry.master.winfo_children():
                 if isinstance(caption,ctk.CTkLabel) and caption.cget('text'):
@@ -203,7 +207,7 @@ def _consolidated_scenario(scale):
         assert not any(isinstance(w,ctk.CTkSegmentedButton) for w in controls(rule.protection_host))
         assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
         assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
-        assert rule._exits()['arm_close_pct']==50 and rule._exits()['dynamic_close_pct']==50
+        assert rule._exits()['arm_close_pct']==100 and rule._exits()['dynamic_close_pct']==100
         assert rule._exits()['trailing_unit']=='PNL_PERCENT'
         assert '40,000,000' in rule.pnl_basis_preview.cget('text')
         assert 'ARM 5% PNL · 20.0đ' in rule.pnl_distances_preview.cget('text')

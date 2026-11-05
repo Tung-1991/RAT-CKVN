@@ -193,7 +193,7 @@ def test_order_application_failure_is_unknown_not_safe_to_resend(system, monkeyp
 
 
 @pytest.mark.parametrize("side,sign", [("LONG", 1), ("SHORT", -1)])
-def test_repeat_keeps_gap_and_handoff_anchor_through_rebound_partial_fills_and_restart(system, monkeypatch, side, sign):
+def test_full_exit_keeps_intent_and_handoff_anchor_through_partial_fills_and_restart(system, monkeypatch, side, sign):
     from ckps.models import ExitSettings
     from ckps.rules.protection import evaluate
     engine, broker, store = system
@@ -219,7 +219,8 @@ def test_repeat_keeps_gap_and_handoff_anchor_through_rebound_partial_fills_and_r
     order = store.order(sent[0])
     assert order.trigger == pytest.approx(2000 + sign * 15)
     assert order.protection_anchor == pytest.approx(2000 + sign * 11)
-    for filled, gain, status in [(1, 14, "PARTIAL"), (3, 13, "FILLED")]:
+    assert order.quantity == 6
+    for filled, gain, status in [(1, 14, "PARTIAL"), (3, 13, "PARTIAL")]:
         with store.transaction():
             engine._apply_update(store.order(order.id), {"broker_id":"close-gap", "status":status,
                 "filled":filled, "avg_fill":2000 + sign * gain})
@@ -229,6 +230,11 @@ def test_repeat_keeps_gap_and_handoff_anchor_through_rebound_partial_fills_and_r
     state = remaining.metrics["ARM:AUTO"]
     assert remaining.quantity == 3 and state["count"] == 1
     assert state["anchor"] == pytest.approx(2000 + sign * 11)
-    assert evaluate(remaining, 2000 + sign * 7, restarted.exits(remaining)) is None
-    assert evaluate(remaining, 2000 + sign * 6, restarted.exits(remaining)).reason == "ARM"
+    assert state['pending']
+    intent = restarted._decision(remaining, 2000 + sign * 25)
+    assert intent.reason == 'ARM' and intent.quantity == 3
+    with store.transaction():
+        restarted._apply_update(store.order(order.id), {'broker_id':'close-gap', 'status':'FILLED',
+            'filled':6, 'avg_fill':2000 + sign * 13})
+    assert not store.positions() and len(sent) == 1
     assert len(sent) == 1

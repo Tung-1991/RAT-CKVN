@@ -7,7 +7,7 @@ def shared_exit_settings(values):
     return {**values,
             'arm_policy': 'AUTO', 'dynamic_policy': 'AUTO',
             'arm_basis': 'REMAINING', 'dynamic_basis': 'REMAINING',
-            'arm_close_pct': 50.0, 'dynamic_close_pct': 50.0,
+            'arm_close_pct': 100.0, 'dynamic_close_pct': 100.0,
             'ema_exit_mode': 'REALTIME', 'ema_exit_interval': 'TICK'}
 
 
@@ -20,9 +20,9 @@ def default_exit_settings():
         tp_enabled=False, tp_distance=0,
         ema_exit_enabled=True, ema_exit_fast=3, ema_exit_slow=6,
         arm_enabled=True, arm_gain=5, trail_gap=1.25,
-        arm_policy='AUTO', arm_close_pct=50, arm_basis='REMAINING',
+        arm_policy='AUTO', arm_close_pct=100, arm_basis='REMAINING',
         arm_repeat=True, arm_repeat_below_arm=True, repeat_gap=1.25,
-        dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=50,
+        dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=100,
         dynamic_basis='REMAINING', dynamic_repeat=True,
         atr_start_enabled=True, atr_start_multiplier=.5,
         atr_trail_enabled=True, atr_trail_multiplier=.8,

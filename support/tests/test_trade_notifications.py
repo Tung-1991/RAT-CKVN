@@ -39,7 +39,7 @@ def test_actual_automatic_closes_reach_the_existing_trade_group(system, monkeypa
         rows = store.db.execute('SELECT text FROM outbox').fetchall()
         assert len(rows) == 1
         text = rows[0][0]
-        remaining = 0 if reason in {'SL', 'TP'} else 1
+        remaining = 0
         assert ' · EXIT · PAPER' in text and f'ĐÓNG / GIẢM {side} · ĐÃ KHỚP' in text
         assert label in text and f'Còn {remaining} HĐ' in text
         receiver.observe(enabled=True, chat='offline-chat')

@@ -96,26 +96,26 @@ def test_new_preset_needs_no_market_data_to_fill_the_editor():
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
-def test_actual_half_closes_repeat_restart_and_cash_changes_do_not_rebase_pnl(system,side,sign):
+def test_cash_changes_and_restart_preserve_basis_before_full_trailing_exit(system,side,sign):
     from ckps.trading.execution import Engine
     engine,broker,store=system
     engine.settings.exit=asdict(policy())
     engine.paper_capital(200_000_000)
     engine.open_manual(side,4,'MOK');engine.poll();engine.arm(True)
     broker.set_price(2000+sign*28);engine.poll()
-    for gain,remaining in ((23,2),(18,1),(13,0)):
+    p=store.positions()[0]
+    floor=p.floor;metrics=deepcopy(p.metrics)
+    engine.paper_capital(250_000_000)
+    assert store.positions()[0].margin_per_contract==40_000_000
+    engine=Engine(store,broker,engine.settings);engine.poll()
+    assert not engine.enabled.is_set()
+    assert store.positions()[0].floor==floor and store.positions()[0].metrics==metrics
+    engine.arm(True)
+    for gain in (23,18,13):
         broker.set_price(2000+sign*gain);engine.poll();engine.poll()
-        p=store.positions()[0] if remaining else store.positions(closed=True)[0]
-        assert p.quantity==remaining and p.margin_per_contract==40_000_000
-        if remaining==2:
-            floor=p.floor;metrics=deepcopy(p.metrics)
-            engine.paper_capital(250_000_000)
-            assert store.positions()[0].margin_per_contract==40_000_000
-            engine=Engine(store,broker,engine.settings);engine.poll()
-            assert not engine.enabled.is_set()
-            assert store.positions()[0].floor==floor and store.positions()[0].metrics==metrics
-            engine.arm(True)
-    assert [o.quantity for o in store.orders() if o.action=='CLOSE']==[2,1,1]
+        assert not store.positions()
+        assert store.positions(closed=True)[0].margin_per_contract==40_000_000
+    assert [o.quantity for o in store.orders() if o.action=='CLOSE']==[4]
 
 
 def test_preview_amount_scales_with_remaining_quantity_without_repricing_the_basis():
@@ -184,11 +184,11 @@ def test_compact_dynamic_uses_the_same_trigger_and_keeps_full_distance_in_detail
     evaluate(p,2012,rule,1.)
     p.metrics['DYN:AUTO']={'count':1,'anchor':2008.4}
     before=deepcopy(asdict(p))
-    full=position_milestones(p,rule,2007,1.)[1]
-    compact=position_milestones(p,rule,2007,1.,compact=True)[1]
-    assert '2,003.4' in full.value and compact.value=='AUTO · MỐC 2,003.4'
+    full=position_milestones(p,rule,2009,1.)[1]
+    compact=position_milestones(p,rule,2009,1.,compact=True)[1]
+    assert '2,008.4' in full.value and compact.value=='AUTO · MỐC 2,008.4'
     assert 'Còn' in full.detail and 'Còn' not in compact.detail
-    assert '+0.85% PNL' in compact.detail and '340,000 đ/1 HĐ' in compact.detail
+    assert '+2.10% PNL' in compact.detail and '840,000 đ/1 HĐ' in compact.detail
     assert asdict(p)==before
 
 

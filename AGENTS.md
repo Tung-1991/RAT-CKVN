@@ -15,7 +15,7 @@
   mặc định 3/6, chỉnh ngay E/M; luôn REALTIME theo từng giá mới trên nến 1D, không chọn chế độ/nhịp.
   Long nhanh < chậm, Short nhanh > chậm thì đóng toàn bộ khi E + BOT + quyền vị thế ON. Preset app chưa lưu RULE có E ON;
   giữ E OFF đã lưu và dữ liệu cũ thiếu cờ. Bật/tắt và lưu tại RULE → E/M; không phụ thuộc ALERT/Telegram, không mở hoặc đảo chiều.
-- SL/TP/E đóng HĐ khả dụng trước, hủy lệnh đóng cũ cản trở và chờ broker xác nhận
+- SL/TP/E/ARM/DYNAMIC đóng toàn bộ HĐ khả dụng trước, hủy lệnh đóng cũ cản trở và chờ broker xác nhận
   trước khi giải phóng giữ chỗ. Ý định thoát lưu bền qua hồi giá/restart, vẫn
   cần BOT/quyền ON; tắt nhánh hoặc bỏ quản lý dừng ý định. UNKNOWN không gửi lại.
 - UI dùng TÍN HIỆU / GIỜ THEO DÕI, không dùng BUY/ENTRY BUY/giờ mua. P2 và E
@@ -38,19 +38,20 @@
   Giá đóng DNSE hợp lệ dùng được để xem trước/quy đổi, vẫn khóa giao dịch.
   Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
   lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
-  Giữ đầy đủ TSL/DYNAMIC/ATR/LẶP; giữ lãi là % lãi đỉnh, tỷ lệ đóng là % HĐ.
-- TSL và DYNAMIC cố định tự đóng 50% HĐ còn lại mỗi lượt khi đủ quyền.
+  Giữ đầy đủ TSL/DYNAMIC/ATR; giữ lãi là % lãi đỉnh, không phải tỷ lệ HĐ đóng.
+- TSL và DYNAMIC cố định tự đóng 100% HĐ còn lại khi đủ quyền.
   Không AUTO / ALERT, GỐC / CÒN LẠI hoặc ô nhập tỷ lệ đóng trong E/M;
-  chỉ hiển thị dòng 50% HĐ còn lại và giải thích làm tròn trong hint.
-  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 50%; giữ các ngưỡng giá và
+  chỉ hiển thị dòng Đóng toàn bộ HĐ còn lại. Ẩn điều khiển LẶP chia lượt;
+  giữ dữ liệu cũ để quy đổi nhưng không chờ bước LẶP khi thoát toàn bộ.
+  Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 100%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 0,5%, E ON EMA3/6,
-  ARM 5% PNL, TSL lùi/LẶP 1,25 điểm % PNL, mỗi lượt 50% HĐ còn lại; lặp dưới ARM khi còn lãi.
+  ARM 5% PNL, TSL lùi 1,25 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
-  giữ 70% lãi đỉnh, TỚI MFE OFF; LẶP mặc định ON.
+  giữ 70% lãi đỉnh, TỚI MFE OFF; chạm mốc đóng toàn bộ, không chia lượt.
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
-  Giữ tham số đã lưu, không ép về mặc định. Bước LẶP chung nằm trong BẢO VỆ,
-  tách khỏi SL/TP; ARM có LẶP ĐÓNG và LẶP DƯỚI ARM khi còn lãi.
+  Giữ tham số đã lưu, không ép về mặc định. LẶP cũ chỉ giữ để tương thích dữ liệu;
+  phần chưa khớp tiếp tục theo ý định thoát toàn bộ, không chờ mốc lặp.
   Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - Chỉ có app chính PAPER/REAL, không có bản mẫu/offline hoặc `--demo`.
   BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công.
@@ -88,8 +89,8 @@
 - Tab/panel ngắn; chọn trực tiếp, hạn chế dropdown/cuộn và cửa sổ phụ.
 - Dùng phần trình bày gốc tại `dashboard/mayin/`, không tự dựng lại form thay
   MayinTien. RULE/KẾT NỐI tối đa 780×600 logic, cùng DPI; E/M nhãn 12, số 14, giữ các nhóm gốc.
-  SL/TP gom công tắc và ô số cùng hàng; bước LẶP nằm trên hàng tiêu đề BẢO VỆ.
-- E/M hiện TSL/ARM và DYNAMIC, mức đóng cố định, LẶP; ATR14 nguồn chỉ đọc,
+  SL/TP gom công tắc và ô số cùng hàng; không hiện bước chia lượt LẶP.
+- E/M hiện TSL/ARM và DYNAMIC, đóng toàn bộ; ATR14 nguồn chỉ đọc,
   hệ số DYNAMIC chỉnh trực tiếp, không giấu trong nâng cao. Giữ hint và cùng cỡ hai cửa sổ.
 - Preview và RULE cùng hiện ATR14, phiên nến, START/lùi tính ra từ nguồn thực thi;
   thiếu nến/khác mã hiện CHỜ. Giá cũ vẫn khóa tín hiệu; ATR nến đã đóng hiển thị
@@ -107,7 +108,7 @@
   Preview: nhãn 12–13, kết quả 22, chi tiết 13–14; OTP 14 đậm, giá/vốn 24.
   Hai ô kết quả cao tối thiểu 96, vùng Preview tối thiểu 230 logic; căn lề 10,
   giãn dòng rõ, vẫn để bảng lệnh giãn phần còn lại và kiểm tra DPI 100–200%.
-  Dòng bảo vệ chỉ hiện mốc, PNL/tiền và HĐ giảm; khoảng còn lại/LẶP chi tiết đưa vào hint.
+  Dòng bảo vệ chỉ hiện mốc, PNL/tiền và HĐ giảm; khoảng còn lại chi tiết đưa vào hint.
   DYNAMIC giữ ATR/giữ lãi, Preview quy đổi PNL theo cơ sở thật; không đổi thuật toán vì cách trình bày.
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.

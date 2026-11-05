@@ -26,6 +26,8 @@ def repeat_trigger(position: Position, settings: ExitSettings, stage, level):
     """Read-only effective hit price, shared by execution and E/M Preview."""
     settings = price_rules(settings, position.entry, position.margin_per_contract)
     prefix = "arm" if stage == "ARM" else "dynamic"
+    if getattr(settings, prefix + "_close_pct") == 100:
+        return level  # Full exits do not wait for a legacy partial-close round.
     policy = getattr(settings, prefix + "_policy")
     state = position.metrics.get(stage + ":" + policy, {})
     if not state.get("count", 0):
@@ -86,6 +88,8 @@ def levels(position: Position, settings: ExitSettings, atr_pct=0.0):
 
 def observe_repeat(position: Position, price: float, settings: ExitSettings):
     """Only new post-completion prices can establish the next ARM round."""
+    if settings.arm_close_pct == 100:
+        return
     settings = price_rules(settings, position.entry, position.margin_per_contract)
     for policy in ("AUTO", "ALERT"):
         state = position.metrics.get("ARM:" + policy, {})
@@ -132,7 +136,7 @@ def evaluate(position: Position, price: float, settings: ExitSettings, atr_pct=0
     prefix = "arm" if stage == "ARM" else "dynamic"
     policy = getattr(settings, prefix + "_policy")
     state = position.metrics.get(stage + ":" + policy, {})
-    if (stage == "ARM" and state.get("count") and not settings.arm_repeat_below_arm
+    if (stage == "ARM" and settings.arm_close_pct < 100 and state.get("count") and not settings.arm_repeat_below_arm
             and position.profit_points(price) + 1e-9 < settings.points(settings.arm_gain, position.entry)):
         return None
     trigger = repeat_trigger(position, settings, stage, view["protect"])

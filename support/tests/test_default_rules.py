@@ -30,10 +30,10 @@ def test_first_launch_loads_one_complete_preset_without_creating_runtime_or_a_pi
     assert rules.ema_exit_enabled and (rules.ema_exit_fast, rules.ema_exit_slow) == (3, 6)
     assert rules.trailing_unit=='PNL_PERCENT'
     assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.25
-    assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 50 and rules.arm_basis == 'REMAINING'
+    assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 100 and rules.arm_basis == 'REMAINING'
     assert rules.arm_repeat and rules.arm_repeat_below_arm and rules.repeat_gap == 1.25
     assert rules.dynamic_enabled and rules.dynamic_policy == 'AUTO' and rules.dynamic_repeat
-    assert rules.dynamic_close_pct == 50 and rules.dynamic_basis == 'REMAINING'
+    assert rules.dynamic_close_pct == 100 and rules.dynamic_basis == 'REMAINING'
     assert rules.atr_start_multiplier == .5 and rules.atr_trail_multiplier == .8
     assert rules.retention_pct == 70 and not rules.retention_until_enabled
     assert not settings.telegram_enabled and not settings.entry_notifications
@@ -80,7 +80,7 @@ def test_default_stop_is_price_based_trail_is_pnl_and_tp_never_caps_a_profitable
     assert evaluate(position, 2000 + sign * 100, rules) is None
     assert levels(position, rules)['protect'] == pytest.approx(2000 + sign * 95)
     decision = evaluate(position, 2000 + sign * 95, rules)
-    assert decision.reason == 'ARM' and decision.policy == 'AUTO' and decision.quantity == 2
+    assert decision.reason == 'ARM' and decision.policy == 'AUTO' and decision.quantity == 4
     stopped = Position.create('VN30F1M', side, 4, 2000, history_verified=True,margin_per_contract=40_000_000)
     assert evaluate(stopped, 2000 - sign * 10, rules).reason == 'SL'
     assert stopped.pnl(2000 - sign * 10) == -4_000_000
@@ -97,7 +97,7 @@ def test_default_dynamic_protects_before_arm_and_the_floor_never_loosens(side,si
     evaluate(position, 2000 + sign * 11, rules, 2)
     assert sign * (position.floor - floor) >= -1e-8
     decision = evaluate(position, floor, rules, 1)
-    assert decision.reason == 'DYN' and decision.policy == 'AUTO' and decision.quantity == 2
+    assert decision.reason == 'DYN' and decision.policy == 'AUTO' and decision.quantity == 4
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
@@ -117,30 +117,23 @@ def test_loaded_preset_does_not_open_or_close_until_user_arms_it(system,side,sig
 
 
 @pytest.mark.parametrize('side,sign', [('LONG', 1), ('SHORT', -1)])
-def test_default_repeat_reduces_four_contracts_two_one_one_below_arm_without_tick_spam(system,side,sign):
+def test_default_closes_four_contracts_at_first_trailing_hit_without_tick_spam(system,side,sign):
     engine, broker, store = use_defaults(system)
     engine.paper_capital(200_000_000)
     engine.open_manual(side, 4, 'MOK'); engine.poll()
     engine.arm(True)
     broker.set_price(2000 + sign * 28); engine.poll()
     assert len(store.orders()) == 1
-    for gain, remaining in ((23, 2), (18, 1), (13, 0)):
+    for gain in (23, 18, 13):
         broker.set_price(2000 + sign * gain)
         engine.poll(); engine.poll()
-        position = store.positions()[0] if remaining else store.positions(closed=True)[0]
-        assert position.quantity == remaining
-        expected_count = {2: 1, 1: 2, 0: 3}[remaining]
-        assert position.metrics['ARM:AUTO']['count'] == expected_count
+        assert not store.positions()
+        assert store.positions(closed=True)[0].metrics['ARM:AUTO']['count'] == 1
         for _ in range(3):
             engine.poll()
-        assert len(store.orders()) == expected_count + 1
-        if remaining == 2:
-            engine = Engine(store, broker, engine.settings)
-            engine.poll()
-            assert not engine.enabled.is_set()
-            engine.arm(True)
+        assert len(store.orders()) == 2
     closed = store.positions(closed=True)[0]
-    assert closed.realized == 7_700_000  # (2*23 + 18 + 13) * 100,000.
+    assert closed.realized == 9_200_000  # 4 * 23 * 100,000.
     assert all(o.reason == 'ARM' for o in store.orders() if o.action == 'CLOSE')
 
 

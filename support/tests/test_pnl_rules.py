@@ -29,7 +29,7 @@ def test_pnl_sl_tp_arm_use_initial_margin_not_price_nav_or_current_quantity(side
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
 def test_pnl_trail_repeat_and_dynamic_share_the_same_fixed_margin_basis(side,sign):
     position=Position.create('VN30F1M',side,3,2000,margin_per_contract=40_000_000,history_verified=True)
-    settings=rules(arm_enabled=True,arm_gain=5,trail_gap=1.25,arm_repeat=True,repeat_gap=1.25,
+    settings=rules(arm_enabled=True,arm_gain=5,trail_gap=1.25,arm_close_pct=50,arm_repeat=True,repeat_gap=1.25,
         dynamic_enabled=True,dynamic_policy='AUTO',dynamic_close_pct=50,retention_pct=70,dynamic_repeat=True)
     evaluate(position,2000+sign*12,settings,1)
     assert levels(position,settings,1)['stage']=='DYN'

@@ -183,7 +183,7 @@ def _layout_scenario(scale):
             contract='VN30F1M',atr14_pct=1,quotes={'VN30F1M':asdict(Quote('VN30F1M',2007))})
         app.render();app.positions_tree.selection_set(position.id)
         app._refresh_ticket_preview();settle()
-        assert 'MỐC 2,003.4' in app.preview_exit_value.cget('text')
+        assert 'MỐC 2,008.4' in app.preview_exit_value.cget('text')
         assert app.positions_tree.cell(position.id,'managed')['text']=='CHƯA NHẬN'
         assert app.positions_tree.cell(position.id,'side')['color']=='#22C55E'
         assert app.positions_tree.cell(position.id,'pnl')['color']=='#22C55E'
@@ -510,8 +510,13 @@ def _position_protection_scenario(scale):
             assert editor.initial_sl._hint_icon.cget('text') == '?'
             assert editor.dynamic_settings_card.winfo_ismapped() and editor.dynamic_atr_value.winfo_ismapped()
             assert hasattr(editor,'below_arm')
+            assert not editor.reentry_sl.master.winfo_ismapped()
+            assert not editor.normal_repeat._viking_row.winfo_ismapped()
+            assert not editor.below_arm._viking_row.winfo_ismapped()
+            assert not editor.dynamic_repeat._viking_row.winfo_ismapped()
             canvas = editor.exit_body._parent_canvas
             for widget in controls(editor.protection_host):
+                if not widget.winfo_ismapped():continue  # Obsolete repeat controls are deliberately hidden.
                 offset = widget.winfo_rooty() - editor.exit_body.winfo_rooty()
                 canvas.yview_moveto(max(0, offset-4) / editor.exit_body.winfo_height())
                 settle()

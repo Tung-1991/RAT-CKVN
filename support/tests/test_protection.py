@@ -66,7 +66,7 @@ def test_protect_never_closes_at_price_loss(side, best, loss):
 @pytest.mark.parametrize("side,best,hit,second", [("LONG", 2020, 2015, 2010), ("SHORT", 1980, 1985, 1990)])
 def test_repeat_requires_full_adverse_step(side, best, hit, second):
     p = Position.create("VN30F1M", side, 5, 2000, history_verified=True)
-    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_close_pct=50, arm_repeat=True, repeat_gap=5)
     evaluate(p, best, rule)
     assert evaluate(p, hit, rule)
     p.metrics["ARM:AUTO"] = {"count": 1, "anchor": hit}
@@ -108,7 +108,7 @@ def test_unverified_history_disables_trailing_but_not_sl():
 @pytest.mark.parametrize("anchor", [0, float("nan"), float("inf")])
 def test_repeat_without_finite_anchor_never_unblocks(side, best, hit, anchor):
     p = Position.create("VN30F1M", side, 3, 2000, history_verified=True)
-    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rule = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_close_pct=50, arm_repeat=True, repeat_gap=5)
     evaluate(p, best, rule)
     p.metrics["ARM:AUTO"] = {"count": 1, "anchor": anchor}
     assert evaluate(p, hit, rule) is None

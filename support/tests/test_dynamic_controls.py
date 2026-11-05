@@ -22,12 +22,13 @@ def test_custom_dynamic_start_and_retention_drive_real_decisions(system,side,sig
     broker.set_price(2000+sign*14);engine.poll()
     assert len(store.orders())==1  # Default 70% retention would close here.
     broker.set_price(2000+sign*10);engine.poll();engine.poll()
-    assert store.positions()[0].quantity==2 and store.orders()[-1].reason=='DYN'
+    assert not store.positions() and store.orders()[-1].reason=='DYN'
+    assert store.orders()[-1].applied==4
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
 @pytest.mark.parametrize('repeat_below',[False,True])
-def test_repeat_below_arm_setting_controls_followup_reductions(system,side,sign,repeat_below):
+def test_legacy_repeat_below_arm_setting_cannot_split_a_full_exit(system,side,sign,repeat_below):
     engine,broker,store=system
     write_settings(Settings(exit={**Settings().exit,'dynamic_enabled':False,
                                   'arm_repeat_below_arm':repeat_below}))
@@ -35,8 +36,8 @@ def test_repeat_below_arm_setting_controls_followup_reductions(system,side,sign,
     engine.paper_capital(200_000_000)
     engine.open_manual(side,4,'MOK');engine.poll();engine.arm(True)
     for gain in (28,23):broker.set_price(2000+sign*gain);engine.poll();engine.poll()
-    assert store.positions()[0].quantity==2
+    assert not store.positions() and store.orders()[-1].applied==4
     broker.set_price(2000+sign*18);engine.poll();engine.poll()
-    assert store.positions()[0].quantity==(1 if repeat_below else 2)
+    assert not store.positions()
     for _ in range(3):engine.poll()
-    assert len(store.orders())==(3 if repeat_below else 2)
+    assert len(store.orders())==2

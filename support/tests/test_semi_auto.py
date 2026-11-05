@@ -107,7 +107,7 @@ def test_repeat_uses_new_round_and_arm_guard(side, sign):
     p = Position.create('VN30F1M', side, 4, 2000, history_verified=True)
     p.best = 2000 + sign * 100
     p.metrics['ARM:AUTO'] = {'count': 1, 'anchor': 2000 + sign * 40}
-    rules = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_repeat=True, repeat_gap=5)
+    rules = ExitSettings(distance_unit='POINTS', arm_enabled=True, arm_gain=10, trail_gap=5, arm_close_pct=50, arm_repeat=True, repeat_gap=5)
     evaluate(p, 2000 + sign * 60, rules)
     assert repeat_trigger(p, rules, 'ARM', levels(p, rules)['protect']) == 2000 + sign * 55
     assert evaluate(p, 2000 + sign * 55, rules).reason == 'ARM'

@@ -40,10 +40,10 @@ def protection_reference(view, max_age=10, *, entry=None, quantity=None):
 def pnl_preview(values, reference, *, compact=False):
     """Amounts describe the remaining holding, not accumulated realized profit."""
     if reference.entry is None or not isfinite(reference.entry) or reference.entry<=0:
-        return ('CHỜ GIÁ VỐN / GIÁ VÉ', 'Chưa có dữ liệu giá hợp lệ để xem trước ARM/TSL/LẶP')
+        return ('CHỜ GIÁ VỐN / GIÁ VÉ', 'Chưa có dữ liệu giá hợp lệ để xem trước ARM/TSL')
     margin=reference.margin
     if margin is None or not isfinite(margin) or margin<=0:
-        return ('CHỜ KÝ QUỸ CƠ SỞ/HĐ', 'ARM / TSL / LẶP: CHỜ · SL/TP vẫn theo % giá vốn')
+        return ('CHỜ KÝ QUỸ CƠ SỞ/HĐ', 'ARM / TSL: CHỜ · SL/TP vẫn theo % giá vốn')
     try:rules=pnl_trailing_rules(values,reference.entry,margin)
     except ValueError:
         return ('CHỜ QUY ĐỔI RULE', 'Giữ nguyên RULE đã lưu và mốc bảo vệ đang chạy')
@@ -53,6 +53,7 @@ def pnl_preview(values, reference, *, compact=False):
     base+=f' · {qty} HĐ = {money(margin*qty)}' if known_qty else ' · CHỜ HĐ'
     lines=[]
     for key,label in (('arm_gain','ARM'),('trail_gap','Lùi'),('repeat_gap','LẶP')):
+        if key=='repeat_gap' and rules['arm_close_pct']==rules['dynamic_close_pct']==100:continue
         value=rules[key]
         cash=margin*value/100
         unit='% PNL' if key=='arm_gain' else 'điểm % PNL'
@@ -66,6 +67,7 @@ def pnl_preview(values, reference, *, compact=False):
         if not known_qty:base=base.removesuffix(' · CHỜ HĐ')
         short=[]
         for key,label in (('arm_gain','ARM'),('trail_gap','Lùi'),('repeat_gap','LẶP')):
+            if key=='repeat_gap' and rules['arm_close_pct']==rules['dynamic_close_pct']==100:continue
             value=rules[key];cash=margin*value/100
             amount=money(cash*qty)+f'/{qty} HĐ' if known_qty else money(cash)+'/HĐ'
             unit='%' if key=='arm_gain' else ' điểm %'

@@ -233,8 +233,7 @@ class MayinController(OriginalPanels):
             if not getattr(rules,prefix+'_enabled'):
                 self._preview_help[prefix]=title+'\nChưa bật. Chỉnh tại RULE → E/M, áp dụng chung tất cả hợp đồng.'
                 continue
-            action='Tự đóng 50% HĐ còn lại'
-            repeat=f'Lặp {rules.repeat_gap:g} điểm {unit}' if getattr(rules,prefix+'_repeat') else 'Không lặp'
+            action='Tự đóng toàn bộ HĐ còn lại'
             if prefix=='arm':
                 parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} điểm {unit}'
                 explanation='Đạt ARM rồi bám đỉnh Long / đáy Short. Giá lùi tới mốc thì xử lý.'
@@ -245,8 +244,8 @@ class MayinController(OriginalPanels):
                 if rules.retention_enabled:parts.append(f'Giữ {rules.retention_pct:g}% lãi')
                 parameters=' · '.join(parts)
                 explanation='Bảo vệ trước ARM. Khi đạt ARM, TSL tiếp quản.'
-            self._preview_help[prefix]='\n'.join((title,explanation,parameters,action+' · '+repeat,
-                'Cần BOT và quyền quản lý ON; 1 HĐ còn lại thì đóng 1.'))
+            self._preview_help[prefix]='\n'.join((title,explanation,parameters,action,
+                'Cần BOT và quyền quản lý ON; chờ broker xác nhận phần còn lại, không chờ bước LẶP.'))
 
     def _render_selected_management(self):
         selected=self.positions_tree.selection()

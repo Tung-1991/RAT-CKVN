@@ -7,6 +7,8 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_tick_exits.py`: các tick hợp lệ trong cùng lô giữ ý định SL/TP/E qua hồi giá, cùng timestamp, snapshot mới hơn, restart và lệnh đóng cũ giữ chỗ; BOT/quyền OFF không tạo ý định, bật lại không xử lý lại giao cắt khi OFF; UNKNOWN chỉ gửi một lần, tick cũ không được giá mới hợp thức hóa.
 
+`test_full_protection_exits.py`: ARM/DYNAMIC Long/Short đóng toàn bộ 1/2/3/7 HĐ; cấu hình 33%/50% và LẶP cũ không chia lượt. Giữ ý định qua tick hồi cùng timestamp, lệnh đóng giữ chỗ/restart; UNKNOWN hoặc broker từ chối không POST lại, tắt nhánh dừng ý định, DYNAMIC không chờ ký quỹ chỉ vì bước LẶP không dùng.
+
 `test_paper_sessions.py`: LO thường hết hạn cuối phiên và qua restart, tương thích bản ghi cũ; giờ nghỉ/giá đóng phiên không tạo fill, không đổi tiền/vị thế; lệnh đã nhận vẫn khớp trong ATC dù cổng gửi mở mới đang chặn.
 
 `test_previous_close.py` / `test_quote_header_ui.py`: close đúng mã/G1/ngày, qua cuối tuần/ngày trống, cache và rollover không so nhầm, màu/điểm/% không sửa dữ liệu; GET chậm không chặn UI và bỏ phản hồi cũ. Native header vừa DPI 100–200%, không còn badge mã, hover ký quỹ chờ 500ms, hint giữ số tiền đầy đủ.
@@ -15,7 +17,7 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_dashboard_refresh.py`: gộp snapshot chờ thành một lượt hiển thị mới nhất; dữ liệu không đổi không vẽ lại widget, giá thay đổi và giá cũ vẫn cập nhật ngay, không cấp quyền lệnh từ giá cũ.
 
-`test_pnl_trailing.py`: ARM/TSL/LẶP theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, chốt 4→2→1→0, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP.
+`test_pnl_trailing.py`: ARM/TSL theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, đóng toàn bộ 4 HĐ, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP. Dữ liệu LẶP cũ vẫn đọc được.
 
 `test_preview_analysis.py`: Preview chỉ đọc tự chạy, Telegram luôn OFF; tham chiếu đóng phiên tự tính từ nến thật kể cả chưa có cache backend, dùng cho bản nháp RULE nhưng không làm giá mới/cấp LONG hoặc quyền giao dịch.
 
@@ -34,12 +36,12 @@ thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, 
 
 | File | Phạm vi |
 | --- | --- |
-| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; Long/Short SL/TSL/DYNAMIC, TP OFF, LẶP 4→2→1→0 và restart; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
-| `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL, fill muộn, restart giữ mốc/LẶP; TP OFF; cấu hình cũ ALERT/ORIGINAL/tỷ lệ khác vẫn tự đóng 50% số còn lại sau giảm tay, không spam LẶP và không tự bật nhánh đã tắt |
+| `test_default_rules.py` | Tự nạp preset duy nhất khi mở app chưa lưu E/M, giữ cấu hình đã sửa/kể cả OFF; Long/Short SL/TSL/DYNAMIC đóng toàn bộ, TP OFF; không tự bật BOT/Telegram hoặc nhận vị thế DNSE |
+| `test_shared_rules.py` | Một RULE áp dụng hợp đồng đang giữ/chờ/mới, bỏ qua dữ liệu riêng cũ; đổi SL, fill muộn, restart giữ mốc; TP OFF; cấu hình cũ ALERT/ORIGINAL/tỷ lệ khác vẫn tự đóng toàn bộ số còn lại sau giảm tay, không tự bật nhánh đã tắt |
 | `test_trade_notifications.py` | Biên nhận Long/Short SL/TSL/DYNAMIC, đóng từng phần, đúng thứ tự gửi/khớp, phí muộn không báo trùng; UNKNOWN/fill muộn, hủy chờ xác nhận, transaction rollback; tắt/restart không gửi bù; Telegram mất mạng/429 và trạng thái chờ DNSE |
 | `test_ticket_estimates.py` | Giá/khối lượng lỗi xóa số ước tính cũ, TP OFF vẫn rõ; AUTO 0/thiếu sức mở hiển thị SL/phí theo 1 HĐ, không cấp sức mở; phí ước, thiếu và 0 phân biệt rõ |
 | `test_protection.py` | SL/TP, ARM/DYNAMIC, Long/Short, bước lặp và HĐ nguyên |
-| `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; mốc LẶP qua gap/hồi giá, handoff, khớp từng phần và restart |
+| `test_execution.py` | Lệnh tay, fill tích lũy, timeout, đối soát, quản lý riêng; thoát toàn bộ qua gap/hồi giá, handoff, khớp từng phần và restart |
 | `test_capital.py` | Sức mở/ký quỹ tự lấy từ broker, giữ chỗ lệnh local không trừ hai lần, kiểm tra lại trước gửi; SL chỉ ước tính lỗ, không thêm hạn mức; chỉnh vốn PAPER giữ lãi/phí/lịch sử, chặn giảm dưới ký quỹ và tách REAL |
 | `test_broker_contract.py` | Chuẩn DNSE, native close, kiểm tra quyền trước POST |
 | `test_stream_and_runtime.py` | Tick, ATR, restart, một kênh Telegram; PAPER giá DNSE/tiền ảo, áp dụng/lưu vốn, chặn giá thiếu/cũ/sai mã và API tài khoản/giao dịch, tải nến không chặn SL |
