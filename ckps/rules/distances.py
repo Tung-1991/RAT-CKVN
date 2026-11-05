@@ -35,12 +35,12 @@ def price_rules(rules, entry, margin):
     return replace(rules, distance_unit='POINTS', trailing_unit='POINTS' if rules.trailing_unit else None, **values)
 
 
-def pnl_rule_draft(values, entry=None, margin=None):
+def _rule_draft(values, entry, margin, trailing_target):
     """Convert only complete unit groups; unresolved groups retain their units/values."""
     rules=load_record(ExitSettings,values).validate()
     result=asdict(rules);pending=set()
     groups=(('distance_unit',('sl_distance','tp_distance','retention_until'),'PRICE_PERCENT',rules.distance_unit),
-            ('trailing_unit',TRAILING_DISTANCES,'PNL_PERCENT',rules.trailing_unit or rules.distance_unit))
+            ('trailing_unit',TRAILING_DISTANCES,trailing_target,rules.trailing_unit or rules.distance_unit))
     for field,keys,target,source in groups:
         source='PRICE_PERCENT' if source=='PERCENT' else source
         needs_basis=source!=target and any(getattr(rules,key)!=0 for key in keys)
@@ -56,6 +56,24 @@ def pnl_rule_draft(values, entry=None, margin=None):
             points=rules.points(value,entry,margin,unit=source)
             result[key]=points*100_000/margin*100 if target=='PNL_PERCENT' else points/entry*100
     return result,pending
+
+
+def pnl_rule_draft(values, entry=None, margin=None):
+    """Compatibility conversion for older margin-PNL editors."""
+    return _rule_draft(values, entry, margin, 'PNL_PERCENT')
+
+
+def price_rule_draft(values, entry=None, margin=None):
+    """All price thresholds share entry as denominator; legacy gaps keep source units."""
+    return _rule_draft(values, entry, margin, 'PRICE_PERCENT')
+
+
+def price_rule_values(values, entry=None, margin=None):
+    result,pending=price_rule_draft(values,entry,margin)
+    if pending:
+        if not reference_margin(entry,entry,entry):raise ValueError('Chờ giá vào xác minh để quy đổi RULE cũ.')
+        raise ValueError('Chờ ký quỹ cơ sở cũ để quy đổi RULE; giữ nguyên mốc đã lưu.')
+    return result
 
 
 def pnl_trailing_rules(values, entry=None, margin=None):

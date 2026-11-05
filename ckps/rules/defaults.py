@@ -15,13 +15,13 @@ def default_exit_settings():
     from ckps.models import ExitSettings
     return asdict(ExitSettings(
         distance_unit='PRICE_PERCENT',
-        trailing_unit='PNL_PERCENT',
+        trailing_unit='PRICE_PERCENT',
         sl_enabled=True, sl_distance=1,
         tp_enabled=False, tp_distance=0,
         ema_exit_enabled=True, ema_exit_fast=3, ema_exit_slow=6,
-        arm_enabled=True, arm_gain=5, trail_gap=1.5,
+        arm_enabled=True, arm_gain=1, trail_gap=.3,
         arm_policy='AUTO', arm_close_pct=100, arm_basis='REMAINING',
-        arm_repeat=False, arm_repeat_below_arm=False, repeat_gap=1.5,
+        arm_repeat=False, arm_repeat_below_arm=False, repeat_gap=.3,
         dynamic_enabled=True, dynamic_policy='AUTO', dynamic_close_pct=100,
         dynamic_basis='REMAINING', dynamic_repeat=False,
         atr_start_enabled=True, atr_start_multiplier=.5,

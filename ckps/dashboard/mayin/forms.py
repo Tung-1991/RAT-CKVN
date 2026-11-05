@@ -132,7 +132,7 @@ class OriginalRuleForms:
         self.protect_card = self._card(body, 'BẢO VỆ HỢP ĐỒNG', 'DYNAMIC bảo vệ trước khi ARM đạt mức bắt đầu. ARM tự bám đỉnh/đáy sau mức đó. Chạm mốc khi BOT và quyền quản lý ON: đóng toàn bộ HĐ khả dụng, tiếp tục phần còn lại sau khi broker xác nhận. Không chia tỷ lệ hoặc chờ bước LẶP.', 2, 0, span=2,compact=compact)
         repeat_host=self.protect_card._viking_header if compact else self.protect_card
         repeat_host._viking_compact=compact
-        self.reentry_sl = self._field(repeat_host, 'LẶP (điểm % PNL)', self.params.reentry_sl_pct, 'Khoảng lặp theo ký quỹ cơ sở/HĐ đã lưu: tiền/HĐ = cơ sở × bước LẶP / 100; điểm giá = tiền/HĐ ÷ 100.000. Chốt bớt không đổi cơ sở/HĐ. Áp dụng ARM và DYNAMIC, không mở lại lệnh.')
+        self.reentry_sl = self._field(repeat_host, 'LẶP (% GIÁ)', self.params.reentry_sl_pct, 'Dữ liệu LẶP cũ quy đổi theo cùng giá vào; thoát toàn bộ không dùng bước này.')
         if compact:
             self.reentry_sl.master.pack_configure(side='right',fill='none',padx=0,pady=0)
             self.reentry_sl.master.grid_columnconfigure(0,weight=0)
@@ -146,8 +146,8 @@ class OriginalRuleForms:
         self.exit_left_column = groups
         normal = self._card(groups, 'ARM', 'ARM gồm hai mức: Bắt đầu và Lùi. Lãi đủ mức Bắt đầu thì bám đỉnh Long/đáy Short; giá lùi đủ mức Lùi thì đóng toàn bộ HĐ khả dụng khi BOT và quyền quản lý ON.', 0, 0,compact=compact)
         self.protect_trail_card = normal
-        self.normal_arm = self._field(normal, 'Bắt đầu (% PNL)', self.params.normal_arm_pct, 'Lãi chưa chốt / (ký quỹ cơ sở/HĐ × số HĐ còn giữ). Cơ sở 40 triệu/HĐ, Bắt đầu 5% là lãi 2 triệu/HĐ = 20 điểm giá. Từ mức này ARM bám đỉnh/đáy; giá lùi đủ mức Lùi mới đóng. Ký quỹ cơ sở không chạy theo tiền nạp/rút hoặc số dư.')
-        self.normal_giveback = self._field(normal, 'Lùi (điểm % PNL)', self.params.normal_giveback_pct, 'Khoảng lùi tính bằng điểm phần trăm PNL trên ký quỹ cơ sở/HĐ. Đỉnh +10%, lùi 2 điểm % thì kích hoạt tại +8%. Cơ sở 40 triệu, lùi 1,25 điểm % = 500.000đ/HĐ = 5 điểm giá. Long bám đỉnh, Short bám đáy; trước phí.')
+        self.normal_arm = self._field(normal, 'Bắt đầu (% GIÁ)', self.params.normal_arm_pct, 'Tính trên giá vào bình quân, cùng cơ sở với SL/TP. Giá vào 2.000, Bắt đầu 1% là chạy thuận chiều 20 điểm, lãi trước phí 2 triệu/HĐ. Từ mức này ARM bám đỉnh/đáy; giá lùi đủ mức Lùi mới đóng.')
+        self.normal_giveback = self._field(normal, 'Lùi (% GIÁ)', self.params.normal_giveback_pct, 'Khoảng lùi từ đỉnh Long/đáy Short, tính theo giá vào bình quân. Giá vào 2.000, Lùi 0,3% là 6 điểm, tương đương 600.000đ/HĐ trước phí. Không lấy % của tiền lãi đỉnh hoặc ký quỹ.')
         self.pnl_distances_preview=ctk.CTkLabel(normal,text='',font=('Segoe UI',12),anchor='w',justify='left',wraplength=300)
         self.pnl_distances_preview.pack(fill='x',padx=8,pady=3)
         for widget in (self.pnl_basis_preview,self.pnl_distances_preview):
@@ -169,7 +169,7 @@ class OriginalRuleForms:
         for key,label,hint in (
             ('atr_start','START (× ATR)','Lãi đỉnh đạt hệ số này × ATR14 thì DYNAMIC bắt đầu. Tắt START: bắt đầu từ khi có lãi; nhánh Lùi ATR vẫn cần ATR hợp lệ.'),
             ('atr_trail','Lùi (× ATR)','Khoảng lùi từ đỉnh Long / đáy Short = hệ số × ATR14 (%). Dùng ATR từ nến ngày đã đóng, không dùng nến hôm nay.'),
-            ('retention','Giữ lãi (%)','Giữ tỷ lệ % lãi đỉnh, không phải % giá vốn. Lãi đỉnh 10 điểm, giữ 70% đặt mốc còn lãi 7 điểm.'),
+            ('retention','Giữ lãi đỉnh (%)','Giữ tỷ lệ % lãi đỉnh, đây là hệ số DYNAMIC chứ không phải khoảng giá. Lãi đỉnh 10 điểm, giữ 65% đặt mốc còn lãi 6,5 điểm.'),
             ('retention_until','Tới MFE (% giá)','Giới hạn nhánh Giữ lãi khi lãi đỉnh chưa tới mức % giá vốn này. OFF: giữ lãi tới ARM. Mốc bảo vệ đã hình thành vẫn được giữ, không tự nới.')):
             attr={'atr_start':'atr_start_multiplier','atr_trail':'atr_trail_multiplier','retention':'retention_pct','retention_until':'retention_until'}[key]
             entry=self._field(dynamic_box,label,getattr(self.params,attr),hint)

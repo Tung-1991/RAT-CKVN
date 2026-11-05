@@ -6,7 +6,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import ExitSettings, load_record, quantity
-from ckps.rules.distances import pnl_rule_draft
+from ckps.rules.distances import price_rule_draft
 from ckps.rules.defaults import shared_exit_settings
 from .forms import OriginalRuleForms
 from .hover_hint import _HoverHint
@@ -28,9 +28,9 @@ class ProtectionFormMixin(OriginalRuleForms):
     def _init_protection(self, parent, values):
         values=shared_exit_settings(values)
         self._migration_error=''
-        self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT' or values.get('trailing_unit')!='PNL_PERCENT'
+        self._converted_legacy=values.get('distance_unit','POINTS')!='PRICE_PERCENT' or values.get('trailing_unit',values.get('distance_unit','POINTS'))!='PRICE_PERCENT'
         entry,margin=self._price_reference()
-        values,self._pending_fields=pnl_rule_draft(values,entry,margin)
+        values,self._pending_fields=price_rule_draft(values,entry,margin)
         exits = load_record(ExitSettings, values)
         self.values = exits
         values = {}
@@ -67,7 +67,7 @@ class ProtectionFormMixin(OriginalRuleForms):
     def _resolve_pending_fields(self,reference):
         if not self._pending_fields:return
         try:
-            values,pending=pnl_rule_draft(self._exits(),reference.entry,reference.margin)
+            values,pending=price_rule_draft(self._exits(),reference.entry,reference.margin)
         except ValueError:return
         for key in self._pending_fields-pending:
             widget=getattr(self,self._distance_fields[key])
@@ -100,7 +100,7 @@ class ProtectionFormMixin(OriginalRuleForms):
         bar=ctk.CTkFrame(body,fg_color='#1C2B3B',border_width=1,border_color='#344D66',corner_radius=7)
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=4,pady=(2,5))
         ctk.CTkLabel(bar,text='RULE CHUNG',height=22,font=('Segoe UI',12,'bold'),text_color='#B9D9FA').pack(side='left',padx=8,pady=3)
-        ctk.CTkLabel(bar,text='SL/TP: % GIÁ · ARM: % PNL',height=22,font=('Segoe UI',12),text_color=self.TEXT).pack(side='right',padx=8)
+        ctk.CTkLabel(bar,text='CÁC MỐC: % GIÁ VÀO',height=22,font=('Segoe UI',12),text_color=self.TEXT).pack(side='right',padx=8)
         for index,key,label,color in ((0,'sl_enabled','BẬT SL','#EF6B73'),(1,'tp_enabled','BẬT TP','#36C997')):
             entry=(self.initial_sl,self.take_profit)[index]
             row=entry.master
@@ -134,7 +134,7 @@ class ProtectionFormMixin(OriginalRuleForms):
 
     def _update_units(self):
         for entry,title,suffix in ((self.initial_sl,'SL','% GIÁ'),(self.take_profit,'TP','% GIÁ'),
-                (self.normal_arm,'Bắt đầu','% PNL'),(self.normal_giveback,'Lùi','điểm % PNL')):
+                (self.normal_arm,'Bắt đầu','% GIÁ'),(self.normal_giveback,'Lùi','% GIÁ')):
             label=next((w for w in entry.master.winfo_children() if isinstance(w,ctk.CTkLabel) and w is not entry._hint_icon and w.cget('text')),None)
             if label:
                 label.configure(text=f'{title} ({suffix})')

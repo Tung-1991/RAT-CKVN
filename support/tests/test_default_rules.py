@@ -28,10 +28,10 @@ def test_first_launch_loads_one_complete_preset_without_creating_runtime_or_a_pi
     assert rules.sl_enabled and rules.sl_distance == 1
     assert not rules.tp_enabled and rules.tp_distance == 0
     assert rules.ema_exit_enabled and (rules.ema_exit_fast, rules.ema_exit_slow) == (3, 6)
-    assert rules.trailing_unit=='PNL_PERCENT'
-    assert rules.arm_enabled and rules.arm_gain == 5 and rules.trail_gap == 1.5
+    assert rules.trailing_unit=='PRICE_PERCENT'
+    assert rules.arm_enabled and rules.arm_gain == 1 and rules.trail_gap == .3
     assert rules.arm_policy == 'AUTO' and rules.arm_close_pct == 100 and rules.arm_basis == 'REMAINING'
-    assert not rules.arm_repeat and not rules.arm_repeat_below_arm and rules.repeat_gap == 1.5
+    assert not rules.arm_repeat and not rules.arm_repeat_below_arm and rules.repeat_gap == .3
     assert rules.dynamic_enabled and rules.dynamic_policy == 'AUTO' and not rules.dynamic_repeat
     assert rules.dynamic_close_pct == 100 and rules.dynamic_basis == 'REMAINING'
     assert rules.atr_start_multiplier == .5 and rules.atr_trail_multiplier == .8

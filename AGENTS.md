@@ -26,18 +26,18 @@
   tắt chỉ ngừng thông báo, vẫn phân tích.
 - P3 tự lấy sức mở/ký quỹ CKPS từ DNSE và giữ chỗ lệnh chờ; không có trần ký quỹ,
   tổng HĐ hoặc rủi ro % NAV tự nhập. Cấu hình hạn mức cũ bỏ qua, không chặn ẩn.
-  SL/TP dùng % giá vốn bình quân hợp đồng (PRICE_PERCENT), không dựa NAV.
-  ARM/LẶP dùng PNL % trên ký quỹ cơ sở/HĐ đã lưu (trailing_unit=PNL_PERCENT).
-  Cơ sở không chạy theo số dư/nạp rút; vào thêm bình quân theo fill, giảm HĐ giữ cơ sở/HĐ.
+  SL/TP và Bắt đầu/Lùi ARM đều dùng % giá vào bình quân hợp đồng (PRICE_PERCENT), không dựa NAV/ký quỹ.
+  Cả distance_unit và trailing_unit của RULE mới là PRICE_PERCENT; không nhập % PNL.
   Giá vốn 2.000, SL 0,25% là khoảng giá 5. TP mặc định OFF,
   có công tắc và mức % giá vốn tại RULE; bật thì chốt toàn bộ. Giữ cấu hình TP đã lưu.
-  ARM/LẶP bám đỉnh Long/đáy Short; lùi và LẶP là điểm phần trăm PNL,
-  tiền/HĐ = ký quỹ cơ sở × mức nhập / 100, điểm giá = tiền/HĐ / 100.000.
-  Preview RULE và vị thế hiện PNL, điểm và tiền theo HĐ còn giữ; không dùng tổng lãi đã chốt.
-  Thiếu ký quỹ thì ARM/LẶP CHỜ; SL/TP theo giá và E vẫn độc lập.
+  ARM bám đỉnh Long/đáy Short; khoảng lùi = giá vào × mức nhập / 100.
+  Tiền/HĐ = khoảng điểm × 100.000. Preview hiện % giá vào, điểm và tiền theo HĐ còn giữ.
+  PNL tiền chỉ là kết quả xem trước, không dùng % PNL hoặc lãi đã chốt làm cơ sở đặt mốc.
+  RULE giá mới không cần ký quỹ để tính mốc; sức mở vẫn phải có ký quỹ DNSE xác minh.
   Không chọn đơn vị. RULE cũ chỉ quy đổi bản nháp rồi LƯU; thiếu cơ sở
   chỉ khóa ô cần quy đổi; phần còn lại vẫn chỉnh/lưu được. Giữ số và đơn vị nguồn
   của nhóm CHỜ, tự hoàn tất bản nháp khi có cơ sở; không tự áp dụng trước LƯU.
+  RULE PNL cũ chỉ quy đổi khi có cơ sở đúng mã/giá, giữ nguyên khoảng giá, sàn và trạng thái.
   Giá đóng DNSE hợp lệ dùng được để xem trước/quy đổi, vẫn khóa giao dịch.
   Chỉ một RULE chung cho hợp đồng đang giữ, lệnh chờ và
   lệnh mới; bỏ qua E/M riêng cũ, không ghim hoặc ghi đè SL/TP trên vé lệnh.
@@ -49,7 +49,7 @@
   Cấu hình cũ đọc/lưu cũng dùng AUTO + REMAINING + 100%; giữ các ngưỡng giá và
   cờ bật/tắt nhánh đã lưu. ALERT của tín hiệu/Telegram vẫn độc lập.
 - App chưa lưu RULE tự nạp một preset tại `rules/defaults.py`: TP OFF, SL 1%, E ON EMA3/6,
-  ARM 5% PNL, lùi ARM 1,5 điểm % PNL, chạm mốc đóng toàn bộ HĐ còn lại.
+  ARM Bắt đầu 1% giá, Lùi 0,3% giá vào, chạm mốc đóng toàn bộ HĐ còn lại.
   DYNAMIC dùng ATR14 nến ngày đã đóng; mặc định START 0,5 ATR, trail 0,8 ATR,
   giữ 65% lãi đỉnh, TỚI MFE OFF; chạm mốc đóng toàn bộ, không chia lượt; LẶP preset OFF.
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
@@ -107,12 +107,13 @@
   không lấy basicPrice/tham chiếu hoặc nến nối kỳ thay close đúng mã. Cache chỉ để hiển thị.
 - Preview gọn, hai ô kết quả chỉ đọc: điểm Long đủ điều kiện từ backend và giá
   hợp đồng so MA200. Thiếu/giá cũ trong phiên hiện CHỜ; không suy ngược điểm Short.
-  Bảng chính ẩn PNL; Preview bảo vệ vị thế được hiện PNL/điểm/tiền.
+  Bảng chính ẩn PNL; Preview bảo vệ vị thế hiện % giá vào/điểm/tiền.
   Preview: nhãn 12–13, kết quả 22, chi tiết 13–14; OTP 11 thường, gọn một dòng, giá/vốn 24.
   Hai ô kết quả cao tối thiểu 96, vùng Preview tối thiểu 300 logic, tự tăng theo nội dung; căn lề 10,
   giãn dòng rõ, vẫn để bảng lệnh giãn phần còn lại và kiểm tra DPI 100–200%.
-  Dòng bảo vệ chỉ hiện mốc, PNL/tiền và HĐ giảm; khoảng còn lại chi tiết đưa vào hint.
-  DYNAMIC giữ ATR/giữ lãi, Preview quy đổi PNL theo cơ sở thật; không đổi thuật toán vì cách trình bày.
+  Dòng bảo vệ chỉ hiện mốc, % giá vào/điểm/tiền và HĐ đóng; khoảng còn lại chi tiết đưa vào hint.
+  DYNAMIC giữ ATR/giữ lãi đỉnh; Preview quy đổi các khoảng ATR về % giá vào/điểm/tiền, không cần ký quỹ.
+  Hệ số Giữ lãi đỉnh (%) vẫn là % lãi đỉnh, không đổi thành khoảng % giá hoặc tỷ lệ HĐ đóng.
   Preview xuống dòng thay vì tự co chữ. Bảng lệnh giãn toàn bộ phần còn lại,
   Preview bám đáy; không co bảng theo số dòng hoặc chừa spacer đen bên dưới.
   Trạng thái bảng xét cả BOT chung và dữ liệu; bỏ nút BẢO VỆ LỆNH/NHẬN/BỎ QUẢN LÝ khỏi bảng,

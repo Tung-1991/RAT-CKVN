@@ -1,9 +1,9 @@
-"""Read-only ARM thresholds using the execution margin basis."""
+"""Read-only price-percent thresholds and cash amounts per remaining holding."""
 from dataclasses import dataclass
 from math import isfinite
 
 from ckps.models import ExitSettings, Quote, load_record
-from ckps.rules.distances import pnl_trailing_rules, reference_margin
+from ckps.rules.distances import price_rule_values, reference_margin
 from ..formatting import money, price
 from ckps.services.session_preview import closing_quote
 import time
@@ -41,22 +41,19 @@ def pnl_preview(values, reference, *, compact=False):
     """Amounts describe the remaining holding, not accumulated realized profit."""
     if reference.entry is None or not isfinite(reference.entry) or reference.entry<=0:
         return ('CHỜ GIÁ VỐN / GIÁ VÉ', 'Chưa có dữ liệu giá hợp lệ để xem trước ARM')
-    margin=reference.margin
-    if margin is None or not isfinite(margin) or margin<=0:
-        return ('CHỜ KÝ QUỸ CƠ SỞ/HĐ', 'ARM: CHỜ · SL/TP vẫn theo % giá vốn')
-    try:rules=pnl_trailing_rules(values,reference.entry,margin)
+    try:rules=price_rule_values(values,reference.entry,reference.margin)
     except ValueError:
         return ('CHỜ QUY ĐỔI RULE', 'Giữ nguyên RULE đã lưu và mốc bảo vệ đang chạy')
     qty=reference.quantity
     known_qty=isinstance(qty,int) and not isinstance(qty,bool) and qty>0
-    base=f'{reference.source} · Cơ sở {money(margin)}/HĐ'
-    base+=f' · {qty} HĐ = {money(margin*qty)}' if known_qty else ' · CHỜ HĐ'
+    base=f'{reference.source} · Giá vào {price(reference.entry)}'
+    base+=f' · {qty} HĐ' if known_qty else ' · CHỜ HĐ'
     lines=[]
     for key,label in (('arm_gain','ARM'),('trail_gap','Lùi'),('repeat_gap','LẶP')):
         if key=='repeat_gap' and rules['arm_close_pct']==rules['dynamic_close_pct']==100:continue
         value=rules[key]
-        cash=margin*value/100
-        unit='% PNL' if key=='arm_gain' else 'điểm % PNL'
+        cash=reference.entry*value/100*100_000
+        unit='% giá vào'
         enabled=rules['arm_enabled'] if key!='repeat_gap' else (
             rules['arm_enabled'] and rules['arm_repeat'] or rules['dynamic_enabled'] and rules['dynamic_repeat'])
         if not enabled:label+=' OFF ·'
@@ -68,21 +65,21 @@ def pnl_preview(values, reference, *, compact=False):
         short=[]
         for key,label in (('arm_gain','ARM'),('trail_gap','Lùi'),('repeat_gap','LẶP')):
             if key=='repeat_gap' and rules['arm_close_pct']==rules['dynamic_close_pct']==100:continue
-            value=rules[key];cash=margin*value/100
+            value=rules[key];cash=reference.entry*value/100*100_000
             amount=money(cash*qty)+f'/{qty} HĐ' if known_qty else money(cash)+'/HĐ'
-            unit='%' if key=='arm_gain' else ' điểm %'
+            unit='% giá vào'
             enabled=rules['arm_enabled'] if key!='repeat_gap' else (
                 rules['arm_enabled'] and rules['arm_repeat'] or rules['dynamic_enabled'] and rules['dynamic_repeat'])
             if not enabled:label+=' OFF'
-            short.append(f'{label} {value:g}{unit} PNL · {price(cash/100_000)}đ · {amount}')
+            short.append(f'{label} {value:g}{unit} · {price(cash/100_000)}đ · {amount}')
         return base,'\n'.join(short)
     return base, '\n'.join(lines)+'\nTrước phí · mốc kích hoạt, không bảo đảm giá khớp'
 
 
 def dynamic_pnl_preview(view, values, reference, atr_pct):
-    """Show the ATR components in ROI units without changing their price formulas."""
-    entry,margin=reference.entry,reference.margin
-    if any(v is None or not isfinite(v) or v<=0 for v in (entry,margin,atr_pct)):return None
+    """Express the unchanged ATR price distances as percentages of the entry."""
+    entry=reference.entry
+    if any(v is None or not isfinite(v) or v<=0 for v in (entry,atr_pct)):return None
     rules=load_record(ExitSettings,values).validate()
     if not rules.dynamic_enabled:return 'DYNAMIC OFF','Nhánh DYNAMIC đang tắt.'
     positions=[p for p in view.get('positions',[]) if p.get('symbol')==view.get('contract') and p.get('quantity',0)>0]
@@ -96,13 +93,13 @@ def dynamic_pnl_preview(view, values, reference, atr_pct):
     known_qty=isinstance(qty,int) and not isinstance(qty,bool) and qty>0
     summaries,details=[],[]
     for enabled,label,points,unit in (
-        (rules.atr_start_enabled,'START',entry*atr_pct/100*rules.atr_start_multiplier,'% PNL'),
-        (rules.atr_trail_enabled,'Lùi ATR',peak*atr_pct/100*rules.atr_trail_multiplier,'điểm % PNL')):
+        (rules.atr_start_enabled,'START',entry*atr_pct/100*rules.atr_start_multiplier,'% giá vào'),
+        (rules.atr_trail_enabled,'Lùi ATR',peak*atr_pct/100*rules.atr_trail_multiplier,'% giá vào')):
         if not enabled:
             if label=='START':summaries.append('START khi có lãi')
             continue
         cash=points*100_000
-        value=cash/margin*100
+        value=points/entry*100
         summaries.append(f'{label} {number(value)} {unit}')
         line=f'{label} {number(value)} {unit} · {price(points)} điểm · {money(cash)}/HĐ'
         if known_qty:line+=f' · {money(cash*qty)}/{qty} HĐ'

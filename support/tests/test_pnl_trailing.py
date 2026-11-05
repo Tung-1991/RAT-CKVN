@@ -6,7 +6,7 @@ import pytest
 
 from ckps.dashboard.mayin.pnl_preview import ProtectionReference, pnl_preview, protection_reference
 from ckps.models import ExitSettings, Position, Quote, load_record
-from ckps.rules.distances import pnl_trailing_rules, pnl_rule_draft
+from ckps.rules.distances import pnl_trailing_rules, pnl_rule_draft, price_rule_draft
 from ckps.rules.protection import evaluate, levels, repeat_trigger
 
 
@@ -57,7 +57,7 @@ def test_missing_trailing_basis_never_disables_price_stop_or_take_profit(side,si
     assert evaluate(p,2000-sign*5,policy()).reason=='SL'
     assert evaluate(p,2000+sign*40,policy()).reason=='TP'
     assert evaluate(p,2000+sign*20,policy()) is None
-    assert pnl_preview(asdict(policy()),ProtectionReference(2000,None,2))[0]=='CHỜ KÝ QUỸ CƠ SỞ/HĐ'
+    assert pnl_preview(asdict(policy()),ProtectionReference(2000,None,2))[0]=='CHỜ QUY ĐỔI RULE'
 
 
 def test_missing_trailing_basis_still_allows_manual_adoption_and_price_sl(system):
@@ -90,9 +90,9 @@ def test_pending_draft_preserves_each_groups_units_and_can_resolve_without_reset
 def test_new_preset_needs_no_market_data_to_fill_the_editor():
     from ckps.rules.defaults import default_exit_settings
     original=default_exit_settings()
-    draft,pending=pnl_rule_draft(original)
+    draft,pending=price_rule_draft(original)
     assert draft==original and not pending
-    assert draft['sl_distance']==1 and draft['arm_gain']==5 and draft['repeat_gap']==1.5
+    assert draft['sl_distance']==1 and draft['arm_gain']==1 and draft['repeat_gap']==.3
 
 
 @pytest.mark.parametrize('side,sign',[('LONG',1),('SHORT',-1)])
@@ -122,11 +122,11 @@ def test_preview_amount_scales_with_remaining_quantity_without_repricing_the_bas
     rules=asdict(policy())
     ref=ProtectionReference(2000,40_000_000,4,'VỊ THẾ')
     base,detail=pnl_preview(rules,ref)
-    assert '160,000,000' in base
-    assert 'ARM 5 % PNL = 20.0đ' in detail and '8,000,000 đ/4 HĐ' in detail
-    assert 'Lùi 1.25 điểm % PNL = 5.0đ' in detail and '2,000,000 đ/4 HĐ' in detail
+    assert 'Giá vào 2,000.0' in base and '4 HĐ' in base
+    assert 'ARM 1 % giá vào = 20.0đ' in detail and '8,000,000 đ/4 HĐ' in detail
+    assert 'Lùi 0.25 % giá vào = 5.0đ' in detail and '2,000,000 đ/4 HĐ' in detail
     base,detail=pnl_preview(rules,ProtectionReference(2000,40_000_000,2,'VỊ THẾ'))
-    assert '80,000,000' in base and '4,000,000 đ/2 HĐ' in detail
+    assert '2 HĐ' in base and '4,000,000 đ/2 HĐ' in detail
     assert '1,000,000 đ/2 HĐ' in detail
     assert pnl_preview(rules,ProtectionReference(2000,40_000_000,None))[0].endswith('CHỜ HĐ')
 
@@ -160,8 +160,8 @@ def test_invalid_lo_does_not_show_pnl_estimates_from_a_different_market_price(va
     assert pnl_preview(asdict(policy()),ref)[0]=='CHỜ GIÁ VỐN / GIÁ VÉ'
 
 
-@pytest.mark.parametrize('side,peak,trail_pnl',[('LONG',2025,'4,05'),('SHORT',1975,'3,95')])
-def test_dynamic_display_converts_atr_components_to_pnl_using_the_actual_peak(side,peak,trail_pnl):
+@pytest.mark.parametrize('side,peak,trail_price',[('LONG',2025,'0,81'),('SHORT',1975,'0,79')])
+def test_dynamic_display_converts_atr_components_to_entry_percent_using_the_actual_peak(side,peak,trail_price):
     from ckps.dashboard.mayin.pnl_preview import dynamic_pnl_preview
     from ckps.rules.defaults import default_exit_settings
     p=Position.create('VN30F1M',side,2,2000,margin_per_contract=40_000_000)
@@ -170,7 +170,7 @@ def test_dynamic_display_converts_atr_components_to_pnl_using_the_actual_peak(si
     before=deepcopy(view)
     ref=protection_reference(view)
     summary,detail=dynamic_pnl_preview(view,default_exit_settings(),ref,1.)
-    assert 'START 2,50 % PNL' in summary and f'Lùi ATR {trail_pnl} điểm % PNL' in summary
+    assert 'START 0,50 % giá vào' in summary and f'Lùi ATR {trail_price} % giá vào' in summary
     assert '1,000,000 đ/HĐ' in detail and '2,000,000 đ/2 HĐ' in detail
     assert view==before
     assert dynamic_pnl_preview(view,default_exit_settings(),ref,None) is None
@@ -188,7 +188,7 @@ def test_compact_dynamic_uses_the_same_trigger_and_keeps_full_distance_in_detail
     compact=position_milestones(p,rule,2009,1.,compact=True)[1]
     assert '2,007.8' in full.value and compact.value=='AUTO · MỐC 2,007.8'
     assert 'Còn' in full.detail and 'Còn' not in compact.detail
-    assert '+1.95% PNL' in compact.detail and '780,000 đ/1 HĐ' in compact.detail
+    assert '+0.39%' in compact.detail and '7.8đ' in compact.detail and '780,000 đ/1 HĐ' in compact.detail
     assert asdict(p)==before
 
 

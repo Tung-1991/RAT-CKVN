@@ -10,7 +10,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from ckps.models import FINAL, ExitSettings, Position, Quote, load_record, quantity
-from ckps.rules.distances import price_percent_rules, pnl_trailing_rules
+from ckps.rules.distances import price_percent_rules, price_rule_values
 from ckps.rules.defaults import shared_exit_settings
 from ..formatting import money, price, clock
 from .panels import OriginalPanels, INFO_PANEL_HEIGHT
@@ -224,12 +224,12 @@ class MayinController(OriginalPanels):
     def _render_management_config(self, rules, entry=None, margin=None):
         """Full configuration stays in a readable panel opened from each title."""
         try:
-            rules=load_record(ExitSettings,pnl_trailing_rules(shared_exit_settings(asdict(rules)),entry,margin))
+            rules=load_record(ExitSettings,price_rule_values(shared_exit_settings(asdict(rules)),entry,margin))
         except ValueError:
             for prefix in ('arm','dynamic'):
-                self._preview_help[prefix]='Chờ dữ liệu giá vốn/ký quỹ cơ sở để xem PNL. Các mốc đang chạy được giữ nguyên.'
+                self._preview_help[prefix]='Chờ giá vào hoặc cơ sở quy đổi RULE cũ. Các mốc đang chạy được giữ nguyên.'
             return
-        unit='% PNL trên ký quỹ cơ sở/HĐ'
+        unit='% giá vào'
         for prefix in ('arm','dynamic'):
             title='ARM' if prefix=='arm' else 'DYNAMIC · TRƯỚC ARM'
             if not getattr(rules,prefix+'_enabled'):
@@ -237,7 +237,7 @@ class MayinController(OriginalPanels):
                 continue
             action='Tự đóng toàn bộ HĐ còn lại'
             if prefix=='arm':
-                parameters=f'ARM {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} điểm {unit}'
+                parameters=f'Bắt đầu {rules.arm_gain:g} {unit} · Lùi {rules.trail_gap:g} {unit}'
                 explanation='Đạt ARM rồi bám đỉnh Long / đáy Short. Giá lùi tới mốc thì xử lý.'
             else:
                 parts=[]
@@ -260,11 +260,11 @@ class MayinController(OriginalPanels):
         if not self.preview_management.winfo_manager():self.preview_management.grid()
         position=load_record(Position,raw)
         rules=load_record(ExitSettings,shared_exit_settings(self.settings.exit))
-        self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ')
+        self.preview_order_title.configure(text='BẢO VỆ VỊ THẾ · % GIÁ VÀO')
         source='RULE CHUNG'
         self.preview_rule_source.configure(text=source)
         self._render_management_config(rules,position.entry,position.margin_per_contract)
-        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vốn {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nSL/TP: % giá vốn · ARM: % PNL\nKý quỹ cơ sở/HĐ {money(position.margin_per_contract)}\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
+        self._preview_position_context=f'{position.side} · {position.symbol}\nGiá vào {price(position.entry)} · Giá {price(self.view.get("quotes",{}).get(position.symbol,{}).get("last"))}\nSL/TP/ARM: cùng % giá vào\nCòn {position.quantity}/{position.original_quantity} HĐ · {source}'
         quote=self.view.get('quotes',{}).get(position.symbol,{})
         atr=self.view.get('atr14_pct') if position.symbol==self.view.get('contract') else None
         ready=self.view.get('healthy') and self.view.get('consistent') and bool(quote) and load_record(Quote,quote).fresh(self.settings.max_quote_age)

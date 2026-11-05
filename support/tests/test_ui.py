@@ -387,9 +387,9 @@ def _rule_adapter_scenario():
         window.destroy()
         window=app.settings_dialog('E/M');app.update()
         from ckps.rules.defaults import shared_exit_settings
-        expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT','trailing_unit':'PNL_PERCENT'}
+        expected={**shared_exit_settings(asdict(exits)),'distance_unit':'PRICE_PERCENT','trailing_unit':'PRICE_PERCENT'}
         for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-            expected[key]=getattr(exits,key)/4 if key in ('arm_gain','trail_gap','repeat_gap') else getattr(exits,key)/2000*100
+            expected[key]=getattr(exits,key)/2000*100
         assert window._exits()==expected
         for signed in ('-.25','-0,25%'):
             window.initial_sl.delete(0,'end');window.initial_sl.insert(0,signed)
@@ -418,21 +418,21 @@ def _rule_adapter_scenario():
         assert not window._migration_error and window._exits()['sl_distance']==.5
         assert window._exits()['distance_unit']=='PRICE_PERCENT' and app.settings.exit==legacy
         # Price-based SL remains usable while only the old trailing group waits.
-        legacy=asdict(ExitSettings(distance_unit='PRICE_PERCENT',sl_enabled=True,sl_distance=.5,
-            arm_enabled=True,arm_gain=1,trail_gap=.25,repeat_gap=.25))
+        legacy=asdict(ExitSettings(distance_unit='PRICE_PERCENT',trailing_unit='PNL_PERCENT',sl_enabled=True,sl_distance=.5,
+            arm_enabled=True,arm_gain=5,trail_gap=1.25,repeat_gap=1.25))
         app.settings=replace(settings,exit=legacy);app.view['account']={}
         window.destroy();window=app.settings_dialog('E/M');app.update()
         assert window.initial_sl.get()=='0.5' and window.initial_sl.cget('state')=='normal'
         assert window.normal_arm.get()=='' and window.normal_arm.cget('state')=='disabled'
         window.initial_sl.delete(0,'end');window.initial_sl.insert(0,'.75')
         pending=window._exits()
-        assert pending['sl_distance']==.75 and pending['arm_gain']==1 and pending['trailing_unit']=='PRICE_PERCENT'
+        assert pending['sl_distance']==.75 and pending['arm_gain']==5 and pending['trailing_unit']=='PNL_PERCENT'
         window.save()
         assert saved[-1].exit==pending and not sent and app.settings.exit==legacy
         app.view['account']={'margin_per_contract':40_000_000,'margin_reference_price':2000}
         window.render_atr();app.update()
         assert not window._migration_error and window.normal_arm.cget('state')=='normal'
-        assert window._exits()['sl_distance']==.75 and window._exits()['arm_gain']==5
+        assert window._exits()['sl_distance']==.75 and window._exits()['arm_gain']==1
     finally:
         app.close()
 
@@ -510,9 +510,9 @@ def _position_protection_scenario(scale):
             settle()
             assert isinstance(editor, OriginalRuleForms) and not hasattr(editor,'scope_selector')
             assert not hasattr(editor,'inherit_switch') and editor.primary.cget('text')=='LƯU RULE'
-            expected={**common,'distance_unit':'PRICE_PERCENT','trailing_unit':'PNL_PERCENT'}
+            expected={**common,'distance_unit':'PRICE_PERCENT','trailing_unit':'PRICE_PERCENT'}
             for key in ('sl_distance','tp_distance','repeat_gap','arm_gain','trail_gap','retention_until'):
-                expected[key]=expected[key]/4.8 if key in ('arm_gain','trail_gap','repeat_gap') else expected[key]/2400*100
+                expected[key]=expected[key]/2400*100
             actual=editor._exits()
             from math import isclose
             assert actual.keys()==expected.keys()
@@ -624,7 +624,8 @@ def test_read_only_em_milestones_follow_dynamic_arm_repeat_and_missing_data():
         assert asdict(p)==original  # Rendering must not advance MFE or consume a repeat.
         assert 'CHỜ KHỚP' in position_milestones(p,rules,2000+sign*10,1,pending=[{'reason':'MANUAL'}])[1].value
         touched=position_milestones(p,rules,2000+sign*8,1)[1]
-        assert touched.detail=='Đã chạm mốc · đóng 1 HĐ'
+        assert touched.detail.startswith('Đã chạm mốc · đóng 1 HĐ')
+        assert '% giá vào' in touched.detail and '1,680,000 đ/2 HĐ' in touched.detail
         assert asdict(p)==original
         p.metrics['DYN:AUTO']={'count':1,'anchor':2000+sign*8.4}
         p.quantity=1

@@ -19,7 +19,9 @@ Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay T
 
 `test_dashboard_refresh.py`: gộp snapshot chờ thành một lượt hiển thị mới nhất; dữ liệu không đổi không vẽ lại widget, giá thay đổi và giá cũ vẫn cập nhật ngay, không cấp quyền lệnh từ giá cũ.
 
-`test_pnl_trailing.py`: ARM theo ký quỹ cơ sở/HĐ, SL/TP giữ % giá; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview PNL/điểm/tiền và HĐ còn giữ; Long/Short, đóng toàn bộ 4 HĐ, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP. Dữ liệu LẶP cũ vẫn đọc được.
+`test_unified_price_rules.py`: SL/TP/ARM cùng % giá vào; quy đổi RULE PNL cũ giữ nguyên mốc Long/Short và trạng thái vị thế. Thiếu cơ sở giữ nguyên nhóm nguồn; ARM mới và Preview % giá/điểm/tiền không cần ký quỹ, DYNAMIC giữ công thức ATR.
+
+`test_pnl_trailing.py`: tương thích ARM theo ký quỹ cơ sở/HĐ cũ; quy đổi từng nhóm không sửa nguồn/đổi nhãn số cũ, preset mới không chờ dữ liệu, Preview % giá/điểm/tiền và HĐ còn giữ; Long/Short, đóng toàn bộ 4 HĐ, vào thêm, nạp tiền, restart và thiếu ký quỹ không vô hiệu SL/TP. Dữ liệu LẶP cũ vẫn đọc được.
 
 `test_preview_analysis.py`: Preview chỉ đọc tự chạy, Telegram luôn OFF; tham chiếu đóng phiên tự tính từ nến thật kể cả chưa có cache backend, dùng cho bản nháp RULE nhưng không làm giá mới/cấp LONG hoặc quyền giao dịch.
 

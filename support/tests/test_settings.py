@@ -208,22 +208,23 @@ def _consolidated_scenario(scale):
         assert rule._exits()['arm_policy']=='AUTO' and rule._exits()['dynamic_policy']=='AUTO'
         assert rule._exits()['arm_basis']=='REMAINING' and rule._exits()['dynamic_basis']=='REMAINING'
         assert rule._exits()['arm_close_pct']==100 and rule._exits()['dynamic_close_pct']==100
-        assert rule._exits()['trailing_unit']=='PNL_PERCENT'
-        assert '40,000,000' in rule.pnl_basis_preview.cget('text')
-        assert 'ARM 5% PNL · 20.0đ' in rule.pnl_distances_preview.cget('text')
-        assert 'ARM 5 % PNL = 20.0đ' in rule._pnl_help
+        assert rule._exits()['trailing_unit']=='PRICE_PERCENT'
+        assert 'Giá vào 2,000.0' in rule.pnl_basis_preview.cget('text')
+        assert 'ARM 1% giá vào · 20.0đ' in rule.pnl_distances_preview.cget('text')
+        assert 'ARM 1 % giá vào = 20.0đ' in rule._pnl_help
         assert '2,000,000 đ/1 HĐ' in rule.pnl_distances_preview.cget('text')
         app.view['positions'][0]['quantity']=2
         rule.render_atr()
         assert '4,000,000 đ/2 HĐ' in rule.pnl_distances_preview.cget('text')
-        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'6')
+        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'1.2')
         rule.render_atr()
         assert '4,800,000 đ/2 HĐ' in rule.pnl_distances_preview.cget('text')
-        assert app.settings.exit['arm_gain']==5  # Preview never saves a draft.
-        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'5')
+        assert app.settings.exit['arm_gain']==1  # Preview never saves a draft.
+        rule.normal_arm.delete(0,'end');rule.normal_arm.insert(0,'1')
         app.view['positions'][0]['margin_per_contract']=None
         rule.render_atr()
-        assert rule.pnl_basis_preview.cget('text')=='CHỜ KÝ QUỸ CƠ SỞ/HĐ'
+        assert 'Giá vào 2,000.0' in rule.pnl_basis_preview.cget('text')
+        assert '4,000,000 đ/2 HĐ' in rule.pnl_distances_preview.cget('text')
         app.view['positions'][0]['margin_per_contract']=40_000_000
         app.view['positions'][0]['quantity']=1
         rule.render_atr()

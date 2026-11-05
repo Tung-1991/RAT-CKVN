@@ -58,14 +58,12 @@ def position_milestones(position: Position, rules: ExitSettings, current_price=N
             if getattr(rules,prefix+'_enabled') else BranchPreview('OFF') for prefix in ('arm','dynamic'))
     rules=converted
     def distance_text(value):
-        if position.margin_per_contract and position.margin_per_contract>0:
-            return f'{value*100_000/position.margin_per_contract*100:g} điểm % PNL · {price(value)}đ'
-        return f'{value/position.entry*100:g}% giá'
+        return f'{value/position.entry*100:g}% giá vào · {price(value)}đ'
     def target_text(target):
-        pct=position.pnl_pct(target)
-        if pct is None:return ''
-        if compact:return f'{pct:+.2f}% PNL · {money(position.pnl(target))}/{position.quantity} HĐ'
-        return f' · PNL {pct:+g}% · {money(position.pnl(target))}/{position.quantity} HĐ trước phí'
+        points=position.profit_points(target)
+        pct=points/position.entry*100
+        if compact:return f'{pct:+.2f}% · {price(points)}đ · {money(position.pnl(target))}/{position.quantity} HĐ'
+        return f' · {pct:+g}% giá vào · {price(points)}đ · {money(position.pnl(target))}/{position.quantity} HĐ trước phí'
     view = levels(position, rules, _atr(atr_pct) or 0.0)
     armed = rules.arm_enabled and view["mfe_points"] + 1e-9 >= rules.points(rules.arm_gain, position.entry)
 
