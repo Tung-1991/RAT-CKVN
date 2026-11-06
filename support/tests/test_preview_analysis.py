@@ -8,7 +8,7 @@ import pytest
 
 from ckps.dashboard.mayin.connection_status import market_status
 from ckps.dashboard.mayin.signal_preview import signal_preview
-from ckps.dashboard.settings_state import ensure_preview_backend, save_signal_settings
+from ckps.dashboard.settings_state import ensure_preview_backend, save_signal_settings, signal_settings
 from ckps.models import Quote, Settings
 from ckps.rules.p2.market import VN_TZ
 from ckps.services.market_context import context, publish_context
@@ -129,6 +129,15 @@ def test_automatic_preview_is_market_only_and_rotates_api_after_previous_process
     assert len(sessions)==1 and settings.telegram_enabled
     save_signal_settings(app,settings)
     assert len(sessions[0].updates)==1
+    # Blackbox writes the shared signal file from a separate process. The
+    # already-running main Preview reloads it without gaining Telegram rights.
+    from dataclasses import replace
+    from ckps.services.signal_config import write_signal_settings
+    changed=replace(settings,signals={**settings.signals,'buy_ema_fast':4})
+    write_signal_settings(changed)
+    ensure_preview_backend(app)
+    assert sessions[0].updates[-1].signals['buy_ema_fast']==4
+    assert signal_settings(app).signals['buy_ema_fast']==4
     credentials['key']='new'
     ensure_preview_backend(app);ensure_preview_backend(app)
     assert sessions[0].closed==1 and len(sessions)==1

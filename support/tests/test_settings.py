@@ -177,7 +177,7 @@ def _consolidated_scenario(scale):
         assert not {'adopt', 'manage'} & set(app.action_buttons)
         rule = app.settings_dialog()
         settle()
-        assert set(rule.tabs._tab_dict) == {'E/M', 'TÍN HIỆU'}
+        assert set(rule.tabs._tab_dict) == {'E/M'} and not hasattr(rule,'signal_form')
         assert rule.winfo_width()/rule._get_window_scaling()<=781
         assert rule.winfo_height()/rule._get_window_scaling()<=601
         for entry in (rule.initial_sl,rule.take_profit):
@@ -260,30 +260,19 @@ def _consolidated_scenario(scale):
         assert float(rule.initial_sl.get()) == common['sl_distance']
         assert rule.initial_sl.cget('state') == 'normal'
         rule.save()
-        rule.select('TÍN HIỆU')
-        settle()
-        reachable(rule.signal_form.body, rule.footer)
-        variables = rule.signal_form.variables
-        variables['buy_ema_fast'].set('5')
-        variables['buy_ema_slow'].set('13')
-        variables['sell_ema_fast'].set('7')
-        variables['sell_ema_slow'].set('21')
-        variables['rsi_period'].set('17')
-        variables['buy_confirmation_enabled'].set(True)
-        variables['buy_confirmation_minutes'].set('8')
-        variables['buy_ema_cross_mode'].set('SESSIONS')
-        variables['buy_alert_enabled'].set(True)
-        variables['sell_alert_enabled'].set(False)
-        variables['market.fast_points'].set('6')
-        rule.save()
-        saved = signal_settings(app)
-        assert saved.signals['buy_ema_fast'] == 5 and saved.signals['sell_ema_slow'] == 21
-        assert saved.signals['rsi_period'] == 17 and saved.signals['buy_confirmation_minutes'] == 8
-        assert saved.signals['buy_alert_enabled'] and not saved.signals['sell_alert_enabled']
-        assert saved.market_alerts['fast_points'] == 6 and app.settings.exit == common
-        variables['buy_ema_fast'].set('30')
-        rule.save()
-        assert signal_settings(app).signals['buy_ema_fast'] == 5
+        # Backend parameters are edited in the separate Blackbox panel. This
+        # scenario verifies the main app reloads those saved settings while its
+        # shared protection rule stays unchanged.
+        from dataclasses import replace
+        from ckps.rules.signal_settings import SignalSettings
+        from ckps.rules.market_alerts import MarketAlertSettings
+        from ckps.services.signal_config import write_signal_settings
+        backend=replace(signal_settings(app),
+            signals=SignalSettings(buy_ema_fast=5,buy_ema_slow=13,sell_ema_fast=7,sell_ema_slow=21,
+                rsi_period=17,buy_alert_enabled=True,sell_alert_enabled=False).to_dict(),
+            market_alerts=MarketAlertSettings(fast_points=6).to_dict())
+        write_signal_settings(backend)
+        assert signal_settings(app).signals['buy_ema_fast']==5 and app.settings.exit==common
         connection = app.connection()
         settle()
         size = (rule.winfo_width(), rule.winfo_height())

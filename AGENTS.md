@@ -3,6 +3,10 @@
 - Chỉ gọi ba nhánh EXIT là ARM, E và DYNAMIC. ARM gồm mức Bắt đầu và Lùi bám đỉnh/đáy;
   không tách cơ chế bám đỉnh thành nhánh EXIT hoặc nhãn khác trên UI/Telegram.
 
+- Menu BAT cố định: 1 Mở app, 2 Blackbox, 3 Rà soát/cài môi trường, 4 Update, 5 Thoát.
+  Mục 1/2 không tự cài. Blackbox chỉ là panel RULE tín hiệu để phát triển entry bot sau này; không có kết nối/API/Telegram hoặc nút CHẠY.
+  RULE app chính chỉ E/M; Update bảo toàn runtime/credentials/.venv và từ chối khi app còn chạy.
+
 - Gọi người dùng là **thưa Kaiser** hoặc **thưa Ngài**; trả lời ngắn, chính xác.
 - Sản phẩm chỉ CKPS VN30. Đọc `support/docs/CKPS.md` trước khi sửa nghiệp vụ.
 - Một agent, trừ khi Kaiser yêu cầu rõ dùng subagent.
@@ -71,8 +75,8 @@
   hiện trạng thái phân tích và EMA/RSI chỉ đọc. Chỉ thêm ARM/DYNAMIC khi chọn vị thế; SL/TP nằm ở bảng, không lặp lại.
 - Code chia theo `dashboard/`, `connections/`, `rules/`, `services/`, `trading/`;
   không thêm UI hoặc broker dạng file lớn phẳng tại gốc package.
-- Cài đặt tập trung vào RULE (E/M, TÍN HIỆU) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
-  cùng kích thước/DPI; ít tab, không mở cửa sổ cài đặt backend riêng. Lịch sử ở góc bảng.
+- Cài đặt tại RULE (E/M), Blackbox (RULE tín hiệu) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH),
+  cùng kích thước/DPI; ít tab, RULE tín hiệu nằm tại panel Blackbox riêng. Lịch sử ở góc bảng.
   RULE E/M chỉ một form, nút LƯU RULE; không MẶC ĐỊNH / VỊ THẾ hoặc ô kế thừa.
   Chọn dòng hợp đồng chỉ để nhận/bỏ quyền BOT tại RULE; không đổi bộ tham số.
   Phân tích/Telegram vẫn chạy backend riêng, ba nhóm biến động, đáo hạn và Tín hiệu / Lệnh.

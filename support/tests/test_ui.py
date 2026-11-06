@@ -116,7 +116,7 @@ def _layout_scenario(scale):
             entry._viking_fit_text()
             assert NativeFontMetrics(entry,entry._entry.cget('font')).measure(entry.get())<=entry._entry.winfo_width()
         dialog=app.settings_dialog('RULE');settle()
-        assert set(dialog.tabs._tab_dict)=={'E/M','TÍN HIỆU'}
+        assert set(dialog.tabs._tab_dict)=={'E/M'} and not hasattr(dialog,'signal_form')
         assert not hasattr(dialog,'phase_tabs') and not hasattr(dialog,'sell_alert_enabled')
         assert dialog._exits()==app.settings.exit
         connection=app.connection();settle(600)
@@ -132,9 +132,9 @@ def _layout_scenario(scale):
         connection.apply_capital()
         assert sent[-1][0]==('paper_capital',250_000_000)
         sent.clear()
-        for page in ('E/M','TÍN HIỆU'):
+        for page in ('E/M',):
             dialog.select(page);settle()
-            host=dialog.protection_host if page=='E/M' else dialog.signal_form.body
+            host=dialog.protection_host
             for w in widgets(host):
                 if isinstance(w,ctk.CTkEntry) and w.winfo_ismapped():
                     assert w.winfo_rootx()+w.winfo_width()<=dialog.winfo_rootx()+dialog.winfo_width()
@@ -771,39 +771,60 @@ def _backend_app_scenario(scale):
     import requests
     import customtkinter as ctk
     from tkinter import Misc
+    from dataclasses import asdict
     from ckps.dashboard.signal_app import SignalApp
     from ckps.models import Settings
+    from ckps.config import write_settings,read_settings
+    from ckps.services.signal_config import read_signal_settings,write_signal_settings
+    import ckps.connections.secure_session as vault
     def forbidden(*args, **kwargs):
-        raise AssertionError('UI tests must not connect or trade.')
+        raise AssertionError('Blackbox must not connect, read credentials or trade.')
     socket.socket.connect = requests.Session.request = forbidden
+    vault.load_connection=vault.load_telegram_token=forbidden
     ctk.deactivate_automatic_dpi_awareness()
     ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
-    app=SignalApp(settings=Settings())
+    original=Settings(telegram_enabled=True,telegram_chat='offline-chat')
+    write_settings(original);write_signal_settings(original)
+    app=SignalApp(settings=original)
     errors=[]
     app.report_callback_exception=lambda *args:errors.append(args)
     def settle():
         app.update();app.after(100,app.quit);Misc.mainloop(app);app.update()
     try:
         settle()
-        assert set(app.options)=={'movement','expiry','entry'}
-        assert app.options['expiry'].get() and not app.options['entry'].get() and not app.options['movement'].get()
-        assert set(app.variables)=={'key','secret','telegram_token','telegram_chat'}
-        assert not hasattr(app,'bot') and not hasattr(app,'positions_tree')
-        app.start();assert app.runtime is None and 'API' in app.note.cget('text')
-        app.calendar();settle()
-        assert app.calendar_window.form.variables['notice_time'].get()=='15:00'
-        app.calendar_window.destroy();settle()
-        app.geometry('820x560');settle()
-        for variable in app.variables.values():
-            entry=variable._viking_entry
+        assert app.title()=='RAT VN30 · BLACKBOX'
+        for name in ('credentials','runtime','options','variables','bot','positions_tree','calendar','start'):
+            assert not hasattr(app,name),name
+        assert app.primary.cget('text')=='LƯU TÍN HIỆU'
+        variables=app.signal_form.variables
+        variables['buy_ema_fast'].set('5');variables['buy_ema_slow'].set('13')
+        variables['sell_ema_fast'].set('7');variables['sell_ema_slow'].set('21')
+        variables['rsi_period'].set('17');variables['buy_alert_enabled'].set(True)
+        variables['sell_alert_enabled'].set(False)
+        app.save_settings()
+        saved=read_signal_settings()
+        assert saved.signals['buy_ema_fast']==5 and saved.signals['sell_ema_slow']==21
+        assert saved.signals['buy_alert_enabled'] and not saved.signals['sell_alert_enabled']
+        assert saved.telegram_chat==original.telegram_chat and saved.telegram_enabled==original.telegram_enabled
+        assert saved.entry_notifications==original.entry_notifications
+        assert asdict(read_settings())==asdict(original)
+        variables['buy_ema_fast'].set('30');app.save_settings()
+        assert read_signal_settings().signals['buy_ema_fast']==5
+        variables['buy_ema_fast'].set('5')
+        app.geometry('650x480');settle()
+        body=app.signal_form.body;canvas=body._parent_canvas
+        for variable in variables.values():
+            entry=getattr(variable,'_viking_entry',None)
+            if entry is None:continue
+            canvas.yview_moveto(max(0,entry.winfo_rooty()-body.winfo_rooty()-4)/body.winfo_height())
+            settle()
             assert entry.winfo_rootx()+entry.winfo_width()<=app.winfo_rootx()+app.winfo_width()
-            assert entry.winfo_rooty()+entry.winfo_height()<app.primary.winfo_rooty()
+            assert entry.winfo_rooty()+entry.winfo_height()<=min(app.footer.winfo_rooty(),canvas.winfo_rooty()+canvas.winfo_height()+2)
         assert not errors,errors
     finally:app.close()
 
 
-
-@pytest.mark.parametrize('scale',[1.,1.5])
+@pytest.mark.parametrize('scale',[1.,1.5,2.])
 def test_separate_signal_console_has_no_trade_path(scale):
     code=inspect.getsource(_backend_app_scenario)+f'\n_backend_app_scenario({scale!r})'
     result=subprocess.run([sys.executable,'-X','utf8','-c',code],cwd=Path(__file__).resolve().parents[2],

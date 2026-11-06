@@ -1,12 +1,10 @@
-"""One shared E/M rule and a separate page of signal parameters."""
+"""One shared E/M rule; private signal parameters live in Blackbox."""
 from dataclasses import replace
 from copy import deepcopy
 import customtkinter as ctk
 
 from .protection_form import ProtectionFormMixin
-from .signal_form import SignalForm
 from .widgets import StableTabview, _StableToplevel, size_popup
-from ..settings_state import signal_settings, save_signal_settings
 
 
 class RuleWindow(ProtectionFormMixin, _StableToplevel):
@@ -31,8 +29,6 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
         self.protection_host = ctk.CTkFrame(em, fg_color='transparent')
         self.protection_host.grid(row=0, column=0, sticky='nsew')
         self._init_protection(self.protection_host, app.settings.exit)
-        self.signal_form = SignalForm(self.tabs.add('TÍN HIỆU'), signal_settings(app))
-        self.signal_form.pack(fill='both', expand=True)
         self.footer = ctk.CTkFrame(self, fg_color='transparent')
         self.footer.grid(row=1, column=0, sticky='ew', padx=12, pady=(3, 8))
         self.footer.grid_columnconfigure(0, weight=1)
@@ -73,7 +69,7 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
         return self.app.current_position(self.position_id)
 
     def select(self, page):
-        self.tabs.set('TÍN HIỆU' if page == 'TÍN HIỆU' else 'E/M')
+        self.tabs.set('E/M')
         self._page_changed()
         self.lift()
 
@@ -91,12 +87,11 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
     def _page_changed(self):
         if not hasattr(self, 'primary'):
             return
-        signal = self.tabs.get() == 'TÍN HIỆU'
-        self.status.configure(text='' if signal else self._migration_error,text_color='#FBBF24' if self._migration_error else self.TEXT)
+        self.status.configure(text=self._migration_error,text_color='#FBBF24' if self._migration_error else self.TEXT)
         self.primary.configure(state='normal')
-        self.primary.configure(text='LƯU TÍN HIỆU' if signal else 'LƯU RULE')
+        self.primary.configure(text='LƯU RULE')
         self.manage_button.grid_remove()
-        if not signal and self.position_id:
+        if self.position_id:
             try:
                 raw = self._position()
                 self.manage_button.configure(text='BỎ QUẢN LÝ' if raw['managed'] else 'NHẬN QUẢN LÝ')
@@ -147,13 +142,9 @@ class RuleWindow(ProtectionFormMixin, _StableToplevel):
 
     def save(self):
         try:
-            if self.tabs.get() == 'TÍN HIỆU':
-                settings = self.signal_form.read(signal_settings(self.app))
-                save_signal_settings(self.app, settings)
-            else:
-                if self.book != self._book() or self.app.mode_requested or self.app.switch_pending:
-                    raise ValueError('Sổ giao dịch đã thay đổi; mở lại RULE để kiểm tra.')
-                self.app.save_config(replace(self.app.settings, exit=self._exits()).validate())
+            if self.book != self._book() or self.app.mode_requested or self.app.switch_pending:
+                raise ValueError('Sổ giao dịch đã thay đổi; mở lại RULE để kiểm tra.')
+            self.app.save_config(replace(self.app.settings, exit=self._exits()).validate())
             self.status.configure(text='Đã lưu cấu hình.', text_color=self.GREEN)
         except Exception as exc:
             self.status.configure(text=str(exc), text_color='#EF4444')

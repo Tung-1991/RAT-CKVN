@@ -7,43 +7,31 @@ cls
 echo ========================================
 echo              RAT VN30 - CKPS
 echo ========================================
-echo   1. App giao dich - PAPER / REAL
-echo   2. Backend tin hieu - Telegram
-echo   3. Cai dat / sua moi truong
-echo   4. Kiem thu tu dong
-echo   0. Thoat
+echo   1. Mo app
+echo   2. Blackbox
+echo   3. Ra soat / cai moi truong
+echo   4. Update
+echo   5. Thoat
 echo.
-choice /c 12340 /n /m "Chon [1/2/3/4/0]: "
+choice /c 12345 /n /m "Chon [1/2/3/4/5]: "
 if errorlevel 5 exit /b 0
-if errorlevel 4 goto check
+if errorlevel 4 goto update
 if errorlevel 3 goto install
-if errorlevel 2 goto backend
+if errorlevel 2 goto blackbox
 if errorlevel 1 goto start
 goto menu
 :start
-call :prepare
-if errorlevel 1 goto menu
-start "RAT - Giao dich" /b powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Start
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Start
+if errorlevel 1 pause
 goto menu
-:backend
-call :prepare
-if errorlevel 1 goto menu
-start "RAT - Tin hieu" /b powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Backend
+:blackbox
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Blackbox
+if errorlevel 1 pause
 goto menu
 :install
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Install
 pause
 goto menu
-:check
-call :prepare
-if errorlevel 1 goto menu
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Check
-pause
-goto menu
-:prepare
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Prepare
-if errorlevel 1 (
-    pause
-    exit /b 1
-)
+:update
+start "RAT - Update" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Update
 exit /b 0

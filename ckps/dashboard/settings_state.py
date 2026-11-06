@@ -1,6 +1,6 @@
 """One settings source for the PAPER/REAL app and read-only signal service."""
 import time
-from ckps.services.signal_config import read_signal_settings, write_signal_settings
+from ckps.services.signal_config import read_signal_settings, write_signal_settings, signal_folder
 
 
 def telegram_token(app):
@@ -13,8 +13,11 @@ def telegram_token(app):
 
 
 def signal_settings(app):
-    if not hasattr(app, '_signal_settings'):
+    try:stamp=(signal_folder()/'settings.json').stat().st_mtime_ns
+    except OSError:stamp=None
+    if not hasattr(app, '_signal_settings') or stamp!=getattr(app,'_signal_settings_stamp',None):
         app._signal_settings = read_signal_settings()
+    app._signal_settings_stamp=stamp
     return app._signal_settings
 
 
@@ -22,6 +25,7 @@ def save_signal_settings(app, settings):
     settings.validate()
     write_signal_settings(settings)
     app._signal_settings = settings
+    app._signal_settings_stamp=(signal_folder()/'settings.json').stat().st_mtime_ns
     session = getattr(app, 'signal_session', None)
     if session and session.running:
         session.configure(settings, getattr(app, 'signal_credentials', {}).get('telegram_token', ''))
@@ -29,6 +33,7 @@ def save_signal_settings(app, settings):
     if preview and preview.running:
         from ckps.services.signal_config import preview_settings
         preview.configure(preview_settings(settings), '')
+        app._preview_settings_stamp=app._signal_settings_stamp
 
 
 def ensure_preview_backend(app):
@@ -36,12 +41,17 @@ def ensure_preview_backend(app):
     if (not getattr(app, 'preview_analysis_enabled', False) or app.closing
             or app.runtime is None):return
     credentials = app._mode_credentials()
+    settings=signal_settings(app)
     session = getattr(app, 'preview_session', None)
     identity = tuple(credentials.get(key, '') for key in ('key', 'secret'))
     if session and session.running:
         if identity != getattr(app, '_preview_identity', None) and not getattr(app, '_preview_stopping', False):
             session.close()
             app._preview_stopping = True
+        elif not getattr(app,'_preview_stopping',False) and getattr(app,'_preview_settings_stamp',None)!=app._signal_settings_stamp:
+            from ckps.services.signal_config import preview_settings
+            session.configure(preview_settings(settings),'')
+            app._preview_settings_stamp=app._signal_settings_stamp
         return
     if not all(identity) or time.monotonic() < getattr(app, '_preview_retry_at', 0):return
     from ckps.services.signal_process import SignalProcess
@@ -49,7 +59,8 @@ def ensure_preview_backend(app):
     app._preview_retry_at = time.monotonic() + 30
     app._preview_identity, app._preview_stopping = identity, False
     try:
-        app.preview_session = SignalProcess(preview_settings(signal_settings(app)), credentials, preview_only=True)
+        app.preview_session = SignalProcess(preview_settings(settings), credentials, preview_only=True)
+        app._preview_settings_stamp=app._signal_settings_stamp
     except (OSError, ValueError):
         app.preview_session = None
 

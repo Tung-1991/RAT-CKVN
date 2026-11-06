@@ -1,4 +1,4 @@
-"""Open the independent P1/P2 market signal and Telegram app."""
+"""Open the Blackbox signal-rule editor; no connections or bot controls."""
 from ckps.signal_app import main
 
 if __name__=='__main__':

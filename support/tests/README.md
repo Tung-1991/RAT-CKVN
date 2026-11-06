@@ -1,11 +1,13 @@
 # Kiểm thử CKPS
 
-Chạy bằng `START_SYSTEM.bat → 4` hoặc `.venv\Scripts\python.exe -X utf8 -m pytest`.
+Chạy bằng `.venv\Scripts\python.exe -X utf8 -m pytest`; menu BAT mục 4 dành cho Update.
 Fixture chặn HTTP/socket, tách runtime tạm. Không dùng tài khoản hay Telegram thật.
 
 Kiểm thử quy đổi form RULE dùng đồng hồ điều khiển để không phụ thuộc tốc độ VPS.
 Kịch bản vẫn cho giá quá hạn, xác nhận ARM giữ CHỜ dù đã có ký quỹ, rồi nhận giá mới
 để mở khóa đúng nhóm cần quy đổi; giữ SL đang sửa và không tự lưu RULE/gửi lệnh.
+
+`test_system_menu.py`: menu 1–5, mở app/Blackbox không cài, thiếu môi trường chỉ dẫn mục 3; Update Git fast-forward, giữ mã local/lịch sử phân nhánh, ZIP giữ cấu hình/môi trường và sao lưu/rollback, chặn đường dẫn ngoài nguồn và sổ đang mở. Mọi tải/cài/chạy chương trình ngoài bị chặn hoặc giả lập.
 
 `test_bootstrap.py`: kiểm thử offline luồng tự chuẩn bị môi trường; dùng lại môi trường hợp lệ, máy chưa có Python, lỗi pip/kiểm tra gói, sai SHA256 và sai chữ ký dừng trước khi chạy Python/app. Mạng, giải nén và trình cài bên ngoài bị chặn hoặc thay bằng fixture trong PowerShell con.
 
@@ -59,7 +61,7 @@ thiếu/multiple/lỗi API giữ sổ cũ, đổi ý/API bỏ phản hồi cũ, 
 | `test_price_rules.py` | RULE mới dùng % giá vốn; Preview/hint cùng đơn vị; tương thích bản ghi cũ. Công thức Long/Short, 0,25% khác 2,5%, độc lập ký quỹ; bỏ qua policy riêng/vé cũ, đổi từ PNL giữ mốc lặp; vào thêm/giảm/restart |
 | `test_pnl_rules.py` | Tương thích cấu hình % PNL cũ trên ký quỹ cơ sở, Long/Short SL/TP/ARM/DYNAMIC/LẶP; giảm lệnh không đổi tỷ lệ, vào thêm bình quân theo fill, restart không đổi cơ sở; thiếu ký quỹ không dựng ngưỡng, đóng tay vẫn được; quy đổi E/M cũ, bỏ hạn mức tài khoản cũ khi nạp/lưu |
 | `test_connection_state.py` | DPAPI thực trên Windows, không lưu passcode, phiên ràng buộc API/tài khoản/hạn dùng; từ chối auth xóa phiên; khôi phục vẫn BOT OFF; snapshot không có secrets; cache giá chỉ xem, không tạo tín hiệu |
-| `test_settings.py` | RULE hai tab, một E/M chung, KẾT NỐI hai tab cùng kích thước; xác nhận quyền BOT độc lập thông số, lưu EMA/RSI và Telegram/lịch; pipe backend không nhận tài khoản/OTP/lệnh; token ngoài argv; tắt thông báo không phát lại; DPI và trường cuộn tới được |
+| `test_settings.py` | RULE chỉ E/M; Blackbox chỉ chứa RULE tín hiệu (không API/kết nối/Telegram/CHẠY), một E/M chung, KẾT NỐI hai tab cùng kích thước; xác nhận quyền BOT độc lập thông số, Blackbox lưu EMA/RSI, KẾT NỐI lưu Telegram/lịch; pipe backend không nhận tài khoản/OTP/lệnh; token ngoài argv; tắt thông báo không phát lại; DPI và trường cuộn tới được |
 | `test_app_separation.py` | Backend không có quyền giao dịch; hai app chạy cùng lúc với sổ/cấu hình riêng; chống phát lại qua restart |
 | `test_market_alerts.py` | MA200, biến động VN30, thông báo độc lập, chống trùng và Telegram không chặn E/M |
 | `test_semi_auto.py` | Số tiền lỗi, sức mở theo giá vé, fill mâu thuẫn, hủy lệnh mở dư, ARM/LẶP Long/Short, nhắc đáo hạn và biên nhận Telegram |
