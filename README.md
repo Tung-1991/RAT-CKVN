@@ -6,7 +6,7 @@
 
 VPS cần Windows 64-bit có phiên Desktop/RDP và Internet. Máy mới chọn **3** để chuẩn bị Python/Tkinter/thư viện riêng, sau đó **1** để mở app. Mục **1/2 chỉ mở chương trình**, thiếu môi trường báo chọn mục 3, không tự cài. Mục 3 rà soát, dùng lại môi trường đã sẵn sàng và sửa khi thiếu/lỗi; Python từ Python.org được kiểm tra SHA256/chữ ký PSF, không cần admin hoặc sửa PATH/registry. Mục **2** mở Blackbox chỉ có RULE tín hiệu và LƯU; không có API, kết nối, Telegram, nút CHẠY hoặc điều khiển bot. Tham số tín hiệu được đưa khỏi RULE của app chính.
 
-Mục **4 Update** chỉ chạy `git pull --ff-only origin main`; không cài thư viện, chạy test hoặc nạp RULE. Không có bước tải ZIP. Nếu Git báo xung đột hoặc không thể fast-forward thì giữ lỗi để xử lý, không reset.
+Mục **4 Update** chạy ngay trong cửa sổ BAT hiện tại, không mở thêm cửa sổ; xong bấm phím bất kỳ để quay về menu mới. Mục này chỉ chạy `git pull --ff-only origin main`; không cài thư viện, chạy test hoặc nạp RULE. Không có bước tải ZIP. Nếu Git báo xung đột hoặc không thể fast-forward thì giữ lỗi để xử lý, không reset.
 
 Mục **5 Nạp preset** mở hộp chọn file JSON tại `support/presets`. File **`kaiser-vn30.json`** đã chứa RULE E/M và tín hiệu Blackbox đang lưu trên máy Kaiser; file đi cùng repo để nạp trên VPS. Đóng app/Blackbox, chọn 5 rồi chọn file đó: nạp các nhóm RULE có trong file, giữ nguyên tài khoản, vốn, API, Telegram và dữ liệu lệnh/vị thế của VPS; sao lưu cấu hình cũ trước ghi. File lỗi không được áp dụng. Mục **6** thoát menu. Kiểm thử bảo trì chạy bằng `.venv\Scripts\python.exe -X utf8 -m pytest support/tests -q -p no:cacheprovider --tb=short`.
 

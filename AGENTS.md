@@ -5,7 +5,7 @@
 
 - Menu BAT cố định: 1 Mở app, 2 Blackbox, 3 Rà soát/cài môi trường, 4 Update, 5 Nạp preset, 6 Thoát.
   Mục 1/2 không tự cài. Blackbox chỉ là panel RULE tín hiệu để phát triển entry bot sau này; không có kết nối/API/Telegram hoặc nút CHẠY.
-  RULE app chính chỉ E/M; Update chỉ chạy git pull --ff-only origin main; không tải ZIP/cài/nạp RULE.
+  RULE app chính chỉ E/M; Update chỉ chạy git pull --ff-only origin main trong console BAT đang mở, không bật PowerShell riêng; không tải ZIP/cài/nạp RULE.
   Nạp preset cho chọn file JSON trong support/presets, giữ tài khoản/kết nối/vốn/Telegram/sổ lệnh; sao lưu trước ghi, không bật BOT.
 
 - Gọi người dùng là **thưa Kaiser** hoặc **thưa Ngài**; trả lời ngắn, chính xác.

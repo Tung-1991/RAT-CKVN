@@ -47,8 +47,31 @@ def test_menu_has_git_update_and_saved_preset_as_separate_actions():
     assert all(label in text for label in ('1. Mo app','2. Blackbox','3. Ra soat / cai moi truong','4. Update','5. Nap preset','6. Thoat'))
     assert ':prepare' not in text and ':check' not in text
     assert '-Action Blackbox' in text and '-Action Update' in text and '-Action Preset' in text
-    # The old BAT exits before its source can be replaced by the updater.
-    assert ':update\nstart ' in text and text.rstrip().endswith('exit /b 0')
+    # CMD caches this block before Git replaces the BAT, then reloads the new
+    # menu in the same console instead of resuming at obsolete byte offsets.
+    update=text.split(':update\n',1)[1]
+    assert update.startswith('(\n') and 'start ' not in update.lower()
+    assert 'pause' in update and '"%~f0"' in update
+    assert 'Read-Host' not in (ROOT/'support/launcher.ps1').read_text()
+
+
+@pytest.mark.parametrize('padding',[0,500])
+def test_same_console_update_reloads_the_bat_even_when_git_replaces_it(tmp_path,padding):
+    batch=tmp_path/'START_SYSTEM.bat'
+    replacement='@echo off\necho RELOADED_MENU\nexit /b 0\n'+'rem padding\n'*padding
+    rewriter=tmp_path/'rewrite.py'
+    rewriter.write_text(f'from pathlib import Path\nPath({str(batch)!r}).write_text({replacement!r})\n')
+    fake=tmp_path/'update.cmd'
+    fake.write_text(f'@"{sys.executable}" "{rewriter}"\n@exit /b 0\n')
+    text=(ROOT/'START_SYSTEM.bat').read_text()
+    text=text.replace('choice /c 123456 /n /m "Chon [1/2/3/4/5/6]: "','cmd.exe /d /c exit 4')
+    command='powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\\launcher.ps1" -Action Update'
+    assert command in text
+    text=text.replace(command,f'call "{fake}"').replace('    pause\n','    rem automated test\n')
+    batch.write_text(text)
+    result=subprocess.run(['cmd.exe','/d','/c',str(batch)],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0 and 'RELOADED_MENU' in result.stdout,result.stdout+result.stderr
+    assert batch.read_text()==replacement
 
 
 @pytest.mark.parametrize('action,module',[('Start','ckps'),('Blackbox','ckps.signal_app'),('Preset','ckps.preset_app')])

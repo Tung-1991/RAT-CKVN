@@ -9,6 +9,4 @@ try {
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
     exit 1
-} finally {
-    if ($Action -eq 'Update') { Read-Host 'Nhan Enter de dong. Mo lai START_SYSTEM.bat sau khi Update' | Out-Null }
 }

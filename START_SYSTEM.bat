@@ -39,5 +39,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.p
 if errorlevel 1 pause
 goto menu
 :update
-start "RAT - Update" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Update
-exit /b 0
+(
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0support\launcher.ps1" -Action Update
+    pause
+    "%~f0"
+    exit /b 0
+)
