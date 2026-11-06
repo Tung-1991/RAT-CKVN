@@ -3,9 +3,10 @@
 - Chỉ gọi ba nhánh EXIT là ARM, E và DYNAMIC. ARM gồm mức Bắt đầu và Lùi bám đỉnh/đáy;
   không tách cơ chế bám đỉnh thành nhánh EXIT hoặc nhãn khác trên UI/Telegram.
 
-- Menu BAT cố định: 1 Mở app, 2 Blackbox, 3 Rà soát/cài môi trường, 4 Update, 5 Thoát.
+- Menu BAT cố định: 1 Mở app, 2 Blackbox, 3 Rà soát/cài môi trường, 4 Update, 5 Nạp preset, 6 Thoát.
   Mục 1/2 không tự cài. Blackbox chỉ là panel RULE tín hiệu để phát triển entry bot sau này; không có kết nối/API/Telegram hoặc nút CHẠY.
-  RULE app chính chỉ E/M; Update bảo toàn runtime/credentials/.venv và từ chối khi app còn chạy.
+  RULE app chính chỉ E/M; Update chỉ chạy git pull --ff-only origin main; không tải ZIP/cài/nạp RULE.
+  Nạp preset cho chọn file JSON trong support/presets, giữ tài khoản/kết nối/vốn/Telegram/sổ lệnh; sao lưu trước ghi, không bật BOT.
 
 - Gọi người dùng là **thưa Kaiser** hoặc **thưa Ngài**; trả lời ngắn, chính xác.
 - Sản phẩm chỉ CKPS VN30. Đọc `support/docs/CKPS.md` trước khi sửa nghiệp vụ.
@@ -59,7 +60,7 @@
   DYNAMIC cho chỉnh START/trail ATR/giữ lãi/TỚI MFE và bật/tắt từng thành phần.
   Giữ tham số đã lưu, không ép về mặc định. LẶP cũ chỉ giữ để tương thích dữ liệu;
   phần chưa khớp tiếp tục theo ý định thoát toàn bộ, không chờ mốc lặp.
-  Không thêm menu preset; giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
+  Chỉ nạp preset khi Ngài chọn mục Nạp preset và chọn file; mở app/Update giữ RULE đã lưu (kể cả OFF). BOT vẫn OFF khi mở.
 - Chỉ có app chính PAPER/REAL, không có bản mẫu/offline hoặc `--demo`.
   BOT chung OFF khi khởi động; vị thế DNSE nhận quản lý thủ công.
 - LỊCH giữ ngày nghỉ DNSE/bổ sung, né đổi rổ và ATO/ATC; đáo hạn chỉ báo trước,

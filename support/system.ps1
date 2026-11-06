@@ -25,8 +25,12 @@ function Invoke-CkpsAction {
         if ($LASTEXITCODE -ne 0) { throw 'Kiem thu that bai; xem chi tiet ben tren.' }
         return
     }
-    if ($Action -notin @('Start', 'Blackbox', 'Backend')) { throw 'Lua chon khong hop le.' }
-    $module = if ($Action -eq 'Start') { 'ckps' } else { 'ckps.signal_app' }
+    if ($Action -notin @('Start', 'Blackbox', 'Backend', 'Preset')) { throw 'Lua chon khong hop le.' }
+    $module = switch ($Action) {
+        'Start' { 'ckps' }
+        'Preset' { 'ckps.preset_app' }
+        default { 'ckps.signal_app' }
+    }
     $windowless = Join-Path $ProjectRoot '.venv\Scripts\pythonw.exe'
     if (Test-Path -LiteralPath $windowless -PathType Leaf) { $python = $windowless }
     Start-Process -FilePath $python -ArgumentList @('-X', 'utf8', '-m', $module) -WorkingDirectory $ProjectRoot -WindowStyle Hidden

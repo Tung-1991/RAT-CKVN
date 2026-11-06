@@ -1,4 +1,4 @@
-param([ValidateSet('Start', 'Blackbox', 'Backend', 'Install', 'Prepare', 'Check', 'Update')][string]$Action = 'Start')
+param([ValidateSet('Start', 'Blackbox', 'Backend', 'Install', 'Prepare', 'Check', 'Update', 'Preset')][string]$Action = 'Start')
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 Set-Location -LiteralPath $projectRoot

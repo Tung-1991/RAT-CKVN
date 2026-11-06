@@ -7,7 +7,9 @@ Kiểm thử quy đổi form RULE dùng đồng hồ điều khiển để khôn
 Kịch bản vẫn cho giá quá hạn, xác nhận ARM giữ CHỜ dù đã có ký quỹ, rồi nhận giá mới
 để mở khóa đúng nhóm cần quy đổi; giữ SL đang sửa và không tự lưu RULE/gửi lệnh.
 
-`test_system_menu.py`: menu 1–5, mở app/Blackbox không cài, thiếu môi trường chỉ dẫn mục 3; Update Git fast-forward, giữ mã local/lịch sử phân nhánh, ZIP giữ cấu hình/môi trường và sao lưu/rollback, chặn đường dẫn ngoài nguồn và sổ đang mở. Mọi tải/cài/chạy chương trình ngoài bị chặn hoặc giả lập.
+`test_system_menu.py`: menu 1–6, mở app/Blackbox/Nạp preset không tự cài; Update chỉ Git pull fast-forward, xung đột/phân nhánh giữ mã local. Mọi tải/cài/chạy chương trình ngoài bị chặn hoặc giả lập.
+
+`test_presets.py`: file preset đóng gói chỉ có RULE E/M/tín hiệu; chọn file, Hủy, validation đầy đủ, giữ tài khoản/vốn/kết nối/Telegram/sổ lệnh, khóa khi app/Blackbox mở, bản sao và rollback nếu ghi lỗi.
 
 `test_bootstrap.py`: kiểm thử offline luồng tự chuẩn bị môi trường; dùng lại môi trường hợp lệ, máy chưa có Python, lỗi pip/kiểm tra gói, sai SHA256 và sai chữ ký dừng trước khi chạy Python/app. Mạng, giải nén và trình cài bên ngoài bị chặn hoặc thay bằng fixture trong PowerShell con.
 

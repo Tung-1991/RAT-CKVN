@@ -2,11 +2,14 @@
 
 - `main.py`: mở app giao dịch PAPER/REAL, entry tay và BOT chỉ quản lý thoát.
 - `backend.py`: mở panel **Blackbox** chỉ để chỉnh RULE tín hiệu.
-- `START_SYSTEM.bat`: **1 Mở app · 2 Blackbox · 3 Rà soát/cài môi trường · 4 Update · 5 Thoát**.
+- `START_SYSTEM.bat`: **1 Mở app · 2 Blackbox · 3 Rà soát/cài môi trường · 4 Update · 5 Nạp preset · 6 Thoát**.
 
 VPS cần Windows 64-bit có phiên Desktop/RDP và Internet. Máy mới chọn **3** để chuẩn bị Python/Tkinter/thư viện riêng, sau đó **1** để mở app. Mục **1/2 chỉ mở chương trình**, thiếu môi trường báo chọn mục 3, không tự cài. Mục 3 rà soát, dùng lại môi trường đã sẵn sàng và sửa khi thiếu/lỗi; Python từ Python.org được kiểm tra SHA256/chữ ký PSF, không cần admin hoặc sửa PATH/registry. Mục **2** mở Blackbox chỉ có RULE tín hiệu và LƯU; không có API, kết nối, Telegram, nút CHẠY hoặc điều khiển bot. Tham số tín hiệu được đưa khỏi RULE của app chính.
 
-Mục **4 Update** cập nhật mã nhánh main: clone Git chỉ fast-forward, không reset/ghi đè mã đang sửa; bản ZIP tải nguồn từ repository và sao lưu các tệp thay thế trong `.artifacts/update-*/backup`. Update yêu cầu đóng app/Blackbox, giữ nguyên runtime, RULE, credentials và `.venv`; không tự cài hoặc chạy kiểm thử. Sau Update mở lại BAT, chọn 3 để rà soát môi trường rồi 1/2. Kiểm thử dành cho bảo trì chạy bằng `.venv\Scripts\python.exe -X utf8 -m pytest support/tests -q -p no:cacheprovider --tb=short`.
+Mục **4 Update** chỉ chạy `git pull --ff-only origin main`; không cài thư viện, chạy test hoặc nạp RULE. Không có bước tải ZIP. Nếu Git báo xung đột hoặc không thể fast-forward thì giữ lỗi để xử lý, không reset.
+
+Mục **5 Nạp preset** mở hộp chọn file JSON tại `support/presets`. File **`kaiser-vn30.json`** đã chứa RULE E/M và tín hiệu Blackbox đang lưu trên máy Kaiser; file đi cùng repo để nạp trên VPS. Đóng app/Blackbox, chọn 5 rồi chọn file đó: nạp các nhóm RULE có trong file, giữ nguyên tài khoản, vốn, API, Telegram và dữ liệu lệnh/vị thế của VPS; sao lưu cấu hình cũ trước ghi. File lỗi không được áp dụng. Mục **6** thoát menu. Kiểm thử bảo trì chạy bằng `.venv\Scripts\python.exe -X utf8 -m pytest support/tests -q -p no:cacheprovider --tb=short`.
+
 
 MAIN hiển thị ký quỹ lớn và tổng tiền nhỏ bên dưới; AUTO tính HĐ theo sức mở, không tự trích dự phòng. Cài đặt tập trung vào RULE (một E/M chung), Blackbox (RULE tín hiệu) và KẾT NỐI (DNSE / VỐN, TELEGRAM / LỊCH), RULE/KẾT NỐI cùng kích thước. DNSE / VỐN có ĐỌC API để chọn tài khoản/gói và xem ký quỹ/phí từ DNSE, dùng chung một cặp key/secret, có OTP và tùy chọn ghi nhớ kết nối bằng mã hóa Windows; không lưu mã OTP dùng một lần. Giá lưu gần nhất có thời gian và nhãn CŨ, chỉ để xem. Chọn dòng hợp đồng rồi mở RULE → E/M để nhận/bỏ quyền BOT. BOT OFF khi khởi động. Preview có hai kết quả ĐIỂM VÀO và THỊ TRƯỜNG UP/DOWN cùng trạng thái OTP; hiện lý do chờ và EMA/RSI chỉ đọc; ATR đủ % giá vào/điểm/tiền, OTP gọn một dòng, chỉ hiện mốc bảo vệ vị thế khi chọn dòng. Bảng chính ẩn PNL. Telegram chỉ thông báo, không mở/đóng lệnh. Đáo hạn chỉ nhắc trước.
 
