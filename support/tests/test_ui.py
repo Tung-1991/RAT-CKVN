@@ -349,8 +349,13 @@ def test_context_actions_inline_em_partial_close_and_unified_history(system):
         app.close()
 
 
-def _rule_adapter_scenario():
+def _rule_adapter_scenario(clock):
     """Renamed MayinTien fields must preserve CKPS exit policies and units."""
+    import socket
+    import requests
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Offline UI scenarios must never contact DNSE/Telegram.')
+    requests.Session.request=socket.socket.connect=forbidden
     from ckps.dashboard.window import App
     from dataclasses import asdict
     from ckps.models import Settings, ExitSettings
@@ -429,10 +434,20 @@ def _rule_adapter_scenario():
         assert pending['sl_distance']==.75 and pending['arm_gain']==5 and pending['trailing_unit']=='PNL_PERCENT'
         window.save()
         assert saved[-1].exit==pending and not sent and app.settings.exit==legacy
+        # A slow VPS can spend longer than max_quote_age opening the forms.
+        # Verified margin alone must not unlock a draft against an old quote.
+        clock.return_value+=settings.max_quote_age+1
         app.view['account']={'margin_per_contract':40_000_000,'margin_reference_price':2000}
+        window.render_atr();app.update()
+        assert window._migration_error and window.normal_arm.cget('state')=='disabled'
+        assert window._exits()==pending and app.settings.exit==legacy
+        # A genuinely new feed observation resolves only the pending group,
+        # retaining the edited SL and leaving the saved/live RULE untouched.
+        app.view['quotes']['VN30F1M']=asdict(Quote('VN30F1M',2000,at=clock()))
         window.render_atr();app.update()
         assert not window._migration_error and window.normal_arm.cget('state')=='normal'
         assert window._exits()['sl_distance']==.75 and window._exits()['arm_gain']==1
+        assert saved[-1].exit==pending and app.settings.exit==legacy and not sent
     finally:
         app.close()
 
@@ -440,8 +455,10 @@ def _rule_adapter_scenario():
 def test_original_rule_forms_roundtrip_ckps_protection_and_private_signals():
     # Windows Store Python cannot reliably create a second Tk interpreter after
     # destroying the first; isolate GUI sessions, like the DPI scenarios above.
-    result=subprocess.run([sys.executable,'-X','utf8','-c',
-        inspect.getsource(_rule_adapter_scenario)+'\n_rule_adapter_scenario()'],
+    # Quote creation and freshness checks use one controlled clock, independent
+    # of machine speed. Advance it explicitly to exercise stale-price gating.
+    code=inspect.getsource(_rule_adapter_scenario)+"\nfrom time import time\nfrom unittest.mock import patch\nwith patch('time.time', return_value=time()) as clock:\n    _rule_adapter_scenario(clock)"
+    result=subprocess.run([sys.executable,'-X','utf8','-c',code],
         cwd=Path(__file__).resolve().parents[2],capture_output=True,text=True,timeout=30)
     assert result.returncode==0,result.stdout+result.stderr
 
